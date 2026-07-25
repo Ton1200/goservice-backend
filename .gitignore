@@ -1,0 +1,43 @@
+# compiled output
+/dist
+/node_modules
+
+# logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# OS
+.DS_Store
+
+# Tests
+/coverage
+/.nyc_output
+
+# Lint/build caches
+.eslintcache
+*.tsbuildinfo
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# generated GraphQL schema (code-first — regenerated on every boot)
+src/schema.gql
+
+# Environment variables — never commit real local secrets.
+.env
+.env.*
+!.env.example
+
+# temp
+/tmp
