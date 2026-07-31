@@ -32,6 +32,31 @@ export interface AppConfig {
    * the comma-separated `CORS_ALLOWED_ORIGINS` env var.
    */
   corsAllowedOrigins: string[];
+  redis: {
+    host: string;
+    port: number;
+    /** Optional: unset for a local Redis with no password (dev default). */
+    password: string | undefined;
+  };
+  /**
+   * Provider `aud` (audience) values expected when validating Google/Apple
+   * identity tokens in `socialLogin` — see
+   * `src/users/adapters/jose-social-identity-validation.adapter.ts`.
+   */
+  socialAuth: {
+    googleClientId: string | undefined;
+    appleClientId: string | undefined;
+  };
+  /**
+   * Email-verification-code policy (GOS-22). These defaults are proposals
+   * adopted as a working assumption, not confirmed business rules — see
+   * `src/users/services/register-user.service.ts`.
+   */
+  emailVerification: {
+    codeTtlMinutes: number;
+    resendCooldownSeconds: number;
+    maxAttempts: number;
+  };
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
@@ -68,4 +93,24 @@ export default (): AppConfig => ({
     poolMax: parsePort(process.env.DATABASE_POOL_MAX, 10),
   },
   corsAllowedOrigins: parseCorsAllowedOrigins(process.env.CORS_ALLOWED_ORIGINS),
+  redis: {
+    host: process.env.REDIS_HOST ?? 'localhost',
+    port: parsePort(process.env.REDIS_PORT, 6379),
+    password: process.env.REDIS_PASSWORD,
+  },
+  socialAuth: {
+    googleClientId: process.env.GOOGLE_CLIENT_ID,
+    appleClientId: process.env.APPLE_CLIENT_ID,
+  },
+  emailVerification: {
+    codeTtlMinutes: parsePort(
+      process.env.EMAIL_VERIFICATION_CODE_TTL_MINUTES,
+      15,
+    ),
+    resendCooldownSeconds: parsePort(
+      process.env.EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
+      60,
+    ),
+    maxAttempts: parsePort(process.env.EMAIL_VERIFICATION_MAX_ATTEMPTS, 5),
+  },
 });
