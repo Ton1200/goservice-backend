@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
@@ -10,9 +10,23 @@ async function bootstrap(): Promise<void> {
 
   // Ensures NestJS forwards OS shutdown signals (SIGINT/SIGTERM — e.g.
   // Ctrl+C, `docker stop`) into the module lifecycle, so `OnModuleDestroy`
-  // hooks (e.g. DatabaseService closing its `pg.Pool`) actually run instead
-  // of the process exiting with connections left open.
+  // hooks (e.g. DatabaseService closing its `pg.Pool`, PrismaService
+  // disconnecting) actually run instead of the process exiting with
+  // connections left open.
   app.enableShutdownHooks();
+
+  // Mass-assignment defense (GOS-22): rejects any GraphQL input field not
+  // explicitly declared on its DTO (`forbidNonWhitelisted`), strips
+  // unknown properties otherwise (`whitelist`), and applies class-transformer
+  // coercion (`transform`) so class-validator decorators see the right
+  // runtime types.
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
 
   const configService = app.get(ConfigService<AppConfig, true>);
   const port = configService.get('port', { infer: true });
