@@ -5,17 +5,15 @@ import { RegisterPayload } from './models/register-payload.model';
 import { VerifyEmailCodeInput } from './models/verify-email-code-input.model';
 import { VerifyEmailCodePayload } from './models/verify-email-code-payload.model';
 import { ResendVerificationCodePayload } from './models/resend-verification-code-payload.model';
-import { SocialLoginInput } from './models/social-login-input.model';
-import { LoginPayload } from './models/login-payload.model';
 import { RegisterUserService } from './services/register-user.service';
 import { VerifyEmailCodeService } from './services/verify-email-code.service';
 import { ResendVerificationCodeService } from './services/resend-verification-code.service';
-import { SocialLoginService } from './services/social-login.service';
 
 /**
  * Thin delivery adapter — no business logic here, same pattern as
  * `SystemStatusResolver`. Each method delegates entirely to its
- * application service.
+ * application service. `login`/`socialLogin`/`logout` moved to
+ * `AuthResolver` (`src/auth/`) — see that module's header comment.
  *
  * Rate-limit note: the `@Throttle` limits below are an ADDITIONAL,
  * raw-request-rate layer on top of Redis. For `verifyEmailCode` and
@@ -31,7 +29,6 @@ export class UsersResolver {
     private readonly registerUserService: RegisterUserService,
     private readonly verifyEmailCodeService: VerifyEmailCodeService,
     private readonly resendVerificationCodeService: ResendVerificationCodeService,
-    private readonly socialLoginService: SocialLoginService,
   ) {}
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -61,14 +58,5 @@ export class UsersResolver {
     @Args('email') email: string,
   ): Promise<ResendVerificationCodePayload> {
     return this.resendVerificationCodeService.resendVerificationCode(email);
-  }
-
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Mutation(() => LoginPayload, {
-    description:
-      'Logs in (or provisions) a user via a Google/Apple identity token.',
-  })
-  socialLogin(@Args('input') input: SocialLoginInput): Promise<LoginPayload> {
-    return this.socialLoginService.socialLogin(input);
   }
 }

@@ -59,11 +59,48 @@ model User {
   updatedAt               DateTime          @updatedAt
 
   emailVerificationCodes EmailVerificationCode[]
+  sessions                Session[]
 
   // Non-unique: real uniqueness is enforced by the `email` unique
   // constraint above. This index only speeds up the socialLogin fast-path
   // lookup by (authProvider, socialProviderSubject).
   @@index([authProvider, socialProviderSubject])
+}
+
+// GOS-7 — login/socialLogin/logout session mechanism. This is an explicit,
+// reversible product-level decision (NOT an ADR): opaque bearer token,
+// SHA-256-hashed at rest, no JWT/Redis/cookies/external provider — see the
+// GOS-7 implementation plan's "Decisiones tomadas" for the rationale. The
+// final session mechanism remains TBD at the architecture level.
+enum SessionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+model Session {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // SHA-256 hash of the opaque session token (`crypto.randomBytes(32)`,
+  // base64url) — mirrors `EmailVerificationCode.codeHash`'s hash-at-rest
+  // pattern. The plaintext token is returned to the caller exactly once,
+  // at creation, and is never persisted anywhere.
+  tokenHash String        @unique
+  status    SessionStatus @default(ACTIVE)
+
+  // Reserved, unused in this story (no device/session-management UI yet).
+  deviceLabel String?
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  // Reserved for a future idle-timeout/Face ID re-auth story — set at
+  // creation only in GOS-7, never updated on read.
+  lastActivityAt DateTime  @default(now())
+  revokedAt      DateTime?
+
+  @@index([userId, status])
 }
 
 model EmailVerificationCode {

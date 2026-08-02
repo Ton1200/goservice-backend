@@ -20,7 +20,7 @@ import {
  * The provider -> {jwksUri, issuer, audience} map is injected (see
  * `SOCIAL_AUTH_PROVIDER_CONFIG`) rather than hardcoded, so tests can
  * substitute a locally-served JWKS without touching this class or the
- * production wiring in `UsersModule`.
+ * production wiring in `AuthModule`.
  */
 @Injectable()
 export class JoseSocialIdentityValidationAdapter implements SocialIdentityValidationPort {
