@@ -1,5 +1,5 @@
 import { Field, ObjectType } from '@nestjs/graphql';
-import { DomainError } from './domain-error.model';
+import { DomainError } from '../../common/graphql/domain-error.model';
 
 @ObjectType()
 export class VerifyEmailCodePayload {

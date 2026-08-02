@@ -41,7 +41,7 @@ export interface AppConfig {
   /**
    * Provider `aud` (audience) values expected when validating Google/Apple
    * identity tokens in `socialLogin` — see
-   * `src/users/adapters/jose-social-identity-validation.adapter.ts`.
+   * `src/auth/adapters/jose-social-identity-validation.adapter.ts`.
    */
   socialAuth: {
     googleClientId: string | undefined;
@@ -56,6 +56,14 @@ export interface AppConfig {
     codeTtlMinutes: number;
     resendCooldownSeconds: number;
     maxAttempts: number;
+  };
+  /**
+   * Session policy (GOS-7). `ttlHours` default (720h = 30 days) is an
+   * explicit placeholder, not a confirmed product policy — see
+   * `src/auth/adapters/postgres-session.adapter.ts`.
+   */
+  session: {
+    ttlHours: number;
   };
 }
 
@@ -112,5 +120,8 @@ export default (): AppConfig => ({
       60,
     ),
     maxAttempts: parsePort(process.env.EMAIL_VERIFICATION_MAX_ATTEMPTS, 5),
+  },
+  session: {
+    ttlHours: parsePort(process.env.SESSION_TTL_HOURS, 720),
   },
 });

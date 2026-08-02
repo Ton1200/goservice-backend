@@ -73,4 +73,9 @@ export const envValidationSchema = Joi.object({
     .positive()
     .default(60),
   EMAIL_VERIFICATION_MAX_ATTEMPTS: Joi.number().integer().positive().default(5),
+
+  // GOS-7 session policy — explicit placeholder default (30 days), not a
+  // confirmed product policy. See
+  // `src/auth/adapters/postgres-session.adapter.ts`.
+  SESSION_TTL_HOURS: Joi.number().integer().positive().default(720),
 }).unknown(true); // allow other, unrelated env vars (PATH, etc.) through untouched

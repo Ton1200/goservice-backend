@@ -14,6 +14,7 @@ import { GqlThrottlerGuard } from './common/guards/gql-throttler.guard';
 import { PrismaModule } from './prisma/prisma.module';
 import { SystemStatusModule } from './system-status/system-status.module';
 import { UsersModule } from './users/users.module';
+import { AuthModule } from './auth/auth.module';
 import type { AppConfig } from './config/configuration';
 
 @Module({
@@ -75,6 +76,7 @@ import type { AppConfig } from './config/configuration';
     PrismaModule,
     SystemStatusModule,
     UsersModule,
+    AuthModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },

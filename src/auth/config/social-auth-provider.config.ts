@@ -16,7 +16,7 @@ export type SocialAuthProviderConfigMap = Record<
 /**
  * DI token for the provider -> {jwksUri, issuer, audience} config map
  * consumed by `JoseSocialIdentityValidationAdapter`. Wired to the real
- * Google/Apple endpoints in `UsersModule` (see `buildDefaultSocialAuthProviderConfig`
+ * Google/Apple endpoints in `AuthModule` (see `buildDefaultSocialAuthProviderConfig`
  * below); tests override this provider to point at a locally-served JWKS
  * instead of hitting real Google/Apple infrastructure — this is the
  * "designed for testability" seam called out in the GOS-22 plan.
