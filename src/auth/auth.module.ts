@@ -72,6 +72,10 @@ import { AuthResolver } from './auth.resolver';
       inject: [ConfigService],
     },
   ],
-  exports: [SessionGuard],
+  // `SessionPort` is exported for `PasswordResetModule` (`src/password-reset/`),
+  // which needs `revokeAllSessionsForUser` for `resetPassword`'s
+  // successful-completion step (GOS-9) — same reasoning as `UsersModule`
+  // exporting `UsersRepository`/`PasswordHasherPort` above.
+  exports: [SessionGuard, SessionPort],
 })
 export class AuthModule {}

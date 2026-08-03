@@ -60,6 +60,7 @@ model User {
 
   emailVerificationCodes EmailVerificationCode[]
   sessions                Session[]
+  passwordResetCodes      PasswordResetCode[]
 
   // Non-unique: real uniqueness is enforced by the `email` unique
   // constraint above. This index only speeds up the socialLogin fast-path
@@ -111,6 +112,30 @@ model EmailVerificationCode {
   // see goservice-backend/src/users/services/register-user.service.ts for
   // the documented rationale (attemptsCount + expiry + throttling are the
   // real controls for a 6-digit space).
+  codeHash      String
+  expiresAt     DateTime
+  attemptsCount Int       @default(0)
+  consumedAt    DateTime?
+  invalidatedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId, consumedAt, invalidatedAt])
+}
+
+// GOS-9 — forgot-password 6-digit code, a near-1:1 structural mirror of
+// `EmailVerificationCode` above (same hash-at-rest/attempts/expiry/
+// single-use pattern), but modeled as its own entity rather than reusing
+// `EmailVerificationCode` with a "kind" discriminator — mixing two
+// unrelated lifecycles (new-account email verification vs. an existing
+// account's credential recovery) in one table would blur a distinction the
+// schema already models per-entity elsewhere. See
+// goservice-backend/docs/gos9-plan-tecnico.md §5.2.
+model PasswordResetCode {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // SHA-256 hash of the 6-digit code — same rationale as
+  // `EmailVerificationCode.codeHash` above.
   codeHash      String
   expiresAt     DateTime
   attemptsCount Int       @default(0)

@@ -65,6 +65,19 @@ export class PostgresSessionAdapter implements SessionPort {
   }
 
   /**
+   * Revokes every `ACTIVE` session for `userId` in bulk — see
+   * `SessionPort.revokeAllSessionsForUser`'s doc comment. Unlike
+   * `revokeSession`, there is no per-row expiry check here: an
+   * already-lazily-expired row is `EXPIRED`, not `ACTIVE`, so
+   * `SessionsRepository.revokeAllActiveForUser`'s `WHERE status = ACTIVE`
+   * clause naturally excludes it without needing to load/flip each row
+   * first.
+   */
+  async revokeAllSessionsForUser(userId: string): Promise<number> {
+    return this.sessionsRepository.revokeAllActiveForUser(userId);
+  }
+
+  /**
    * Looks up the session by token and lazily flips an ACTIVE-but-expired
    * row to `EXPIRED` before returning it.
    */

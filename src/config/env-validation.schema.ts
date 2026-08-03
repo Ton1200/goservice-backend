@@ -85,4 +85,17 @@ export const envValidationSchema = Joi.object({
   RESEND_API_KEY: Joi.string().min(1).required(),
   EMAIL_FROM_ADDRESS: Joi.string().email().required(),
   EMAIL_FROM_NAME: Joi.string().min(1).default('GoService'),
+
+  // Password-reset-code policy (GOS-9) — same shape/defaults as the
+  // EMAIL_VERIFICATION_* vars above, applied to the new `PasswordResetCode`
+  // entity. See `src/password-reset/services/reset-password.service.ts`.
+  PASSWORD_RESET_CODE_TTL_MINUTES: Joi.number()
+    .integer()
+    .positive()
+    .default(15),
+  PASSWORD_RESET_RESEND_COOLDOWN_SECONDS: Joi.number()
+    .integer()
+    .positive()
+    .default(60),
+  PASSWORD_RESET_MAX_ATTEMPTS: Joi.number().integer().positive().default(5),
 }).unknown(true); // allow other, unrelated env vars (PATH, etc.) through untouched

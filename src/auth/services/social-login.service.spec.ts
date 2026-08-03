@@ -17,14 +17,24 @@ describe('SocialLoginService', () => {
   function makeService(
     options: {
       user?: unknown;
+      existingByEmail?: unknown;
       validateError?: unknown;
     } = {},
   ) {
     const findBySocialProviderSubject = jest
       .fn()
       .mockResolvedValue(options.user ?? null);
+    const findByEmail = jest
+      .fn()
+      .mockResolvedValue(options.existingByEmail ?? null);
+    const createSocialUser = jest.fn().mockResolvedValue({
+      id: 'new-user-1',
+      accountStatus: UserAccountStatus.EMAIL_VERIFIED,
+    });
     const usersRepository = {
       findBySocialProviderSubject,
+      findByEmail,
+      createSocialUser,
     } as unknown as UsersRepository;
 
     const validate = options.validateError
@@ -48,6 +58,8 @@ describe('SocialLoginService', () => {
     return {
       service,
       findBySocialProviderSubject,
+      findByEmail,
+      createSocialUser,
       validate,
       createSession,
     };
@@ -93,13 +105,45 @@ describe('SocialLoginService', () => {
     expect(result.userId).toBe('existing-user-1');
   });
 
-  it('rejects with AUTHENTICATION_FAILED for an unknown social identity, never creating a session or an account', async () => {
-    const { service, createSession } = makeService({ user: null });
+  it('auto-registers a new account for an unrecognized social identity with a brand-new email, then logs it in', async () => {
+    const { service, createSocialUser, createSession } = makeService({
+      user: null,
+      existingByEmail: null,
+    });
+
+    const result = await service.socialLogin(input);
+
+    expect(createSocialUser).toHaveBeenCalledWith({
+      authProvider: AuthProvider.GOOGLE,
+      socialProviderSubject: 'google-subject-123',
+      email: 'jane@example.com',
+      firstName: 'Jane',
+      lastName: 'Doe',
+    });
+    expect(createSession).toHaveBeenCalledWith({ userId: 'new-user-1' });
+    expect(result).toEqual({
+      userId: 'new-user-1',
+      sessionToken: 'plaintext-token',
+      sessionExpiresAt: new Date('2030-01-01T00:00:00.000Z'),
+      errors: [],
+    });
+  });
+
+  it('rejects with AUTHENTICATION_FAILED when an unrecognized social identity has an email that already belongs to another account, never creating a duplicate account or a session', async () => {
+    const { service, createSocialUser, createSession } = makeService({
+      user: null,
+      existingByEmail: {
+        id: 'other-user-1',
+        authProvider: AuthProvider.PASSWORD,
+        accountStatus: UserAccountStatus.EMAIL_VERIFIED,
+      },
+    });
 
     await expect(service.socialLogin(input)).rejects.toMatchObject({
       code: 'AUTHENTICATION_FAILED',
       message: 'Authentication failed.',
     });
+    expect(createSocialUser).not.toHaveBeenCalled();
     expect(createSession).not.toHaveBeenCalled();
   });
 
@@ -148,7 +192,10 @@ describe('SocialLoginService', () => {
   });
 
   it('all thrown failures are DomainException instances', async () => {
-    const { service } = makeService({ user: null });
+    const { service } = makeService({
+      user: null,
+      existingByEmail: { id: 'other-user-1' },
+    });
     await expect(service.socialLogin(input)).rejects.toBeInstanceOf(
       DomainException,
     );

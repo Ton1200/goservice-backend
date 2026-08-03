@@ -22,21 +22,26 @@ const SOCIAL_PROVIDER_TO_AUTH_PROVIDER: Record<SocialProvider, AuthProvider> = {
 };
 
 /**
- * Orchestrates `socialLogin` (GOS-7 — rewritten in place from GOS-22's
- * auto-provisioning version, which was never committed; see the GOS-7 plan
- * for the confirmed rationale). Validates the identity token, then logs in
- * an EXISTING, eligible account only — it NEVER creates a new account.
+ * Orchestrates `socialLogin`. Validates the identity token, then either
+ * logs in an existing account (matched by `(authProvider, subject)`) or
+ * auto-registers a brand new one the first time a given social identity is
+ * seen — reactivated (GOS-7/8 follow-up, 2026-08-03) at explicit request
+ * of Product, which resolved the product gap that GOS-7 had originally
+ * left open (`UsersRepository.createSocialUser` used to have no caller
+ * anywhere in the codebase).
  *
- * Product gap left by this change, flagged explicitly rather than resolved
- * silently: `UsersRepository.createSocialUser` now has no caller anywhere
- * in the codebase — there is currently no path in the product to create a
- * new Google/Apple account. This is a finding to escalate to Product, not
- * something this story decides.
+ * The one safeguard that makes auto-registration safe: before creating a
+ * new account for an unrecognized `(authProvider, subject)`, this service
+ * checks whether the identity's email already belongs to ANY existing
+ * account (password or a different social provider). If it does, the
+ * attempt is rejected rather than silently merged into that account —
+ * accounts are never auto-merged by email. Only when no account exists at
+ * all for that email does `UsersRepository.createSocialUser` get called.
  *
- * Every failure — invalid/expired token, unknown social identity, an
- * existing but ineligible account status — collapses to the exact same
- * `authenticationFailed()` result as `LoginService`, via the one shared
- * factory. Never reveals which case occurred.
+ * Every failure — invalid/expired token, an email already used by another
+ * account, an existing but ineligible account status — collapses to the
+ * exact same `authenticationFailed()` result as `LoginService`, via the
+ * one shared factory. Never reveals which case occurred.
  */
 @Injectable()
 export class SocialLoginService {
@@ -68,16 +73,34 @@ export class SocialLoginService {
     }
 
     const authProvider = SOCIAL_PROVIDER_TO_AUTH_PROVIDER[input.provider];
-    const user = await this.usersRepository.findBySocialProviderSubject(
+    let user = await this.usersRepository.findBySocialProviderSubject(
       authProvider,
       identity.subject,
     );
 
-    if (!user || !isLoginEligibleStatus(user.accountStatus)) {
-      this.logAttempt(
-        'failure',
-        user ? 'ineligible_status' : 'unknown_identity',
+    if (!user) {
+      // Never auto-merge accounts: if this email already belongs to any
+      // existing account (password or another social provider), reject
+      // rather than silently attaching this identity to it.
+      const existingByEmail = await this.usersRepository.findByEmail(
+        identity.email,
       );
+      if (existingByEmail) {
+        this.logAttempt('failure', 'email_collision');
+        throw authenticationFailed();
+      }
+
+      user = await this.usersRepository.createSocialUser({
+        authProvider,
+        socialProviderSubject: identity.subject,
+        email: identity.email,
+        firstName: identity.firstName,
+        lastName: identity.lastName,
+      });
+    }
+
+    if (!isLoginEligibleStatus(user.accountStatus)) {
+      this.logAttempt('failure', 'ineligible_status');
       throw authenticationFailed();
     }
 

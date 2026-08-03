@@ -46,10 +46,12 @@ const AUDIENCE = 'test-google-client-id';
  * obtained in this environment. `SOCIAL_AUTH_PROVIDER_CONFIG` is overridden
  * to point at this local server instead of the real provider endpoints.
  *
- * Rewritten for GOS-7: `socialLogin` no longer auto-provisions a new
- * account on an unrecognized identity — it logs in an EXISTING, eligible
- * account only. Every failure surfaces the same `AUTHENTICATION_FAILED`
- * result `login` uses (not the old `SOCIAL_LOGIN_FAILED` code).
+ * Reactivated auto-registration (2026-08-03, GOS-7/8 follow-up): on an
+ * unrecognized `(authProvider, subject)`, `socialLogin` now creates a new
+ * account UNLESS the identity's email already belongs to another existing
+ * account, in which case it fails rather than auto-merging. Every failure
+ * surfaces the same `AUTHENTICATION_FAILED` result `login` uses (not the
+ * old `SOCIAL_LOGIN_FAILED` code).
  */
 describe('GraphQL socialLogin (e2e, synthetic JWKS substitute for real Google/Apple)', () => {
   let app: INestApplication<App>;
@@ -148,13 +150,64 @@ describe('GraphQL socialLogin (e2e, synthetic JWKS substitute for real Google/Ap
     expect(body.data?.socialLogin.userId).toBe(userId);
   });
 
-  it('rejects an unknown/unrecognized social subject with AUTHENTICATION_FAILED, never creating an account', async () => {
-    const subject = `google-subject-unknown-${Date.now()}`;
+  it('auto-registers a brand-new account for a never-seen social identity, and creates a real Session row', async () => {
+    const subject = `google-subject-new-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const email = `new-social-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
     const token = await jwksServer.signToken({
       issuer: ISSUER,
       audience: AUDIENCE,
       subject,
-      email: `unknown-${Date.now()}@example.com`,
+      email,
+    });
+
+    const usersBefore = await prisma.user.count();
+
+    const response = await socialLoginRequest(token);
+    const body = response.body as SocialLoginResponseBody;
+
+    expect(body.errors).toBeUndefined();
+    expect(body.data?.socialLogin.userId).toEqual(
+      expect.any(String) as unknown,
+    );
+    expect(body.data?.socialLogin.sessionToken).toEqual(
+      expect.any(String) as unknown,
+    );
+
+    const usersAfter = await prisma.user.count();
+    expect(usersAfter).toBe(usersBefore + 1);
+
+    const userId = body.data!.socialLogin.userId;
+    const createdUser = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+    expect(createdUser?.email).toBe(email);
+    expect(createdUser?.authProvider).toBe(AuthProvider.GOOGLE);
+    expect(createdUser?.socialProviderSubject).toBe(subject);
+    expect(createdUser?.accountStatus).toBe(UserAccountStatus.EMAIL_VERIFIED);
+    expect(createdUser?.passwordHash).toBeNull();
+
+    const sessions = await prisma.session.findMany({ where: { userId } });
+    expect(sessions).toHaveLength(1);
+  });
+
+  it('rejects a never-seen social identity whose email already belongs to an existing account, never creating a second account', async () => {
+    const email = `collision-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
+    await prisma.user.create({
+      data: {
+        email,
+        authProvider: AuthProvider.PASSWORD,
+        passwordHash: 'irrelevant-hash-for-this-test',
+        accountStatus: UserAccountStatus.EMAIL_VERIFIED,
+        acceptedTermsAndPrivacy: true,
+      },
+    });
+
+    const subject = `google-subject-collision-${Date.now()}`;
+    const token = await jwksServer.signToken({
+      issuer: ISSUER,
+      audience: AUDIENCE,
+      subject,
+      email,
     });
 
     const usersBefore = await prisma.user.count();
@@ -167,7 +220,7 @@ describe('GraphQL socialLogin (e2e, synthetic JWKS substitute for real Google/Ap
     expect(body.errors?.[0].message).toBe('Authentication failed.');
 
     const usersAfter = await prisma.user.count();
-    expect(usersAfter).toBe(usersBefore); // no auto-provisioned account
+    expect(usersAfter).toBe(usersBefore); // no second account created
   });
 
   it('rejects an invalid/unverifiable token with the same unified AUTHENTICATION_FAILED code (not the old SOCIAL_LOGIN_FAILED)', async () => {

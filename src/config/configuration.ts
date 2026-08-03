@@ -66,6 +66,17 @@ export interface AppConfig {
     ttlHours: number;
   };
   /**
+   * Password-reset-code policy (GOS-9). Same shape/defaults as
+   * `emailVerification` by design — mirrors `EmailVerificationCode`'s policy
+   * for the new `PasswordResetCode` entity. See
+   * `src/password-reset/services/reset-password.service.ts`.
+   */
+  passwordReset: {
+    codeTtlMinutes: number;
+    resendCooldownSeconds: number;
+    maxAttempts: number;
+  };
+  /**
    * Resend (transactional email delivery — see `src/email/`). Required in
    * every environment, including local dev — see ADR 0004.
    */
@@ -132,6 +143,14 @@ export default (): AppConfig => ({
   },
   session: {
     ttlHours: parsePort(process.env.SESSION_TTL_HOURS, 720),
+  },
+  passwordReset: {
+    codeTtlMinutes: parsePort(process.env.PASSWORD_RESET_CODE_TTL_MINUTES, 15),
+    resendCooldownSeconds: parsePort(
+      process.env.PASSWORD_RESET_RESEND_COOLDOWN_SECONDS,
+      60,
+    ),
+    maxAttempts: parsePort(process.env.PASSWORD_RESET_MAX_ATTEMPTS, 5),
   },
   email: {
     resendApiKey: process.env.RESEND_API_KEY ?? '',

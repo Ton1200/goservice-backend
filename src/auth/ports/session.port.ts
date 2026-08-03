@@ -20,4 +20,15 @@ export abstract class SessionPort {
 
   /** Idempotent: `true` only when an ACTIVE, unexpired session was revoked; `false` for unknown/already-revoked/expired. */
   abstract revokeSession(sessionToken: string): Promise<boolean>;
+
+  /**
+   * Revokes every `ACTIVE` session belonging to `userId` (GOS-9,
+   * `resetPassword`'s successful-completion step) — unlike `revokeSession`,
+   * this targets a user, not a single token, since the caller (a
+   * credential-recovery flow) never holds a session token of its own.
+   * Idempotent: a user with no `ACTIVE` sessions is a no-op. Returns the
+   * number of sessions actually revoked (informational only — callers
+   * don't need to branch on it today).
+   */
+  abstract revokeAllSessionsForUser(userId: string): Promise<number>;
 }
