@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
+import { EmailModule } from '../email/email.module';
 import { Argon2PasswordHasherAdapter } from './adapters/argon2-password-hasher.adapter';
-import { LoggingVerificationCodeSenderAdapter } from './adapters/logging-verification-code-sender.adapter';
+import { EmailQueueVerificationCodeSenderAdapter } from './adapters/email-queue-verification-code-sender.adapter';
 import { RegexPhoneNumberValidatorAdapter } from './adapters/regex-phone-number-validator.adapter';
 import { PasswordHasherPort } from './ports/password-hasher.port';
 import { PhoneNumberValidatorPort } from './ports/phone-number-validator.port';
@@ -18,6 +19,7 @@ import { UsersResolver } from './users.resolver';
 // (`src/auth/`), which imports this module to reach `login`/`socialLogin`'s
 // dependencies on account/identity data — see `auth.module.ts`.
 @Module({
+  imports: [EmailModule],
   providers: [
     UsersResolver,
     UsersRepository,
@@ -27,7 +29,7 @@ import { UsersResolver } from './users.resolver';
     { provide: PasswordHasherPort, useClass: Argon2PasswordHasherAdapter },
     {
       provide: VerificationCodeSenderPort,
-      useClass: LoggingVerificationCodeSenderAdapter,
+      useClass: EmailQueueVerificationCodeSenderAdapter,
     },
     {
       provide: PhoneNumberValidatorPort,

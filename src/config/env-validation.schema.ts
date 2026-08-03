@@ -78,4 +78,11 @@ export const envValidationSchema = Joi.object({
   // confirmed product policy. See
   // `src/auth/adapters/postgres-session.adapter.ts`.
   SESSION_TTL_HOURS: Joi.number().integer().positive().default(720),
+
+  // Resend (transactional email delivery — see `src/email/`, ADR 0004).
+  // Required unconditionally: Resend is used in every environment,
+  // including local dev, so there is no stub-fallback env-branch here.
+  RESEND_API_KEY: Joi.string().min(1).required(),
+  EMAIL_FROM_ADDRESS: Joi.string().email().required(),
+  EMAIL_FROM_NAME: Joi.string().min(1).default('GoService'),
 }).unknown(true); // allow other, unrelated env vars (PATH, etc.) through untouched

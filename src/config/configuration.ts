@@ -65,6 +65,15 @@ export interface AppConfig {
   session: {
     ttlHours: number;
   };
+  /**
+   * Resend (transactional email delivery — see `src/email/`). Required in
+   * every environment, including local dev — see ADR 0004.
+   */
+  email: {
+    resendApiKey: string;
+    fromAddress: string;
+    fromName: string;
+  };
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
@@ -123,5 +132,10 @@ export default (): AppConfig => ({
   },
   session: {
     ttlHours: parsePort(process.env.SESSION_TTL_HOURS, 720),
+  },
+  email: {
+    resendApiKey: process.env.RESEND_API_KEY ?? '',
+    fromAddress: process.env.EMAIL_FROM_ADDRESS ?? '',
+    fromName: process.env.EMAIL_FROM_NAME ?? 'GoService',
   },
 });

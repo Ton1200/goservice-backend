@@ -1,5 +1,6 @@
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
@@ -70,6 +71,27 @@ import type { AppConfig } from './config/configuration';
               password: redisConfig.password,
             }),
           ),
+        };
+      },
+    }),
+    // Dedicated Redis connection for BullMQ (email queue, GOS-22 follow-up
+    // — see `EmailModule`). Deliberately NOT shared with
+    // `ThrottlerStorageRedisService` above: BullMQ Workers require
+    // `maxRetriesPerRequest: null` on their connection, and issue blocking
+    // commands that shouldn't share a connection used for other purposes.
+    // Same Redis *server* as the throttler (same REDIS_HOST/PORT/PASSWORD),
+    // just a separate client.
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService<AppConfig, true>) => {
+        const redisConfig = configService.get('redis', { infer: true });
+        return {
+          connection: {
+            host: redisConfig.host,
+            port: redisConfig.port,
+            password: redisConfig.password,
+            maxRetriesPerRequest: null,
+          },
         };
       },
     }),

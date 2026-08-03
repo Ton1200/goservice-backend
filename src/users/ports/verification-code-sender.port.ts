@@ -1,8 +1,8 @@
 /**
- * Abstraction over delivering a verification code to a user. Real email
- * delivery is explicitly out of scope for GOS-22 — the only implementation
- * (`adapters/logging-verification-code-sender.adapter.ts`) is a stub that
- * logs an event/outcome only, never the plaintext code or raw email.
+ * Abstraction over delivering a verification code to a user. Implemented by
+ * `adapters/email-queue-verification-code-sender.adapter.ts`, which
+ * enqueues a real email (via `EmailModule`/Resend) rather than sending it
+ * in-request — see `../../email/email.module.ts`.
  */
 export abstract class VerificationCodeSenderPort {
   abstract sendVerificationCode(email: string, code: string): Promise<void>;
