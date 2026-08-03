@@ -87,6 +87,19 @@ export class UsersRepository {
     });
   }
 
+  /**
+   * Persists a new password hash for an existing user (GOS-9,
+   * `resetPassword`'s successful-completion step). Callers must already
+   * have hashed `newPasswordHash` via `PasswordHasherPort.hash()` — this
+   * method never hashes, and never touches `accountStatus`.
+   */
+  updatePasswordHash(userId: string, newPasswordHash: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: newPasswordHash },
+    });
+  }
+
   createEmailVerificationCode(data: {
     userId: string;
     codeHash: string;

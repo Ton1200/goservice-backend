@@ -15,11 +15,13 @@ describe('PostgresSessionAdapter', () => {
     const findByTokenHash = jest.fn();
     const markExpired = jest.fn();
     const markRevoked = jest.fn();
+    const revokeAllActiveForUser = jest.fn();
     const sessionsRepository = {
       create,
       findByTokenHash,
       markExpired,
       markRevoked,
+      revokeAllActiveForUser,
     } as unknown as SessionsRepository;
 
     const configService = {
@@ -31,7 +33,14 @@ describe('PostgresSessionAdapter', () => {
       configService as never,
     );
 
-    return { adapter, create, findByTokenHash, markExpired, markRevoked };
+    return {
+      adapter,
+      create,
+      findByTokenHash,
+      markExpired,
+      markRevoked,
+      revokeAllActiveForUser,
+    };
   }
 
   describe('createSession', () => {
@@ -187,6 +196,27 @@ describe('PostgresSessionAdapter', () => {
       expect(result).toBe(false);
       expect(markRevoked).not.toHaveBeenCalled();
       expect(markExpired).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('revokeAllSessionsForUser', () => {
+    it('delegates to SessionsRepository.revokeAllActiveForUser and returns its count', async () => {
+      const { adapter, revokeAllActiveForUser } = makeAdapter();
+      revokeAllActiveForUser.mockResolvedValue(3);
+
+      const result = await adapter.revokeAllSessionsForUser('user-1');
+
+      expect(result).toBe(3);
+      expect(revokeAllActiveForUser).toHaveBeenCalledWith('user-1');
+    });
+
+    it('is a no-op (returns 0) when the user has no ACTIVE sessions', async () => {
+      const { adapter, revokeAllActiveForUser } = makeAdapter();
+      revokeAllActiveForUser.mockResolvedValue(0);
+
+      const result = await adapter.revokeAllSessionsForUser('user-1');
+
+      expect(result).toBe(0);
     });
   });
 });

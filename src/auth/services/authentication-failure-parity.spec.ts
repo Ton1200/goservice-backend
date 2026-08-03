@@ -56,12 +56,17 @@ describe('login/socialLogin authentication-failure parity', () => {
 
   function makeSocialLoginService(overrides: {
     user?: unknown;
+    existingByEmail?: unknown;
     validateError?: unknown;
   }): SocialLoginService {
     const usersRepository = {
       findBySocialProviderSubject: jest
         .fn()
         .mockResolvedValue(overrides.user ?? null),
+      findByEmail: jest
+        .fn()
+        .mockResolvedValue(overrides.existingByEmail ?? null),
+      createSocialUser: jest.fn(),
     } as unknown as UsersRepository;
     const socialIdentityValidationService = {
       validate: overrides.validateError
@@ -126,9 +131,14 @@ describe('login/socialLogin authentication-failure parity', () => {
           passwordMatches: true,
         }).login(loginInput),
       ),
-      // socialLogin: unknown identity
+      // socialLogin: unrecognized identity whose email collides with an
+      // existing account (auto-registration is deliberately excluded from
+      // this parity set — it's now a success path, not a shared failure)
       captureFailure(
-        makeSocialLoginService({ user: null }).socialLogin(socialInput),
+        makeSocialLoginService({
+          user: null,
+          existingByEmail: { id: 'other-user-1' },
+        }).socialLogin(socialInput),
       ),
       // socialLogin: existing but ineligible (REJECTED)
       captureFailure(

@@ -54,5 +54,6 @@ export async function createTestApp(options?: {
 export async function cleanUsersData(prisma: PrismaService): Promise<void> {
   await prisma.session.deleteMany();
   await prisma.emailVerificationCode.deleteMany();
+  await prisma.passwordResetCode.deleteMany();
   await prisma.user.deleteMany();
 }

@@ -44,4 +44,17 @@ export class SessionsRepository {
       data: { status: SessionStatus.REVOKED, revokedAt: new Date() },
     });
   }
+
+  /**
+   * Bulk counterpart to `markRevoked` (GOS-9) — revokes every `ACTIVE`
+   * session for `userId` in one statement rather than one row at a time.
+   * Returns the number of rows actually updated.
+   */
+  async revokeAllActiveForUser(userId: string): Promise<number> {
+    const result = await this.prisma.session.updateMany({
+      where: { userId, status: SessionStatus.ACTIVE },
+      data: { status: SessionStatus.REVOKED, revokedAt: new Date() },
+    });
+    return result.count;
+  }
 }

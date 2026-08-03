@@ -31,7 +31,7 @@ export class AuthResolver {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Mutation(() => LoginPayload, {
     description:
-      'Logs in via a Google/Apple identity token for an existing account. Never creates a new account.',
+      'Logs in via a Google/Apple identity token. Auto-registers a new account the first time a given social identity is seen, unless its email already belongs to another account (in which case authentication fails — accounts are never auto-merged).',
   })
   socialLogin(@Args('input') input: SocialLoginInput): Promise<LoginPayload> {
     return this.socialLoginService.socialLogin(input);

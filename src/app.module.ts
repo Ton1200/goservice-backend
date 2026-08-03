@@ -16,6 +16,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SystemStatusModule } from './system-status/system-status.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { PasswordResetModule } from './password-reset/password-reset.module';
 import type { AppConfig } from './config/configuration';
 
 @Module({
@@ -99,6 +100,7 @@ import type { AppConfig } from './config/configuration';
     SystemStatusModule,
     UsersModule,
     AuthModule,
+    PasswordResetModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },
