@@ -1,0 +1,147 @@
+// GOS-22 — first real domain persistence schema for goservice-backend.
+//
+// Scope note: Prisma is used here as an explicitly human-authorized
+// deviation from the "ORM is TBD, needs its own ADR" stance in
+// goservice-docs/architecture/backend.md and ADR 0003's open questions —
+// see the GOS-22 implementation plan ("Decisiones y discrepancias", #6) for
+// the rationale. A follow-up ADR formalizing Prisma as the project's ORM is
+// recommended but not created as part of this change.
+//
+// This schema lives in its own `src/prisma/` module, separate from the
+// pre-existing infra-only `src/database/` (plain `pg.Pool`, health-check
+// only) — see `src/prisma/prisma.service.ts` for the contrast.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AuthProvider {
+  PASSWORD
+  GOOGLE
+  APPLE
+}
+
+// Account approval status. GOS-22 only ever assigns the first two values
+// (PENDING_EMAIL_VERIFICATION, EMAIL_VERIFIED) — PENDING_APPROVAL, APPROVED,
+// and REJECTED are reserved for a future identity-document approval story
+// and must exist in the schema now, but no code path in this story assigns
+// them. Do not build any approval logic against them here.
+enum UserAccountStatus {
+  PENDING_EMAIL_VERIFICATION
+  EMAIL_VERIFIED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id                      String            @id @default(uuid()) @db.Uuid
+  firstName               String?
+  lastName                String?
+  email                   String            @unique
+  // Null forever for social accounts (service-level rule, not a DB
+  // constraint — a CHECK constraint was considered and deliberately skipped
+  // as unnecessary ceremony for this story's scope).
+  passwordHash            String?
+  phoneCountryCode        String?
+  phoneNumber             String?
+  dateOfBirth             DateTime?         @db.Date
+  acceptedTermsAndPrivacy Boolean           @default(false)
+  authProvider            AuthProvider
+  socialProviderSubject   String?
+  accountStatus           UserAccountStatus @default(PENDING_EMAIL_VERIFICATION)
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+
+  emailVerificationCodes EmailVerificationCode[]
+  sessions                Session[]
+  passwordResetCodes      PasswordResetCode[]
+
+  // Non-unique: real uniqueness is enforced by the `email` unique
+  // constraint above. This index only speeds up the socialLogin fast-path
+  // lookup by (authProvider, socialProviderSubject).
+  @@index([authProvider, socialProviderSubject])
+}
+
+// GOS-7 — login/socialLogin/logout session mechanism. This is an explicit,
+// reversible product-level decision (NOT an ADR): opaque bearer token,
+// SHA-256-hashed at rest, no JWT/Redis/cookies/external provider — see the
+// GOS-7 implementation plan's "Decisiones tomadas" for the rationale. The
+// final session mechanism remains TBD at the architecture level.
+enum SessionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+model Session {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // SHA-256 hash of the opaque session token (`crypto.randomBytes(32)`,
+  // base64url) — mirrors `EmailVerificationCode.codeHash`'s hash-at-rest
+  // pattern. The plaintext token is returned to the caller exactly once,
+  // at creation, and is never persisted anywhere.
+  tokenHash String        @unique
+  status    SessionStatus @default(ACTIVE)
+
+  // Reserved, unused in this story (no device/session-management UI yet).
+  deviceLabel String?
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  // Reserved for a future idle-timeout/Face ID re-auth story — set at
+  // creation only in GOS-7, never updated on read.
+  lastActivityAt DateTime  @default(now())
+  revokedAt      DateTime?
+
+  @@index([userId, status])
+}
+
+model EmailVerificationCode {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // SHA-256 hash of the 6-digit code, deliberately NOT argon2/a slow KDF —
+  // see goservice-backend/src/users/services/register-user.service.ts for
+  // the documented rationale (attemptsCount + expiry + throttling are the
+  // real controls for a 6-digit space).
+  codeHash      String
+  expiresAt     DateTime
+  attemptsCount Int       @default(0)
+  consumedAt    DateTime?
+  invalidatedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId, consumedAt, invalidatedAt])
+}
+
+// GOS-9 — forgot-password 6-digit code, a near-1:1 structural mirror of
+// `EmailVerificationCode` above (same hash-at-rest/attempts/expiry/
+// single-use pattern), but modeled as its own entity rather than reusing
+// `EmailVerificationCode` with a "kind" discriminator — mixing two
+// unrelated lifecycles (new-account email verification vs. an existing
+// account's credential recovery) in one table would blur a distinction the
+// schema already models per-entity elsewhere. See
+// goservice-backend/docs/gos9-plan-tecnico.md §5.2.
+model PasswordResetCode {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // SHA-256 hash of the 6-digit code — same rationale as
+  // `EmailVerificationCode.codeHash` above.
+  codeHash      String
+  expiresAt     DateTime
+  attemptsCount Int       @default(0)
+  consumedAt    DateTime?
+  invalidatedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId, consumedAt, invalidatedAt])
+}
