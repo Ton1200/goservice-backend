@@ -57,3 +57,16 @@ export async function cleanUsersData(prisma: PrismaService): Promise<void> {
   await prisma.passwordResetCode.deleteMany();
   await prisma.user.deleteMany();
 }
+
+/**
+ * Deletes all profiles-module rows that are children of `User` — child
+ * tables first (FK order). Does NOT delete `Category` rows (the seeded,
+ * read-only catalog) — call this before `cleanUsersData`, whose
+ * `user.deleteMany()` would otherwise fail on the `CustomerProfile`/
+ * `ProfessionalProfile` FK.
+ */
+export async function cleanProfilesData(prisma: PrismaService): Promise<void> {
+  await prisma.professionalSpecialization.deleteMany();
+  await prisma.professionalProfile.deleteMany();
+  await prisma.customerProfile.deleteMany();
+}

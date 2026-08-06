@@ -59,8 +59,12 @@ model User {
   updatedAt               DateTime          @updatedAt
 
   emailVerificationCodes EmailVerificationCode[]
-  sessions                Session[]
-  passwordResetCodes      PasswordResetCode[]
+  sessions               Session[]
+  passwordResetCodes     PasswordResetCode[]
+  // GOS-14/GOS-28 — first business-domain entities. A User may hold both at
+  // once (no exclusivity rule): see profiles.repository.ts.
+  customerProfile        CustomerProfile?
+  professionalProfile    ProfessionalProfile?
 
   // Non-unique: real uniqueness is enforced by the `email` unique
   // constraint above. This index only speeds up the socialLogin fast-path
@@ -94,8 +98,8 @@ model Session {
   // Reserved, unused in this story (no device/session-management UI yet).
   deviceLabel String?
 
-  createdAt DateTime @default(now())
-  expiresAt DateTime
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
   // Reserved for a future idle-timeout/Face ID re-auth story — set at
   // creation only in GOS-7, never updated on read.
   lastActivityAt DateTime  @default(now())
@@ -144,4 +148,135 @@ model PasswordResetCode {
   createdAt     DateTime  @default(now())
 
   @@index([userId, consumedAt, invalidatedAt])
+}
+
+// GOS-14/GOS-28 — first GoService business-domain entities (not Identity).
+// CustomerProfile/ProfessionalProfile/Category are the foundation
+// ServiceRequest, Quote, Engagement, and Professional Discovery build on.
+
+// Professional identity-document verification status. Mirrors
+// UserAccountStatus's reserved-values pattern: this story only ever assigns
+// UNVERIFIED (always, on creation) — PENDING_REVIEW/VERIFIED/REJECTED are
+// reserved for a future Identity Verification story and must exist now so
+// that story needs no breaking schema change. Never assigned or mutated by
+// any GraphQL mutation in this story.
+enum ProfessionalVerificationStatus {
+  UNVERIFIED
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+// Read-only service catalog. No CRUD, no GraphQL mutation — seeded only via
+// prisma/seed.ts (`npm run prisma:seed`). Referenced by ProfessionalProfile
+// via the explicit ProfessionalSpecialization join below.
+model Category {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  professionalProfiles ProfessionalSpecialization[]
+}
+
+model CustomerProfile {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @unique @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String
+  addressLine String
+  city        String
+  province    String
+  // Defaults to Argentina — GoService's initial market — anticipating the
+  // documented later expansion to Latin America without a future migration.
+  country     String   @default("AR")
+  // Reference to an externally-stored image (no object-storage provider is
+  // decided yet — see infrastructure.md's open hosting-provider question —
+  // so this is just a URL string today, not backed by any real upload flow).
+  photoUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // @unique(userId) above is the physical "one CustomerProfile per User"
+  // constraint the story requires — upsertCustomerProfile always targets
+  // where: { userId }.
+  @@index([country, city])
+}
+
+model ProfessionalProfile {
+  id                     String                         @id @default(uuid()) @db.Uuid
+  userId                 String                         @unique @db.Uuid
+  user                   User                           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName            String
+  // Structured city/country (as opposed to only the free-text
+  // serviceAreaDescription below) anticipates Professional Discovery
+  // needing to filter/index by category+city without a future migration.
+  city                   String
+  country                String                         @default("AR")
+  serviceAreaDescription String
+  bio                    String
+  // Same caveat as CustomerProfile.photoUrl — a URL string, no real upload
+  // flow/storage provider decided yet.
+  photoUrl               String?
+  // Self-declared, optional appeal/credibility field — distinct from
+  // verificationStatus below, which is the trust/safety approval gate.
+  // Not reviewed or moderated. (yearsOfExperience deliberately does NOT
+  // live here — it lives per-specialization below, on
+  // ProfessionalSpecialization, so a senior electrician who also does
+  // some plumbing can report different experience for each.)
+  languages              String[]                       @default([])
+  verificationStatus     ProfessionalVerificationStatus @default(UNVERIFIED)
+  createdAt              DateTime                       @default(now())
+  updatedAt              DateTime                       @updatedAt
+
+  specializations ProfessionalSpecialization[]
+
+  // @unique(userId) above is the physical "one ProfessionalProfile per
+  // User" constraint. Indexes anticipate Discovery (country+city) and a
+  // future Identity Verification queue (verificationStatus).
+  @@index([country, city])
+  @@index([verificationStatus])
+}
+
+// Which trade a professional's specialization is: their main one, or an
+// additional one they also do. Exactly one PRIMARY per professional is
+// enforced at the application layer (UpsertProfessionalProfileService) —
+// see that class's assertExactlyOnePrimary.
+enum SpecializationRole {
+  PRIMARY
+  SECONDARY
+}
+
+// Explicit join table (deliberately not an implicit Prisma many-to-many),
+// now the realization of the "Skill" concept this comment used to only
+// anticipate: each row is one of a professional's trades, with its own
+// description/experience/role/display-order — not just a bare category
+// reference. A senior electrician who also does some plumbing reports
+// different description/yearsOfExperience for each. The composite @@id
+// below is the physical "no duplicate category per professional"
+// constraint the story requires.
+model ProfessionalSpecialization {
+  professionalProfileId String              @db.Uuid
+  professionalProfile   ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  categoryId            String              @db.Uuid
+  // Restrict, not Cascade: Category is a read-only seeded catalog: nothing
+  // should ever be able to delete a Category still referenced by a
+  // professional (defensive — no delete path exists anywhere in this story).
+  category              Category            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  role                  SpecializationRole
+  // Required on every specialization, primary and secondary alike — no
+  // "empty" specialization that tells a customer nothing (confirmed
+  // product decision).
+  description           String
+  yearsOfExperience     Int?
+  // Server-derived from the submitted array's position at upsert time —
+  // never client-managed as an arbitrary integer — so future
+  // filtering/ranking has a stable display order without duplicate/gap
+  // bookkeeping. See ProfilesRepository.upsertProfessionalProfile.
+  order                 Int                 @default(0)
+  createdAt             DateTime            @default(now())
+
+  @@id([professionalProfileId, categoryId])
+  // Anticipates Professional Discovery's "find professionals in category X".
+  @@index([categoryId])
 }

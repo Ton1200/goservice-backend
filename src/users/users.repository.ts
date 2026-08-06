@@ -88,6 +88,34 @@ export class UsersRepository {
   }
 
   /**
+   * GOS-14/GOS-28 — the one and only place `accountStatus` moves to
+   * `PENDING_APPROVAL`. Called by `ProfilesRepository.upsertCustomerProfile`
+   * from within its own `$transaction`, passing that transaction's client
+   * through (`tx`), so the `CustomerProfile` write and this status
+   * transition commit atomically without `ProfilesRepository` ever
+   * querying the `user` table directly — preserving the "one repository
+   * owns one set of tables" rule documented in
+   * goservice-docs/architecture/backend.md.
+   *
+   * The `updateMany` `WHERE accountStatus = EMAIL_VERIFIED` guard is what
+   * makes "transition exactly once, never revert" race-safe: a concurrent
+   * duplicate call, or any later edit after the status has already moved
+   * on, always matches 0 rows and is a silent no-op — no separate
+   * read-then-branch, no TOCTOU race. Returns whether the transition
+   * actually happened, purely for the caller's own logging.
+   */
+  async transitionToPendingApprovalIfEmailVerified(
+    userId: string,
+    tx: Prisma.TransactionClient,
+  ): Promise<boolean> {
+    const { count } = await tx.user.updateMany({
+      where: { id: userId, accountStatus: UserAccountStatus.EMAIL_VERIFIED },
+      data: { accountStatus: UserAccountStatus.PENDING_APPROVAL },
+    });
+    return count === 1;
+  }
+
+  /**
    * Persists a new password hash for an existing user (GOS-9,
    * `resetPassword`'s successful-completion step). Callers must already
    * have hashed `newPasswordHash` via `PasswordHasherPort.hash()` — this
