@@ -1,5 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { UserAccountStatus } from '@prisma/client';
+import { DomainException } from '../../common/errors/domain-exception';
+import { EnsureEmailDeliveryAvailableService } from '../../email/services/ensure-email-delivery-available.service';
 import { VerificationCodeSenderPort } from '../ports/verification-code-sender.port';
 import { UsersRepository } from '../users.repository';
 import { ResendVerificationCodeService } from './resend-verification-code.service';
@@ -17,7 +19,11 @@ describe('ResendVerificationCodeService', () => {
     } as unknown as ConfigService;
   }
 
-  function makeService(options: { user?: unknown; activeCode?: unknown }) {
+  function makeService(options: {
+    user?: unknown;
+    activeCode?: unknown;
+    emailDeliveryAvailable?: boolean;
+  }) {
     const findByEmail = jest.fn().mockResolvedValue(options.user ?? null);
     const findActiveEmailVerificationCode = jest
       .fn()
@@ -38,10 +44,26 @@ describe('ResendVerificationCodeService', () => {
       sendVerificationCode,
     } as unknown as VerificationCodeSenderPort;
 
+    const ensureAvailable = jest.fn(() => {
+      if (options.emailDeliveryAvailable === false) {
+        return Promise.reject(
+          new DomainException(
+            'EMAIL_DELIVERY_DISABLED',
+            'Email delivery is currently disabled.',
+          ),
+        );
+      }
+      return Promise.resolve(undefined);
+    });
+    const ensureEmailDeliveryAvailable = {
+      ensureAvailable,
+    } as unknown as EnsureEmailDeliveryAvailableService;
+
     const service = new ResendVerificationCodeService(
       usersRepository,
       verificationCodeSender,
       makeConfigService(),
+      ensureEmailDeliveryAvailable,
     );
     return {
       service,
@@ -49,6 +71,7 @@ describe('ResendVerificationCodeService', () => {
       invalidateCode,
       createEmailVerificationCode,
       sendVerificationCode,
+      ensureAvailable,
     };
   }
 
@@ -144,5 +167,39 @@ describe('ResendVerificationCodeService', () => {
     await service.resendVerificationCode('jane@example.com');
 
     expect(createEmailVerificationCode).toHaveBeenCalled();
+  });
+
+  it('checks email-delivery availability FIRST, before any DB lookup, and propagates its error', async () => {
+    const { service, findByEmail, ensureAvailable } = makeService({
+      user: {
+        id: 'u1',
+        email: 'jane@example.com',
+        accountStatus: UserAccountStatus.PENDING_EMAIL_VERIFICATION,
+      },
+      emailDeliveryAvailable: false,
+    });
+
+    await expect(
+      service.resendVerificationCode('jane@example.com'),
+    ).rejects.toMatchObject({ code: 'EMAIL_DELIVERY_DISABLED' });
+    expect(ensureAvailable).toHaveBeenCalledTimes(1);
+    expect(findByEmail).not.toHaveBeenCalled();
+  });
+
+  it('does not change existing successful behavior when email delivery is available', async () => {
+    const { service, sendVerificationCode } = makeService({
+      user: {
+        id: 'u1',
+        email: 'jane@example.com',
+        accountStatus: UserAccountStatus.PENDING_EMAIL_VERIFICATION,
+      },
+      activeCode: null,
+      emailDeliveryAvailable: true,
+    });
+
+    const result = await service.resendVerificationCode('jane@example.com');
+
+    expect(result.resent).toBe(true);
+    expect(sendVerificationCode).toHaveBeenCalled();
   });
 });

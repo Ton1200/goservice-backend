@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { DomainException } from '../../common/errors/domain-exception';
+import { EnsureEmailDeliveryAvailableService } from '../../email/services/ensure-email-delivery-available.service';
 import { PasswordHasherPort } from '../ports/password-hasher.port';
 import { PhoneNumberValidatorPort } from '../ports/phone-number-validator.port';
 import { VerificationCodeSenderPort } from '../ports/verification-code-sender.port';
@@ -8,7 +9,10 @@ import { UsersRepository } from '../users.repository';
 import { RegisterUserService } from './register-user.service';
 
 describe('RegisterUserService', () => {
-  function makeService(overrides?: { existingUser?: unknown }) {
+  function makeService(overrides?: {
+    existingUser?: unknown;
+    emailDeliveryAvailable?: boolean;
+  }) {
     const findByEmail = jest
       .fn()
       .mockResolvedValue(overrides?.existingUser ?? null);
@@ -46,12 +50,28 @@ describe('RegisterUserService', () => {
       }),
     } as unknown as ConfigService;
 
+    const ensureAvailable = jest.fn(() => {
+      if (overrides?.emailDeliveryAvailable === false) {
+        return Promise.reject(
+          new DomainException(
+            'EMAIL_DELIVERY_DISABLED',
+            'Email delivery is currently disabled.',
+          ),
+        );
+      }
+      return Promise.resolve(undefined);
+    });
+    const ensureEmailDeliveryAvailable = {
+      ensureAvailable,
+    } as unknown as EnsureEmailDeliveryAvailableService;
+
     const service = new RegisterUserService(
       usersRepository,
       passwordHasher,
       phoneNumberValidator,
       verificationCodeSender,
       configService as never,
+      ensureEmailDeliveryAvailable,
     );
 
     return {
@@ -60,6 +80,7 @@ describe('RegisterUserService', () => {
       createPasswordUser,
       isValid,
       sendVerificationCode,
+      ensureAvailable,
     };
   }
 
@@ -144,5 +165,32 @@ describe('RegisterUserService', () => {
     await expect(service.register(validInput())).rejects.toBeInstanceOf(
       DomainException,
     );
+  });
+
+  it('checks email-delivery availability FIRST, before any DB lookup/write, and propagates its error', async () => {
+    const { service, findByEmail, createPasswordUser, ensureAvailable } =
+      makeService({ emailDeliveryAvailable: false });
+
+    await expect(service.register(validInput())).rejects.toMatchObject({
+      code: 'EMAIL_DELIVERY_DISABLED',
+    });
+    expect(ensureAvailable).toHaveBeenCalledTimes(1);
+    expect(findByEmail).not.toHaveBeenCalled();
+    expect(createPasswordUser).not.toHaveBeenCalled();
+  });
+
+  it('does not change existing successful behavior when email delivery is available', async () => {
+    const { service, createPasswordUser, sendVerificationCode } = makeService({
+      emailDeliveryAvailable: true,
+    });
+
+    const result = await service.register(validInput());
+
+    expect(result).toEqual({
+      userId: 'user-1',
+      emailVerificationRequired: true,
+    });
+    expect(createPasswordUser).toHaveBeenCalled();
+    expect(sendVerificationCode).toHaveBeenCalled();
   });
 });

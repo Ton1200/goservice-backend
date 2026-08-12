@@ -1,0 +1,607 @@
+/*
+ * GOS-30/31/32 — GoService theme override for the vendored Tabler core CSS.
+ *
+ * Loaded AFTER `vendor/tabler/css/tabler.min.css` (see index.html) and
+ * NEVER edits that vendored file directly (see vendor/tabler/NOTICE.md) —
+ * Tabler is themed entirely through the CSS custom properties it already
+ * defines on `:root`/`.navbar`/etc., which this file re-declares with
+ * GoService's own values so `tabler.min.css` stays a clean, swappable
+ * drop-in for a future Tabler version.
+ *
+ * Palette source of truth: `goservice-mobile/src/design-system/tokens/colors.ts`.
+ * That file's own header marks the palette "proposed, not final brand" —
+ * true here too. Do not treat these hex values as final brand colors.
+ *
+ * Every `--tblr-*` variable overridden below was verified to actually exist
+ * in this exact vendored Tabler 1.4.0 build (grepped, not assumed) before
+ * being overridden — see the corresponding rule in tabler.min.css for the
+ * component(s) each variable actually drives.
+ */
+
+/*
+ * Bootstrap/Tabler display-utility classes (`.d-flex`, `.d-grid`, `.d-block`,
+ * etc.) are deliberately defined with `!important` so they reliably win
+ * against other display rules — but that includes the browser's own,
+ * `!important`-free `[hidden] { display: none }` UA-stylesheet rule.
+ * Concretely: `#login-view` (index.html) carries `class="d-flex
+ * flex-column"` for its own internal centering layout, and `js/view.js` /
+ * `js/nav.js` toggle visibility purely via the native `hidden` attribute —
+ * without this rule, `.d-flex`'s `!important` silently wins and the
+ * "hidden" element stays fully visible and interactive despite
+ * `hidden === true`. Confirmed live via Playwright: the login card stayed
+ * rendered, stacked above the dashboard, on every section after a real
+ * login. This single override fixes it everywhere, current and future
+ * sections alike, rather than requiring every section's markup to avoid
+ * `d-*` utility classes forever.
+ */
+[hidden] {
+  display: none !important;
+}
+
+:root {
+  /* ---- GoService design tokens, exposed as their own --gs-* variables ---
+     for use by the custom (non-Tabler-native) markup in this panel, e.g.
+     the feature-flag toggle switch and the sidebar's active-item accent.
+     Mirrors goservice-mobile/src/design-system/tokens/colors.ts. */
+  --gs-brand-primary: #12365e;
+
+  --gs-action-primary: #2e6be6;
+  --gs-action-primary-pressed: #2454b8;
+  --gs-action-primary-disabled: #b9cdf0;
+  --gs-action-secondary: #4b5565;
+
+  --gs-accent-primary: #16b3a3;
+
+  --gs-background-primary: #f4f7fb;
+  --gs-background-secondary: #eaf0f7;
+  --gs-surface-primary: #ffffff;
+  --gs-surface-secondary: #f0f4f9;
+
+  --gs-text-primary: #1c2430;
+  --gs-text-secondary: #4b5565;
+  --gs-text-muted: #7a8699;
+  --gs-text-inverse: #ffffff;
+
+  --gs-border-default: #dce3ec;
+
+  --gs-feedback-success: #2e9e68;
+  --gs-feedback-success-surface: #e6f5ec;
+  --gs-feedback-warning: #e0952c;
+  --gs-feedback-warning-surface: #fbf0e2;
+  --gs-feedback-error: #d64545;
+  --gs-feedback-error-surface: #fbeaea;
+  --gs-feedback-info: #3b7dd8;
+  --gs-feedback-info-surface: #e9f1fc;
+
+  /* ---- Tabler variable overrides ------------------------------------ */
+
+  /* action.primary -> Tabler's primary (buttons, links, focus rings,
+     .btn-primary, .text-primary, .bg-primary, form-control focus shadow —
+     all verified driven by --tblr-primary / --tblr-primary-rgb). */
+  --tblr-primary: var(--gs-action-primary);
+  --tblr-primary-rgb: 46, 107, 230;
+  /* action.primaryPressed -> the hover/active-darkened shade Tabler uses
+     on .btn-primary:hover etc. (--tblr-primary-darken). */
+  --tblr-primary-darken: var(--gs-action-primary-pressed);
+
+  /* action.secondary -> Tabler's secondary AND the .text-secondary utility
+     (both verified keyed off --tblr-secondary / --tblr-secondary-rgb) —
+     action.secondary and text.secondary share the same hex in this
+     palette, so one override correctly covers both. */
+  --tblr-secondary: var(--gs-action-secondary);
+  --tblr-secondary-rgb: 75, 85, 101;
+
+  /* feedback.* -> Tabler's success/warning/danger/info, including their
+     exact *-surface hex (not Tabler's auto-derived color-mix tint) since
+     the design tokens specify each surface color explicitly. */
+  --tblr-success: var(--gs-feedback-success);
+  --tblr-success-rgb: 46, 158, 104;
+  --tblr-success-lt: var(--gs-feedback-success-surface);
+
+  --tblr-warning: var(--gs-feedback-warning);
+  --tblr-warning-rgb: 224, 149, 44;
+  --tblr-warning-lt: var(--gs-feedback-warning-surface);
+
+  --tblr-danger: var(--gs-feedback-error);
+  --tblr-danger-rgb: 214, 69, 69;
+  --tblr-danger-lt: var(--gs-feedback-error-surface);
+
+  --tblr-info: var(--gs-feedback-info);
+  --tblr-info-rgb: 59, 125, 216;
+  --tblr-info-lt: var(--gs-feedback-info-surface);
+
+  /* text.muted -> the .text-muted utility (verified keyed off
+     --tblr-muted / --tblr-muted-rgb, a distinct slot from --tblr-secondary). */
+  --tblr-muted: var(--gs-text-muted);
+  --tblr-muted-rgb: 122, 134, 153;
+
+  /* text.primary / background.primary / border.default -> page-level
+     defaults (verified: .page{background:var(--tblr-body-bg)},
+     body color, .border{border-color:var(--tblr-border-color)}). */
+  --tblr-body-color: var(--gs-text-primary);
+  --tblr-body-color-rgb: 28, 36, 48;
+  --tblr-body-bg: var(--gs-background-primary);
+  --tblr-body-bg-rgb: 244, 247, 251;
+  --tblr-border-color: var(--gs-border-default);
+
+  /* background.secondary -> the secondary-surface slot a few components
+     (subtle panels) read from. surface.primary is already Tabler's
+     default white, kept explicit here for documentation. */
+  --tblr-bg-surface-secondary: var(--gs-background-secondary);
+  --tblr-bg-surface-primary: var(--gs-surface-primary);
+}
+
+/* Focus ring border color on text inputs: Tabler's own focus box-shadow
+   already picks up --tblr-primary-rgb above; this just aligns the paired
+   border-color (verified: .form-control:focus sets both). */
+.form-control:focus {
+  border-color: var(--gs-action-primary);
+}
+
+.btn-primary:disabled,
+.btn-primary.disabled {
+  background-color: var(--gs-action-primary-disabled);
+  border-color: var(--gs-action-primary-disabled);
+}
+
+/* ---- Sidebar (the vertical navbar, `#app-sidebar` in index.html) ------
+   `.navbar` locally redeclares --tblr-navbar-bg/--tblr-navbar-active-border-color
+   at `.navbar` specificity (verified in tabler.min.css), so this override
+   uses an ID selector to win regardless of source order. */
+#app-sidebar {
+  --tblr-navbar-bg: var(--gs-brand-primary);
+  /* accent.primary (turquoise) -> the active-nav-item indicator, matching
+     its documented purpose ("selected states"). */
+  --tblr-navbar-active-border-color: var(--gs-accent-primary);
+}
+
+#app-sidebar .navbar-brand {
+  font-size: 1.05rem;
+}
+
+/* ---- Feature-flag toggle switch ----------------------------------------
+   2026-08-08 restyle: was a hand-styled <button role="switch"
+   aria-checked="..."> pill badge (green/red background, "Enabled"/
+   "Disabled" text) — now a native <input type="checkbox" role="switch">
+   inside Bootstrap/Tabler's own vendored `.form-check.form-switch` markup
+   (see js/settings.js's `renderFlagField`), the same control this panel
+   already used for the now-removed "Público" checkbox. Chosen specifically
+   because the vendored `tabler.min.css` already gives the exact
+   track-plus-sliding-thumb look, the blue `--tblr-primary` checked-state
+   fill, and the dimmed disabled state for free — nothing to hand-roll here,
+   and `imgSrc: ["'self'", 'data:']` in the CSP (see
+   src/bootstrap/apply-security-middleware.ts) was already confirmed
+   necessary/sufficient for this exact control's `data:`-URI thumb/track
+   background images. No `.gs-toggle`-specific CSS is needed anymore — the
+   accessible behavior (`role="switch"`, `aria-checked` kept in sync,
+   `aria-label` announcing state) lives entirely in js/settings.js, unchanged
+   in spirit from before this restyle. */
+
+/* ---- Settings group disclosure (js/settings.js's `renderGroupNode`) ----
+   Every group heading BELOW the root level (any depth — e.g. "Social
+   Login") is a real, accessible disclosure button — EXPANDED by default
+   as of 2026-08-09 (was collapsed-by-default before the root tab strip
+   existed; now that top-level noise is already reduced by tabs, a
+   subgroup doesn't also need to start collapsed) — wrapping its label text
+   plus a chevron icon that rotates from pointing right (collapsed) to
+   pointing down (expanded). Root-level groups themselves are no longer
+   rendered by `renderGroupNode` at all — see `renderRootTabs`. Generic by
+   design: nothing here is specific to any one group's depth or name. */
+.gs-settings-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gs-settings-group-toggle:focus-visible {
+  outline: 2px solid var(--gs-action-primary);
+  outline-offset: 2px;
+}
+
+.gs-settings-group-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.gs-settings-group-toggle[aria-expanded='true'] .gs-settings-group-chevron {
+  transform: rotate(90deg);
+}
+
+/* `.page.page-center` (Tabler's standard auth-page centering pattern)
+   needs a full-height flex ancestor to actually center vertically; give
+   `#login-view` that height explicitly rather than depending on
+   `<body>`'s own (unrelated) flex rules. */
+#login-view {
+  min-height: 100vh;
+}
+
+/* ---- User-menu dropdown trigger (top-right header) ---------------------
+   Rounded/"pill" trigger per explicit design feedback, in GoService's
+   accent color, with a visible hover/focus state — Tabler's own
+   `.nav-link`/`.dropdown-toggle` styling alone is plain-text, no pill, no
+   avatar. */
+.gs-user-menu-toggle {
+  border-radius: var(--tblr-border-radius-pill);
+  background-color: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.gs-user-menu-toggle:hover,
+.gs-user-menu-toggle:focus-visible {
+  background-color: var(--gs-surface-secondary);
+}
+
+.gs-user-menu-toggle:focus-visible {
+  outline: 2px solid var(--gs-action-primary);
+  outline-offset: 2px;
+}
+
+/* Circular avatar showing the logged-in admin's initials (set via
+   `textContent` in js/login.js — never innerHTML). accent.primary
+   (turquoise) chosen deliberately over action.primary: the sidebar's
+   active-nav-item indicator already uses accent.primary for "selected/you
+   are here" state (see #app-sidebar above), so this reuses the same
+   "this represents you" association rather than the primary CTA color. */
+.gs-user-avatar {
+  background-color: var(--gs-accent-primary);
+  color: var(--gs-text-inverse);
+  font-weight: var(--tblr-font-weight-bold, 700);
+  font-size: 0.8125rem;
+}
+
+/* ---- Structural hook for future per-section sub-tabs -------------------
+   Every section (`.gs-section`) carries one of these, empty and hidden,
+   so a future slice can populate it with Tabler `.nav-link` items without
+   restructuring the section. Not used by any section yet. */
+.gs-subtabs {
+  margin-bottom: 1rem;
+}
+
+/* ---- "Configuración" settings layout (js/settings.js) -------------------
+   Full-width, two-column settings-page pattern (SaaS reference layout):
+   stacked group rows, each with a bold title + gray description on the
+   LEFT and the actual setting rows on the RIGHT, separated by horizontal
+   dividers — replaces the earlier Tabler card-grid layout. Every rule below
+   is driven purely by CSS classes `renderGroupNode`/`renderLeafBlock`
+   already apply, generically, at any tree depth/shape — nothing here is
+   specific to "Google"/"Apple"/"Social Login". */
+
+/* ---- Root-level tab strip (js/settings.js's `renderRootTabs`) ---------
+   The root node's direct children (e.g. "Customer" — generic, ready for
+   more later) render as a horizontal tab strip instead of a heading, per
+   the ARIA APG tabs pattern. Tabler's own vendored `.nav-underline`
+   utility already gives the exact underlined-active-tab look from the
+   reference SaaS layout (active tab: bold + underlined) — nothing here
+   hand-rolls that look; this only adds the spacing this settings page
+   needs around it. */
+.gs-settings-tablist {
+  margin-bottom: 1.5rem;
+}
+
+/* Panels are `tabindex="0"` per the ARIA APG tabpanel pattern (so a
+   keyboard/screen-reader user can move focus straight into a panel's
+   content) — give that focus state the same visible ring already used
+   elsewhere in this panel (e.g. `.gs-settings-group-toggle`,
+   `.gs-user-menu-toggle`) rather than relying on the browser default. */
+.gs-settings-tabpanel:focus-visible {
+  outline: 2px solid var(--gs-action-primary);
+  outline-offset: 2px;
+}
+
+/* A group heading at the SHALLOWEST rendered level below a root tab (h3 —
+   one below the page's own, now visually-hidden, <h2> "Configuración"
+   landmark, e.g. "Social Login" nested inside the "Customer" tab) reads as
+   a normal, bold section heading. Root-level groups themselves (e.g.
+   "Customer") no longer render as a heading at all — see the tab-strip
+   rules above — so this level is now the SHALLOWEST group heading that
+   actually appears in the page. */
+.gs-settings-group-heading {
+  font-weight: var(--tblr-font-weight-bold, 700);
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.gs-settings-group-heading:first-child {
+  margin-top: 0;
+}
+
+/* Any DEEPER group heading (h4+, e.g. whatever nests below "Social Login"
+   next) reads as a small, muted, uppercase section LABEL instead — still a
+   real heading element (correct semantics/hierarchy, no level skipped),
+   just visually subordinate to its shallower ancestor. This rule is
+   level-based, not name-based, so it applies to whatever nests this deep
+   next, not just today's "Social Login". */
+h4.gs-settings-group-heading,
+h5.gs-settings-group-heading,
+h6.gs-settings-group-heading {
+  font-size: 0.75rem;
+  font-weight: var(--tblr-font-weight-medium, 500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gs-text-secondary);
+}
+
+/* Container for a stack of sibling leaf blocks (e.g. "Google", "Apple")
+   under one group — `<hr>` children, inserted only BETWEEN siblings by
+   `renderGroupNode`, are the only dividers; a leaf block's own two
+   sub-groups never get one. */
+.gs-settings-blocks hr {
+  margin: 0;
+  border-color: var(--gs-border-default);
+}
+
+/* One leaf block: a Bootstrap `.row` with a left label/description column
+   and a right settings column (see `renderLeafBlock`) — no `.card`
+   wrapper. */
+.gs-settings-block {
+  padding: 1.5rem 0;
+}
+
+.gs-settings-block-title {
+  font-weight: var(--tblr-font-weight-bold, 700);
+  margin-bottom: 0.25rem;
+}
+
+.gs-settings-block-description {
+  font-size: 0.8125rem;
+  margin-bottom: 0;
+}
+
+/* Small label-style sub-heading for a leaf block's field groups
+   ("Configuración general" / "Credenciales") — deliberately a styled
+   `<div>`, not a heading element: it groups fields visually within a leaf
+   block, it does not introduce a new level in the page's heading
+   hierarchy. */
+.gs-settings-subheading {
+  font-size: 0.75rem;
+  font-weight: var(--tblr-font-weight-medium, 500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gs-text-muted);
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.gs-settings-subheading:first-child {
+  margin-top: 0;
+}
+
+/* ---- Users grid: delete UI, GOS-3x follow-up (2026-08-10, hard-delete
+   2026-08-11) — js/userAccounts.js. Every color below reuses an existing
+   --gs-* token, none invented for this round. */
+
+/* Bulk-delete confirmation — a native <dialog> (usuarios-bulk-confirm-dialog),
+   itemizing every selected user by name + email, never just a count. Native
+   <dialog>/`.showModal()` needs no author-authored positioning CSS (the
+   browser's own UA stylesheet centers it) — only surface/border/spacing are
+   set here, all from existing tokens; `::backdrop`'s scrim color reuses the
+   same rgba(28, 36, 48, ...) already used for .tabulator-menu's box-shadow
+   (--gs-text-primary's RGB), not a new color. */
+.gs-confirm-dialog {
+  max-width: 32rem;
+  width: 90vw;
+  border: 1px solid var(--gs-border-default);
+  border-radius: 4px;
+  padding: 1.5rem;
+  color: var(--gs-text-primary);
+  background-color: var(--gs-surface-primary);
+}
+
+.gs-confirm-dialog::backdrop {
+  background-color: rgba(28, 36, 48, 0.5);
+}
+
+.gs-confirm-list {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin: 1rem 0 0;
+  padding-left: 1.25rem;
+}
+
+/* Per-row bulk success/failure feedback (usuarios-bulk-feedback) — never a
+   single generic banner for the whole batch. */
+.gs-bulk-feedback {
+  border: 1px solid var(--gs-border-default);
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background-color: var(--gs-surface-secondary);
+}
+
+.gs-bulk-feedback-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.gs-bulk-feedback-item {
+  padding: 0.125rem 0;
+}
+
+.gs-bulk-feedback-item-success {
+  color: var(--gs-feedback-success);
+}
+
+.gs-bulk-feedback-item-failed {
+  color: var(--gs-feedback-error);
+}
+
+/* ---- Generic dropdown menu (js/dropdownMenu.js) — GOS-3x follow-up
+   ("Columns" toolbar button + per-row "⋮" kebab menu, 2026-08-11).
+   Same surface/border/shadow treatment as the (now-removed) Tabulator
+   `.tabulator-menu` popup it replaces for column visibility, and the same
+   ONE color palette this whole panel already uses — nothing new
+   hardcoded. */
+.gs-dropdown-menu {
+  z-index: 1050;
+  min-width: 12rem;
+  max-width: 20rem;
+  background-color: var(--gs-surface-primary);
+  border: 1px solid var(--gs-border-default);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(28, 36, 48, 0.15);
+  padding: 0.25rem 0;
+}
+
+.gs-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  color: var(--gs-text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.gs-dropdown-item:focus-visible {
+  outline: 2px solid var(--gs-action-primary);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .gs-dropdown-item:hover {
+    background-color: var(--gs-background-secondary);
+  }
+}
+
+/* "Force password reset" item — same warning-toned color this action's
+   former standalone button used (`btn-outline-danger` was actually the
+   button's class, but the intent — a consequential, non-destructive write
+   — is the "warning" semantic slot here, distinct from "Delete"'s
+   danger/red). */
+.gs-dropdown-item-warning {
+  color: var(--gs-feedback-warning);
+}
+
+/* "Delete" item — same danger/red as every other irreversible-write
+   action in this panel. */
+.gs-dropdown-item-danger {
+  color: var(--gs-feedback-error);
+}
+
+/* The per-row "⋮" kebab trigger (replaces the two loose "Force password
+   reset"/"Delete" buttons the Actions column used to render) — a plain,
+   icon-only, unobtrusive button matching this panel's existing
+   muted-icon convention (see the Tabulator header-menu popup button in
+   tabulator-theme.css). */
+.gs-kebab-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--gs-text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .gs-kebab-button:hover {
+    background-color: var(--gs-background-secondary);
+    color: var(--gs-text-primary);
+  }
+}
+
+.gs-kebab-button:focus-visible {
+  outline: 2px solid var(--gs-action-primary);
+  outline-offset: 2px;
+}
+
+/* ---- User detail modal (js/userAccounts.js's "View" row action,
+   GOS-3x follow-up, 2026-08-11) — a native <dialog>, same
+   surface/border/spacing convention as `.gs-confirm-dialog` above, just
+   wider (it holds a full tabbed profile view, not a short confirmation
+   message/list). */
+.gs-detail-dialog {
+  max-width: 40rem;
+  width: 92vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  border: 1px solid var(--gs-border-default);
+  border-radius: 4px;
+  padding: 1.5rem;
+  color: var(--gs-text-primary);
+  background-color: var(--gs-surface-primary);
+}
+
+.gs-detail-dialog::backdrop {
+  background-color: rgba(28, 36, 48, 0.5);
+}
+
+.gs-detail-tablist {
+  margin-bottom: 1rem;
+}
+
+.gs-detail-tabpanel:focus-visible {
+  outline: 2px solid var(--gs-action-primary);
+  outline-offset: 2px;
+}
+
+/* One labeled field row inside a detail tabpanel — a small muted label
+   above the value, reusing the exact same label styling convention
+   `.gs-settings-subheading` already established for this panel's other
+   small uppercase labels. */
+.gs-detail-field-label {
+  font-size: 0.75rem;
+  font-weight: var(--tblr-font-weight-medium, 500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gs-text-muted);
+  margin-bottom: 0.125rem;
+}
+
+.gs-detail-field-value {
+  margin-bottom: 1rem;
+  word-break: break-word;
+}
+
+/* A visually-separated sub-section within a tabpanel (e.g. "Address" under
+   Customer profile, "Service area"/"Specializations" under Professional
+   profile) — a top border + heading, same divider color as every other
+   `<hr>`/border in this panel. */
+.gs-detail-subsection {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--gs-border-default);
+}
+
+.gs-detail-subsection:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.gs-detail-subsection-heading {
+  font-weight: var(--tblr-font-weight-bold, 700);
+  margin-bottom: 0.75rem;
+}
+
+.gs-detail-specialization {
+  padding: 0.75rem;
+  border: 1px solid var(--gs-border-default);
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+  background-color: var(--gs-surface-secondary);
+}
+
+.gs-detail-specialization:last-child {
+  margin-bottom: 0;
+}
+
+.gs-detail-photo {
+  max-width: 6rem;
+  max-height: 6rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  display: block;
+}

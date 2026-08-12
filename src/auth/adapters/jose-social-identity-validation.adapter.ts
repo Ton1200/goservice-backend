@@ -4,23 +4,51 @@ import { DomainException } from '../../common/errors/domain-exception';
 import { SocialProvider } from '../enums/social-provider.enum';
 import { SOCIAL_AUTH_PROVIDER_CONFIG } from '../config/social-auth-provider.config';
 import type { SocialAuthProviderConfigMap } from '../config/social-auth-provider.config';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
+import { socialLoginMisconfigured } from '../errors/social-login-misconfigured.error';
 import {
   SocialIdentityValidationPort,
   ValidatedSocialIdentity,
 } from '../ports/social-identity-validation.port';
 
 /**
+ * Maps a `SocialProvider` to the `PlatformSetting.key` holding its expected
+ * `aud` (audience) value — the Slice-2 reference case for
+ * `PlatformSettingPort.getValue`'s cross-boundary read (Slice 3 consolidated
+ * the former `PlatformCredentialPort` into `PlatformSettingPort`), mirroring
+ * `FEATURE_FLAG_KEY_BY_PROVIDER` in `../services/social-login.service.ts`.
+ * A client-id is a PUBLIC OAuth identifier, not a secret (see
+ * `admin-panel/js/settings.js`'s `KNOWN_SETTING_SLOTS`), so the underlying
+ * `PlatformSetting` row for this key is expected to be non-encrypted — but
+ * this adapter never assumes that either way; `PlatformSettingPort.getValue`
+ * transparently returns the right thing regardless.
+ */
+const CLIENT_ID_CREDENTIAL_KEY_BY_PROVIDER: Record<SocialProvider, string> = {
+  [SocialProvider.GOOGLE]: 'customer.social-login.google.client-id',
+  [SocialProvider.APPLE]: 'customer.social-login.apple.client-id',
+};
+
+/**
  * Verifies Google/Apple identity tokens via `jose`'s remote-JWKS
- * verification (RS256 signature + `iss`/`aud`/`exp`). ANY failure (bad
- * signature, wrong issuer/audience, expired token, JWKS fetch failure)
- * collapses to a single generic `SOCIAL_LOGIN_FAILED` `DomainException` —
- * never leaking which specific check failed, per GOS-22's security
- * requirements.
+ * verification (RS256 signature + `iss`/`aud`/`exp`). ANY signature/claim
+ * verification failure (bad signature, wrong issuer/audience, expired
+ * token, JWKS fetch failure) collapses to a single generic
+ * `SOCIAL_LOGIN_FAILED` `DomainException` — never leaking which specific
+ * check failed, per GOS-22's security requirements.
  *
- * The provider -> {jwksUri, issuer, audience} map is injected (see
+ * The provider -> {jwksUri, issuer} map is injected (see
  * `SOCIAL_AUTH_PROVIDER_CONFIG`) rather than hardcoded, so tests can
  * substitute a locally-served JWKS without touching this class or the
- * production wiring in `AuthModule`.
+ * production wiring in `AuthModule`. The expected `aud` value itself (the
+ * one part of this that's operator-configured, not a well-known provider
+ * endpoint) is resolved per-call from `PlatformSettingPort.getValue`
+ * (GOS-30/31/32 Slice 2) — see
+ * `CLIENT_ID_CREDENTIAL_KEY_BY_PROVIDER` above. A missing credential (never
+ * configured in the admin panel yet) is a DISTINCT, deliberately
+ * un-swallowed `SOCIAL_LOGIN_MISCONFIGURED` failure — checked BEFORE
+ * `jwtVerify` even runs, outside the generic catch-all below, so
+ * `SocialLoginService` can let it escape un-normalized (see that class's
+ * own comment on why).
  */
 @Injectable()
 export class JoseSocialIdentityValidationAdapter implements SocialIdentityValidationPort {
@@ -36,19 +64,27 @@ export class JoseSocialIdentityValidationAdapter implements SocialIdentityValida
   constructor(
     @Inject(SOCIAL_AUTH_PROVIDER_CONFIG)
     private readonly providerConfig: SocialAuthProviderConfigMap,
+    private readonly platformSettingPort: PlatformSettingPort,
   ) {}
 
   async validate(
     provider: SocialProvider,
     identityToken: string,
   ): Promise<ValidatedSocialIdentity> {
+    const audience = await this.platformSettingPort.getValue(
+      CLIENT_ID_CREDENTIAL_KEY_BY_PROVIDER[provider],
+    );
+    if (!audience) {
+      throw socialLoginMisconfigured(provider);
+    }
+
     try {
       const settings = this.providerConfig[provider];
       const jwks = this.getOrCreateJwks(settings.jwksUri);
 
       const { payload } = await jwtVerify(identityToken, jwks, {
         issuer: settings.issuer,
-        audience: settings.audience,
+        audience,
       });
 
       const subject = payload.sub;

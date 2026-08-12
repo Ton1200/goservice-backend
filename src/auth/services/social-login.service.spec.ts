@@ -5,6 +5,7 @@ import { SessionPort } from '../ports/session.port';
 import { UsersRepository } from '../../users/users.repository';
 import { SocialIdentityValidationService } from './social-identity-validation.service';
 import { SocialLoginService } from './social-login.service';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 
 describe('SocialLoginService', () => {
   const VALIDATED_IDENTITY = {
@@ -19,6 +20,7 @@ describe('SocialLoginService', () => {
       user?: unknown;
       existingByEmail?: unknown;
       validateError?: unknown;
+      featureFlagEnabled?: boolean;
     } = {},
   ) {
     const findBySocialProviderSubject = jest
@@ -50,10 +52,16 @@ describe('SocialLoginService', () => {
     });
     const sessionPort = { createSession } as unknown as SessionPort;
 
+    const isEnabled = jest
+      .fn()
+      .mockResolvedValue(options.featureFlagEnabled ?? true);
+    const featureFlagPort = { isEnabled } as unknown as PlatformSettingPort;
+
     const service = new SocialLoginService(
       usersRepository,
       socialIdentityValidationService,
       sessionPort,
+      featureFlagPort,
     );
     return {
       service,
@@ -62,6 +70,7 @@ describe('SocialLoginService', () => {
       createSocialUser,
       validate,
       createSession,
+      isEnabled,
     };
   }
 
@@ -199,5 +208,79 @@ describe('SocialLoginService', () => {
     await expect(service.socialLogin(input)).rejects.toBeInstanceOf(
       DomainException,
     );
+  });
+
+  describe('PlatformCredentialPort gate (GOS-30/31/32 Slice 2 reference case)', () => {
+    it('lets SOCIAL_LOGIN_MISCONFIGURED escape UN-normalized (NOT collapsed into AUTHENTICATION_FAILED) when validate() throws it', async () => {
+      const { service, createSession } = makeService({
+        validateError: new DomainException(
+          'SOCIAL_LOGIN_MISCONFIGURED',
+          'Google sign-in is not fully configured yet.',
+        ),
+      });
+
+      await expect(service.socialLogin(input)).rejects.toMatchObject({
+        code: 'SOCIAL_LOGIN_MISCONFIGURED',
+        message: 'Google sign-in is not fully configured yet.',
+      });
+      expect(createSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('FeatureFlagPort gate (GOS-30/31/32 reference case)', () => {
+    it('rejects with SOCIAL_LOGIN_DISABLED — NOT AUTHENTICATION_FAILED — when the provider flag is disabled, checked BEFORE token validation', async () => {
+      const { service, validate, createSession, isEnabled } = makeService({
+        featureFlagEnabled: false,
+      });
+
+      await expect(service.socialLogin(input)).rejects.toMatchObject({
+        code: 'SOCIAL_LOGIN_DISABLED',
+        message: 'Google sign-in is currently disabled.',
+      });
+      expect(isEnabled).toHaveBeenCalledWith(
+        'customer.social-login.google.enabled',
+      );
+      // Never even reaches token validation once the flag is disabled.
+      expect(validate).not.toHaveBeenCalled();
+      expect(createSession).not.toHaveBeenCalled();
+    });
+
+    it('checks the APPLE-specific flag key and message for the APPLE provider', async () => {
+      const { service, isEnabled } = makeService({
+        featureFlagEnabled: false,
+      });
+
+      await expect(
+        service.socialLogin({
+          provider: SocialProvider.APPLE,
+          identityToken: 'token',
+        }),
+      ).rejects.toMatchObject({
+        code: 'SOCIAL_LOGIN_DISABLED',
+        message: 'Apple sign-in is currently disabled.',
+      });
+      expect(isEnabled).toHaveBeenCalledWith(
+        'customer.social-login.apple.enabled',
+      );
+    });
+
+    it('proceeds normally (reaching token validation) when the flag is enabled', async () => {
+      const { service, validate, createSession } = makeService({
+        user: eligibleUser(),
+        featureFlagEnabled: true,
+      });
+
+      await service.socialLogin(input);
+
+      expect(validate).toHaveBeenCalled();
+      expect(createSession).toHaveBeenCalled();
+    });
+
+    it('SOCIAL_LOGIN_DISABLED is a DomainException instance', async () => {
+      const { service } = makeService({ featureFlagEnabled: false });
+      await expect(service.socialLogin(input)).rejects.toBeInstanceOf(
+        DomainException,
+      );
+    });
   });
 });

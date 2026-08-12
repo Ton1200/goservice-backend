@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserAccountStatus } from '@prisma/client';
 import type { AppConfig } from '../../config/configuration';
+import { EnsureEmailDeliveryAvailableService } from '../../email/services/ensure-email-delivery-available.service';
 import { ResendVerificationCodePayload } from '../models/resend-verification-code-payload.model';
 import { VerificationCodeSenderPort } from '../ports/verification-code-sender.port';
 import { UsersRepository } from '../users.repository';
@@ -22,11 +23,21 @@ export class ResendVerificationCodeService {
     private readonly usersRepository: UsersRepository,
     private readonly verificationCodeSender: VerificationCodeSenderPort,
     private readonly configService: ConfigService<AppConfig, true>,
+    private readonly ensureEmailDeliveryAvailable: EnsureEmailDeliveryAvailableService,
   ) {}
 
   async resendVerificationCode(
     email: string,
   ): Promise<ResendVerificationCodePayload> {
+    // Checked FIRST, before any account lookup — same global,
+    // not-per-account gate as `RegisterUserService.register` and
+    // `RequestPasswordResetService.requestPasswordReset` (see
+    // `EnsureEmailDeliveryAvailableService`'s own doc comment). This
+    // mutation exists to resend an email, so an unavailable provider must
+    // fail loudly rather than return a synthetic "resent: true" that never
+    // actually resends anything.
+    await this.ensureEmailDeliveryAvailable.ensureAvailable();
+
     const { codeTtlMinutes, resendCooldownSeconds } = this.configService.get(
       'emailVerification',
       { infer: true },

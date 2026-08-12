@@ -1,11 +1,18 @@
 import { SocialProvider } from '../enums/social-provider.enum';
 
-/** JWKS/issuer/audience settings needed to verify one provider's tokens. */
+/**
+ * JWKS/issuer settings needed to verify one provider's tokens. Deliberately
+ * does NOT include `audience` (GOS-30/31/32 Slice 2 change): the expected
+ * `aud` claim is now the DECRYPTED `PlatformCredential` value for
+ * `customer.social-login.<provider>.client-id`, read at request time via
+ * `PlatformCredentialPort` — see
+ * `../adapters/jose-social-identity-validation.adapter.ts`. `jwksUri`/
+ * `issuer` stay static/hardcoded (real, well-known provider endpoints —
+ * never operator-configurable, unlike the client id).
+ */
 export interface SocialAuthProviderSettings {
   jwksUri: string;
   issuer: string;
-  /** Expected `aud` claim — the configured client id for this provider. */
-  audience: string;
 }
 
 export type SocialAuthProviderConfigMap = Record<
@@ -14,9 +21,9 @@ export type SocialAuthProviderConfigMap = Record<
 >;
 
 /**
- * DI token for the provider -> {jwksUri, issuer, audience} config map
- * consumed by `JoseSocialIdentityValidationAdapter`. Wired to the real
- * Google/Apple endpoints in `AuthModule` (see `buildDefaultSocialAuthProviderConfig`
+ * DI token for the provider -> {jwksUri, issuer} config map consumed by
+ * `JoseSocialIdentityValidationAdapter`. Wired to the real Google/Apple
+ * endpoints in `AuthModule` (see `buildDefaultSocialAuthProviderConfig`
  * below); tests override this provider to point at a locally-served JWKS
  * instead of hitting real Google/Apple infrastructure — this is the
  * "designed for testability" seam called out in the GOS-22 plan.
@@ -31,25 +38,21 @@ const APPLE_JWKS_URI = 'https://appleid.apple.com/auth/keys';
 const APPLE_ISSUER = 'https://appleid.apple.com';
 
 /**
- * Builds the real, production Google/Apple provider config from the
- * configured client ids. `googleClientId`/`appleClientId` are expected to
- * be non-empty in any environment where `socialLogin` is actually called
- * (enforced at startup by `env-validation.schema.ts`).
+ * Builds the real, production Google/Apple provider config — just the
+ * static jwksUri/issuer pair per provider. No longer takes any client-id
+ * parameters (GOS-30/31/32 Slice 2): those are resolved per-request from
+ * `PlatformCredentialPort` instead, not baked into this map at app-startup
+ * time — see this file's header comment.
  */
-export function buildDefaultSocialAuthProviderConfig(
-  googleClientId: string | undefined,
-  appleClientId: string | undefined,
-): SocialAuthProviderConfigMap {
+export function buildDefaultSocialAuthProviderConfig(): SocialAuthProviderConfigMap {
   return {
     [SocialProvider.GOOGLE]: {
       jwksUri: GOOGLE_JWKS_URI,
       issuer: GOOGLE_ISSUER,
-      audience: googleClientId ?? '',
     },
     [SocialProvider.APPLE]: {
       jwksUri: APPLE_JWKS_URI,
       issuer: APPLE_ISSUER,
-      audience: appleClientId ?? '',
     },
   };
 }
