@@ -1,0 +1,135 @@
+/*
+ * GOS-3x follow-up (2026-08-10) — GoService theme override for the vendored
+ * Tabulator core CSS (`vendor/tabulator/css/tabulator.min.css`), same
+ * layering pattern as `admin-theme.css` over `tabler.min.css`: loaded AFTER
+ * the vendored stylesheet (see index.html), NEVER edits that vendored file
+ * directly (see `vendor/tabulator/NOTICE.md`).
+ *
+ * UNLIKE `admin-theme.css`'s Tabler overrides, Tabulator 6.5.2's shipped
+ * "Standard" theme does NOT expose its own CSS custom properties to
+ * redeclare (verified — grepped `node_modules/tabulator-tables/dist/css/tabulator.css`
+ * for `--` custom-property declarations: none exist; every color is a
+ * hardcoded hex value on a specific selector). So this file maps
+ * Tabulator's CLASSES directly to the existing `--gs-*` tokens via ordinary
+ * selector overrides instead of variable redeclaration — the same intent
+ * ("theme the vendored library from GoService's own design tokens, never
+ * hardcode a new color"), just the only mechanism this particular vendored
+ * theme's CSS shape actually supports. Every selector below was verified to
+ * actually exist in this exact vendored Tabulator 6.5.2 build (grepped, not
+ * assumed) before being overridden — see the corresponding rule in
+ * `tabulator.min.css` for the color each selector actually drives.
+ */
+
+.tabulator {
+  border: 1px solid var(--gs-border-default);
+  background-color: var(--gs-surface-primary);
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--gs-text-primary);
+}
+
+.tabulator .tabulator-header {
+  background-color: var(--gs-background-secondary);
+  color: var(--gs-text-primary);
+  border-bottom: 1px solid var(--gs-border-default);
+}
+
+.tabulator .tabulator-header .tabulator-col {
+  background-color: var(--gs-background-secondary);
+  border-right: 1px solid var(--gs-border-default);
+}
+
+.tabulator .tabulator-header .tabulator-col .tabulator-header-filter input,
+.tabulator .tabulator-header .tabulator-col .tabulator-header-filter select {
+  border: 1px solid var(--gs-border-default);
+  border-radius: 4px;
+  color: var(--gs-text-primary);
+  background-color: var(--gs-surface-primary);
+}
+
+.tabulator .tabulator-header .tabulator-col .tabulator-header-filter input:focus,
+.tabulator .tabulator-header .tabulator-col .tabulator-header-filter select:focus {
+  outline: none;
+  border-color: var(--gs-action-primary);
+}
+
+.tabulator-row {
+  background-color: var(--gs-surface-primary);
+  color: var(--gs-text-primary);
+  border-bottom: 1px solid var(--gs-border-default);
+}
+
+.tabulator-row.tabulator-row-even {
+  background-color: var(--gs-surface-secondary);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tabulator-row.tabulator-selectable:hover {
+    background-color: var(--gs-background-secondary);
+  }
+}
+
+.tabulator-row.tabulator-selected {
+  background-color: var(--gs-action-primary-disabled);
+}
+
+.tabulator .tabulator-footer {
+  background-color: var(--gs-background-secondary);
+  border-top: 1px solid var(--gs-border-default);
+  color: var(--gs-text-secondary);
+}
+
+/* Tabulator's own built-in popup-menu class — kept themed (same
+   surface/border/hover treatment as this panel's own custom dropdowns, see
+   `.gs-dropdown-menu` in admin-theme.css) in case a FUTURE Tabulator
+   feature in this grid uses it (e.g. a `rowContextMenu`). NOT currently
+   used: the column-visibility `headerMenu` that used to be this rule's
+   reference case was removed 2026-08-11 — that functionality moved to a
+   new, always-visible "Columns" toolbar button (`js/dropdownMenu.js`'s own
+   custom popup, styled via `.gs-dropdown-menu` instead of this class) for
+   discoverability, consolidating what used to be two separate places for
+   column show/hide into one. The former `.tabulator-header-popup-button`
+   rule (the little "⋮" trigger Tabulator rendered per-column for that
+   `headerMenu`) was removed outright along with it — genuinely dead CSS
+   now that no column configures a `headerMenu` anymore, not left as an
+   unreachable rule. */
+.tabulator-menu {
+  background-color: var(--gs-surface-primary);
+  border: 1px solid var(--gs-border-default);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(28, 36, 48, 0.15);
+}
+
+.tabulator-menu .tabulator-menu-item {
+  color: var(--gs-text-primary);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tabulator-menu .tabulator-menu-item:not(.tabulator-menu-item-disabled):hover {
+    background: var(--gs-background-secondary);
+  }
+}
+
+/* Cell actively being edited (js/userAccounts.js's inline editors on
+   Name/Email/Phone/Status) — a clear, accessible focus indicator using the
+   same accent color as every other focus ring in this panel. */
+.tabulator-cell.tabulator-editing {
+  border: 1px solid var(--gs-action-primary) !important;
+}
+
+/* Container this table mounts into (index.html's #usuarios-grid) — a
+   scrollable card-like frame, consistent with this panel's existing
+   .card-table convention for the section it replaces.
+   `overflow-x: auto` (2026-08-11 follow-up) — was `overflow: hidden`, which
+   silently CLIPPED any column that didn't fit instead of letting it scroll
+   into view. That bug was compounded by `layout: 'fitDataStretch'` in
+   `js/userAccounts.js` (see that setting's own comment) — together they
+   now produce Tabulator's own native horizontal scrollbar on
+   `.tabulator-tableholder` once there are more columns than fit the card's
+   width, rather than crushing every column down to unreadable widths or
+   losing columns off the right edge entirely. */
+#usuarios-grid {
+  border-radius: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}

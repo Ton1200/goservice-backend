@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/configuration';
 import { DomainException } from '../../common/errors/domain-exception';
+import { EnsureEmailDeliveryAvailableService } from '../../email/services/ensure-email-delivery-available.service';
 import { PasswordHasherPort } from '../ports/password-hasher.port';
 import { PhoneNumberValidatorPort } from '../ports/phone-number-validator.port';
 import { VerificationCodeSenderPort } from '../ports/verification-code-sender.port';
@@ -32,9 +33,18 @@ export class RegisterUserService {
     private readonly phoneNumberValidator: PhoneNumberValidatorPort,
     private readonly verificationCodeSender: VerificationCodeSenderPort,
     private readonly configService: ConfigService<AppConfig, true>,
+    private readonly ensureEmailDeliveryAvailable: EnsureEmailDeliveryAvailableService,
   ) {}
 
   async register(input: RegisterInput): Promise<RegisterPayload> {
+    // Checked FIRST, before any other work — mirrors
+    // `SocialLoginService.socialLogin`'s exact ordering precedent for its
+    // own upfront feature-flag check. `register` cannot complete without
+    // sending a real verification-code email, so an unavailable email
+    // provider must fail loudly here rather than create an account the
+    // user can never verify.
+    await this.ensureEmailDeliveryAvailable.ensureAvailable();
+
     const existingUser = await this.usersRepository.findByEmail(input.email);
     if (existingUser) {
       // Never reveal whether the collision is a password or social

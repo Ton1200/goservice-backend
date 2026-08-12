@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GoService Admin</title>
+  <link rel="stylesheet" href="vendor/tabler/css/tabler.min.css" />
+  <!-- GoService theme override, loaded AFTER the vendored Tabler stylesheet
+       (never edited directly — see vendor/tabler/NOTICE.md). -->
+  <link rel="stylesheet" href="css/admin-theme.css" />
+  <!-- Tabulator (Users grid, GOS-3x follow-up) — see
+       vendor/tabulator/NOTICE.md. Same "vendored file, then a GoService
+       override layered after it" pattern as Tabler above. -->
+  <link rel="stylesheet" href="vendor/tabulator/css/tabulator.min.css" />
+  <link rel="stylesheet" href="css/tabulator-theme.css" />
+</head>
+<body>
+  <!--
+    Slice-1 single-document admin panel. Login and the dashboard used to be
+    two separate static HTML documents (login.html + index.html), with
+    `login.js` navigating between them via `window.location.href` on a
+    successful login. That navigation is a real browser page load, which
+    tears down the whole JS module graph — including `session.js`'s
+    in-memory `currentToken` — so the destination document always booted
+    with `isLoggedIn() === false` and bounced straight back to the login
+    page. Fix: ONE document, two top-level sections (`#login-view` /
+    `#dashboard-view`) toggled via `hidden` by `js/view.js`, so the
+    `session.js` module instance survives the login->dashboard transition.
+    A real full-page reload (F5, closing and reopening the tab) still
+    discards the in-memory session exactly as designed — see ADR 0005 —
+    only the login->dashboard transition itself stopped being a navigation.
+
+    This restyle (Tabler admin dashboard template, see vendor/tabler/) adds
+    a sidebar with per-section content (`js/nav.js`, same `hidden`-toggle
+    pattern applied one level deeper) INSIDE `#dashboard-view`, without
+    touching any of the above: still one document, still no
+    localStorage/sessionStorage/cookie, still no `window.location.href` in
+    the logged-in flow.
+  -->
+  <section id="login-view" class="d-flex flex-column" aria-labelledby="login-heading">
+    <div class="page page-center">
+      <div class="container container-tight py-4">
+        <div class="text-center mb-4">
+          <span class="navbar-brand">GoService Admin</span>
+        </div>
+        <div class="card card-md">
+          <div class="card-body">
+            <h1 id="login-heading" class="h2 text-center mb-4">Sign in</h1>
+            <form id="login-form" class="login-form" novalidate autocomplete="off">
+              <div class="mb-3">
+                <label for="email" class="form-label">Email</label>
+                <input id="email" name="email" type="email" class="form-control" autocomplete="username" required />
+              </div>
+
+              <div class="mb-2">
+                <label for="password" class="form-label">Password</label>
+                <input id="password" name="password" type="password" class="form-control" autocomplete="current-password" required />
+              </div>
+
+              <p id="login-error" class="alert alert-danger" role="alert" hidden></p>
+
+              <div class="form-footer">
+                <button id="login-submit" type="submit" class="btn btn-primary w-100">Sign in</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div id="dashboard-view" hidden>
+    <!-- Sidebar (Tabler's standard vertical-navbar layout — verified
+         markup/classes against the vendored tabler.min.css:
+         `.navbar-vertical.navbar-expand-lg` is fixed-position/15rem wide,
+         and `.navbar-vertical.navbar-expand-lg ~ .page-wrapper` (a general
+         sibling selector — the aside and `.page-wrapper` below MUST be
+         direct siblings, not nested) reserves the matching left margin). -->
+    <aside id="app-sidebar" class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark" aria-label="Main navigation">
+      <div class="container-fluid">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#sidebar-menu" aria-controls="sidebar-menu" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <h1 class="navbar-brand">
+          <a href="#">GoService Admin</a>
+        </h1>
+
+        <div class="collapse navbar-collapse" id="sidebar-menu">
+          <ul class="navbar-nav pt-lg-3">
+            <li class="nav-item active">
+              <a class="nav-link" href="#configuracion" data-nav-target="settings-section" aria-current="page">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Settings</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#usuarios" data-nav-target="usuarios-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="9" cy="7" r="3" />
+                    <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+                    <circle cx="17" cy="8" r="2.5" />
+                    <path d="M15.5 14.2c2.6.4 4.5 2.6 4.5 5.3" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Users</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#credenciales" data-nav-target="credenciales-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="8" cy="15" r="4" />
+                    <path d="M11 12l9-9" />
+                    <path d="M17 6l3 3" />
+                    <path d="M14 9l2.5 2.5" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Credentials</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#administradores" data-nav-target="administradores-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />
+                    <path d="M9 12l2 2 4-4" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Administrators</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#auditoria" data-nav-target="auditoria-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="6" y="4" width="12" height="17" rx="2" />
+                    <path d="M9 3h6v3H9z" />
+                    <path d="M9 11h6" />
+                    <path d="M9 15h6" />
+                    <path d="M9 19h3" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Audit Log</span>
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </aside>
+
+    <div class="page-wrapper">
+      <header class="navbar navbar-expand-md d-print-none">
+        <div class="container-xl d-flex">
+          <!--
+            User-menu dropdown (GOS-31 follow-up) — shows which admin is
+            connected (avatar with initials, `displayName` primary, `email`
+            secondary), with a menu that at minimum holds "Cerrar sesión".
+            Populated once, in `js/login.js`'s success path
+            (`admin-display-name`/`admin-email`/`admin-avatar` nodes), since
+            the session is in-memory-only (see `js/session.js`) and a fresh
+            page load always shows the login view first — no
+            restore-on-reload case exists.
+
+            Layout fix: `.container-xl` alone is a plain block container,
+            not a flex container, so `order-md-last` on its own had nothing
+            to reorder against and this sat wherever it fell in normal flow
+            (confirmed live: right next to the sidebar, not the top-right
+            corner it was meant for). Fixed by making the container `d-flex`
+            and pushing this nav to the end with `ms-auto` — the standard
+            Bootstrap pattern for "one flex item, pushed to the far edge."
+
+            Bootstrap 5's Dropdown JS (bundled in
+            vendor/tabler/js/tabler.min.js) needs only
+            `data-bs-toggle="dropdown"` for open/close mechanics — no
+            custom JS, same mechanism already used by this file's
+            `.navbar-toggler` mobile-collapse button. It manages
+            `aria-expanded` on the toggle itself at runtime (verified in
+            the vendored bundle); `aria-haspopup` is NOT set automatically,
+            so it's added explicitly below. `data-bs-display="static"` is
+            set explicitly (on top of Bootstrap's own automatic
+            `.navbar`-ancestor detection, which already implies the same
+            thing here) so this toggle's menu is positioned via plain CSS
+            rather than Popper — Popper's dynamic positioning sets inline
+            `style` on the menu element at runtime, which would violate
+            this app's `style-src 'self'` CSP (no `unsafe-inline`, see
+            `src/bootstrap/apply-security-middleware.ts`) if this markup
+            ever moved outside a `.navbar` ancestor.
+
+            Trigger is a real `<button type="button">`, not `<a href="#">`
+            — a JS-only action, not a navigation, same reasoning as this
+            file's other JS-only controls. Name/email/initials are
+            populated via `textContent`, never `innerHTML` (see
+            `js/login.js`).
+          -->
+          <div class="navbar-nav flex-row ms-auto">
+            <div class="nav-item dropdown">
+              <button
+                id="user-menu-toggle"
+                type="button"
+                class="nav-link d-flex align-items-center lh-1 text-reset p-1 border-0 gs-user-menu-toggle dropdown-toggle"
+                data-bs-toggle="dropdown"
+                data-bs-display="static"
+                aria-expanded="false"
+                aria-haspopup="true"
+                aria-label="Administrator account menu"
+              >
+                <span id="admin-avatar" class="avatar avatar-sm rounded-circle gs-user-avatar" aria-hidden="true"></span>
+                <span class="d-none d-sm-block text-start ms-2 me-1">
+                  <div id="admin-display-name" class="fw-bold"></div>
+                  <div id="admin-email" class="text-secondary small"></div>
+                </span>
+              </button>
+              <div class="dropdown-menu dropdown-menu-end dropdown-menu-arrow" aria-labelledby="user-menu-toggle">
+                <!-- Future items (e.g. a "Mi perfil" link) can be added
+                     here as sibling <a class="dropdown-item" href="..."> elements
+                     without restructuring this menu. -->
+                <button id="logout-button" type="button" class="dropdown-item">Log out</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="page-body">
+        <div class="container-xl">
+          <!-- Configuración — real, functional (GOS-30/31/32 Slice 2).
+               Feature flags AND platform credentials, grouped by their
+               shared dot-namespaced key path (e.g.
+               `customer.social-login.google.enabled` /
+               `customer.social-login.google.client-id` render together, in
+               one "Google" card, under "Customer" > "Social Login"
+               headings) — see js/settings.js. -->
+          <section id="settings-section" class="gs-section" aria-labelledby="settings-heading">
+            <!-- In-page title removed from the visible layout (2026-08-09):
+                 the sidebar nav item already reads "Configuración", so a
+                 repeated in-page title was redundant. Kept — not deleted —
+                 as a visually-hidden heading, so the section still has a
+                 real, reachable heading landmark for screen-reader users
+                 who land on this content directly; `aria-labelledby` above
+                 also points at it. The root-level tab strip that now
+                 replaces the old visible "Customer" heading is rendered
+                 into #settings-content by js/settings.js's
+                 `renderRootTabs` — tabs are not heading elements per the
+                 ARIA APG tabs pattern, so the panel content's own heading
+                 numbering picks up from here (see
+                 `renderRootTabPanelContent`). -->
+            <h2 id="settings-heading" class="visually-hidden">Settings</h2>
+
+            <!-- Structural hook for future per-section sub-tabs (not used
+                 by this section yet — see css/admin-theme.css). -->
+            <nav class="nav nav-tabs gs-subtabs" aria-label="Settings subsections" hidden></nav>
+
+            <p id="settings-error" class="alert alert-danger" role="alert" hidden></p>
+            <div id="settings-content"></div>
+          </section>
+
+          <!-- Usuarios — GOS-3x follow-up: a real, functional data grid
+               reading/writing GoService's actual consumer `User` table via
+               `userAccounts`/`updateUserAccount`/`forceUserAccountPasswordReset`
+               (`/admin/graphql`, gated by USER_ACCOUNTS_READ/WRITE). See
+               js/userAccounts.js.
+
+               Hard-delete follow-up (2026-08-11) — REPLACES the prior
+               round's reversible deactivate/reactivate UI entirely, at
+               explicit human authorization (see ADR 0005's Tenth round):
+               row-selection + a bulk-delete toolbar, and a real itemized
+               confirmation <dialog> (name + email per affected user, not
+               just a count) — see js/userAccounts.js for all the wiring. -->
+          <section id="usuarios-section" class="gs-section" hidden aria-labelledby="usuarios-heading">
+            <div class="page-header d-print-none">
+              <h2 id="usuarios-heading" class="page-title">Users</h2>
+            </div>
+
+            <nav class="nav nav-tabs gs-subtabs" aria-label="Users subsections" hidden></nav>
+
+            <p id="usuarios-error" class="alert alert-danger" role="alert" hidden></p>
+            <p id="usuarios-success" class="alert alert-success" role="status" hidden></p>
+            <!-- Per-row success/failure feedback for bulkDeleteUserAccounts
+                 — populated by js/userAccounts.js, never a single generic
+                 banner for the whole batch. -->
+            <div id="usuarios-bulk-feedback" class="gs-bulk-feedback" hidden></div>
+
+            <div class="d-flex align-items-center justify-content-end gap-2 mb-3 gs-usuarios-toolbar">
+              <!-- "Columns" — GOS-3x follow-up (2026-08-11): replaces the
+                   former hidden per-column "Created At" header menu with one
+                   visible, discoverable toolbar button. Opens the same
+                   column-visibility checkbox list (js/userAccounts.js's
+                   `columnVisibilityHeaderMenu`), now via js/dropdownMenu.js's
+                   generic popup instead of Tabulator's own headerMenu. -->
+              <button id="usuarios-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                Columns
+              </button>
+              <button id="usuarios-bulk-delete-button" type="button" class="btn btn-outline-danger" disabled>
+                Delete selected (0)
+              </button>
+            </div>
+
+            <div class="card">
+              <!-- Tabulator mounts into this container (js/userAccounts.js).
+                   No mock rows here — the grid is empty until the first
+                   fetch resolves. -->
+              <div id="usuarios-grid"></div>
+            </div>
+
+            <!-- Bulk-delete confirmation — a native <dialog>, itemizing
+                 every selected user by name + email (never just a count).
+                 Built/populated entirely in js/userAccounts.js via
+                 document.createElement, never innerHTML. -->
+            <dialog id="usuarios-bulk-confirm-dialog" class="gs-confirm-dialog" aria-labelledby="usuarios-bulk-confirm-heading">
+              <h3 id="usuarios-bulk-confirm-heading">Permanently delete selected user accounts?</h3>
+              <p>
+                The following users will be permanently deleted immediately — this cannot be undone. Their profile(s), sessions, and all related data will be erased forever:
+              </p>
+              <ul id="usuarios-bulk-confirm-list" class="gs-confirm-list"></ul>
+              <div class="d-flex justify-content-end gap-2 mt-3">
+                <button type="button" id="usuarios-bulk-confirm-cancel" class="btn btn-outline-secondary">Cancel</button>
+                <button type="button" id="usuarios-bulk-confirm-submit" class="btn btn-danger">Delete</button>
+              </div>
+            </dialog>
+
+            <!-- "View" row-detail modal — GOS-3x follow-up (2026-08-11).
+                 Fetches `userAccountDetail(id)` on demand (never pre-loaded
+                 alongside the grid) when opened from a row's "⋮" kebab menu.
+                 Tabs (Account/Customer profile/Professional profile/
+                 Activity) are built entirely in js/userAccounts.js via
+                 document.createElement, never innerHTML — only this dialog's
+                 own static chrome (heading, close button, loading/error
+                 placeholders) lives here, same convention as the bulk-delete
+                 confirmation dialog above. -->
+            <dialog id="usuarios-detail-dialog" class="gs-detail-dialog" aria-labelledby="usuarios-detail-heading">
+              <div class="d-flex justify-content-between align-items-start mb-3">
+                <h3 id="usuarios-detail-heading" class="mb-0">User details</h3>
+                <button type="button" id="usuarios-detail-close" class="btn-close" aria-label="Close"></button>
+              </div>
+              <p id="usuarios-detail-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="usuarios-detail-loading" class="text-secondary" hidden>Loading…</p>
+              <div id="usuarios-detail-content"></div>
+            </dialog>
+          </section>
+
+          <!-- Credenciales — still a placeholder tab. Slice 2 actually
+               DELIVERED encrypted third-party credential management, but
+               per the confirmed design it lives grouped together with its
+               related feature flags under "Configuración" (see
+               #settings-section / js/settings.js), not as its own separate
+               CRUD-style section here. This nav item/section is left as a
+               placeholder in case a future slice wants a dedicated
+               credentials-only view (e.g. a flat, ungrouped audit-style
+               list) — not renamed/repurposed without an explicit design
+               decision to do so. -->
+          <section id="credenciales-section" class="gs-section" hidden aria-labelledby="credenciales-heading">
+            <div class="page-header d-print-none">
+              <h2 id="credenciales-heading" class="page-title">Credentials</h2>
+            </div>
+
+            <nav class="nav nav-tabs gs-subtabs" aria-label="Credentials subsections" hidden></nav>
+
+            <div class="card">
+              <div class="empty">
+                <div class="empty-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 3" />
+                  </svg>
+                </div>
+                <p class="empty-title">Manage credentials from Settings</p>
+                <p class="empty-subtitle text-secondary">
+                  Third-party credential management is already implemented (Slice 2), grouped together with its related feature flags under the "Settings" tab.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Administradores — placeholder, Slice 3 (not built). -->
+          <section id="administradores-section" class="gs-section" hidden aria-labelledby="administradores-heading">
+            <div class="page-header d-print-none">
+              <h2 id="administradores-heading" class="page-title">Administrators</h2>
+            </div>
+
+            <nav class="nav nav-tabs gs-subtabs" aria-label="Administrators subsections" hidden></nav>
+
+            <div class="card">
+              <div class="empty">
+                <div class="empty-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 3" />
+                  </svg>
+                </div>
+                <p class="empty-title">Coming soon</p>
+                <p class="empty-subtitle text-secondary">
+                  Admin account management — planned for Slice 3. Not implemented yet.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Auditoría — placeholder, Slice 4 (not built). -->
+          <section id="auditoria-section" class="gs-section" hidden aria-labelledby="auditoria-heading">
+            <div class="page-header d-print-none">
+              <h2 id="auditoria-heading" class="page-title">Audit Log</h2>
+            </div>
+
+            <nav class="nav nav-tabs gs-subtabs" aria-label="Audit Log subsections" hidden></nav>
+
+            <div class="card">
+              <div class="empty">
+                <div class="empty-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 3" />
+                  </svg>
+                </div>
+                <p class="empty-title">Coming soon</p>
+                <p class="empty-subtitle text-secondary">
+                  Audit log of administrative actions — planned for Slice 4. Not implemented yet.
+                </p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vendored Tabler JS (Bootstrap's Collapse, etc. — bundled; confirmed
+       no localStorage/sessionStorage/cookie usage in this file). Only used
+       here for the sidebar's mobile collapse toggle; all section-switching
+       above is our own plain JS (js/nav.js), not this bundle. -->
+  <script src="vendor/tabler/js/tabler.min.js" defer></script>
+
+  <script type="module" src="js/login.js"></script>
+  <script type="module" src="js/bootstrap.js"></script>
+</body>
+</html>

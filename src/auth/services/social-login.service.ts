@@ -1,13 +1,42 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AuthProvider } from '@prisma/client';
+import { DomainException } from '../../common/errors/domain-exception';
 import { SessionPort } from '../ports/session.port';
 import { SocialProvider } from '../enums/social-provider.enum';
 import { SocialLoginInput } from '../models/social-login-input.model';
 import { LoginPayload } from '../models/login-payload.model';
 import { UsersRepository } from '../../users/users.repository';
 import { authenticationFailed } from '../errors/authentication-failed.error';
+import { socialLoginDisabled } from '../errors/social-login-disabled.error';
 import { isLoginEligibleStatus } from './login-eligibility.util';
 import { SocialIdentityValidationService } from './social-identity-validation.service';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
+
+/**
+ * Maps a `SocialProvider` to the `PlatformSetting.key` gating it — the
+ * reference case for `PlatformSettingPort.isEnabled`'s cross-boundary read
+ * (GOS-30/31/32 plan, "The `FeatureFlagPort` cross-boundary read" — Slice 3
+ * consolidated `FeatureFlagPort`/`PlatformCredentialPort` into one
+ * `PlatformSettingPort`). Both keys are seeded `value: 'true'` by default —
+ * see `prisma/seed.ts`. Renamed to the dot-namespaced path convention in
+ * Slice 2 (was `social-login.google`/`social-login.apple`) — see
+ * `prisma/seed.ts`'s comment for the full rationale.
+ */
+const FEATURE_FLAG_KEY_BY_PROVIDER: Record<SocialProvider, string> = {
+  [SocialProvider.GOOGLE]: 'customer.social-login.google.enabled',
+  [SocialProvider.APPLE]: 'customer.social-login.apple.enabled',
+};
+
+/** `DomainException.code` values from `validate()` that must escape
+ * un-normalized rather than collapse into the generic
+ * `authenticationFailed()` result below — see `SOCIAL_LOGIN_MISCONFIGURED`'s
+ * own doc comment (`../errors/social-login-misconfigured.error.ts`) for why
+ * this is a legitimate-to-disclose condition, not a credential-guessing
+ * signal.
+ */
+const PASSTHROUGH_VALIDATION_ERROR_CODES = new Set([
+  'SOCIAL_LOGIN_MISCONFIGURED',
+]);
 
 /**
  * `SocialProvider` (GraphQL-facing) and the Prisma `AuthProvider` enum
@@ -40,8 +69,8 @@ const SOCIAL_PROVIDER_TO_AUTH_PROVIDER: Record<SocialProvider, AuthProvider> = {
  *
  * Every failure — invalid/expired token, an email already used by another
  * account, an existing but ineligible account status — collapses to the
- * exact same `authenticationFailed()` result as `LoginService`, via the
- * one shared factory. Never reveals which case occurred.
+ * exact same `authenticationFailed()` result as `LoginService`, via the one
+ * shared factory. Never reveals which case occurred.
  */
 @Injectable()
 export class SocialLoginService {
@@ -51,9 +80,23 @@ export class SocialLoginService {
     private readonly usersRepository: UsersRepository,
     private readonly socialIdentityValidationService: SocialIdentityValidationService,
     private readonly sessionPort: SessionPort,
+    private readonly platformSettingPort: PlatformSettingPort,
   ) {}
 
   async socialLogin(input: SocialLoginInput): Promise<LoginPayload> {
+    // Checked BEFORE token validation/the anti-enumeration
+    // authenticationFailed() path — per GOS-32's acceptance criterion, a
+    // disabled provider must surface as its own distinct
+    // SOCIAL_LOGIN_DISABLED error, never collapsed into the generic
+    // authentication-failure result.
+    const featureFlagKey = FEATURE_FLAG_KEY_BY_PROVIDER[input.provider];
+    const providerEnabled =
+      await this.platformSettingPort.isEnabled(featureFlagKey);
+    if (!providerEnabled) {
+      this.logAttempt('failure', 'provider_disabled');
+      throw socialLoginDisabled(input.provider);
+    }
+
     let identity: Awaited<
       ReturnType<SocialIdentityValidationService['validate']>
     >;
@@ -62,11 +105,24 @@ export class SocialLoginService {
         input.provider,
         input.identityToken,
       );
-    } catch {
-      // Normalizes ANY validation failure — including the adapter's own
-      // internal SOCIAL_LOGIN_FAILED DomainException — to the single
-      // shared authentication-failure result. The underlying error is
-      // deliberately never re-thrown or logged with detail here (the
+    } catch (error) {
+      // SOCIAL_LOGIN_MISCONFIGURED (GOS-30/31/32 Slice 2) is a deliberate
+      // exception to the normalization below: an admin-driven
+      // "nobody has configured this provider's credential yet" condition is
+      // legitimate to disclose distinctly, same reasoning as the
+      // SOCIAL_LOGIN_DISABLED check above — never collapsed into the
+      // generic authentication-failure result.
+      if (
+        error instanceof DomainException &&
+        PASSTHROUGH_VALIDATION_ERROR_CODES.has(error.code)
+      ) {
+        this.logAttempt('failure', 'provider_misconfigured');
+        throw error;
+      }
+      // Normalizes every OTHER validation failure — including the
+      // adapter's own internal SOCIAL_LOGIN_FAILED DomainException — to the
+      // single shared authentication-failure result. The underlying error
+      // is deliberately never re-thrown or logged with detail here (the
       // adapter itself already logs a safe, detail-free warning).
       this.logAttempt('failure', 'token_validation_failed');
       throw authenticationFailed();

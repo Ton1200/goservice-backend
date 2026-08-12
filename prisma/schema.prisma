@@ -280,3 +280,262 @@ model ProfessionalSpecialization {
   // Anticipates Professional Discovery's "find professionals in category X".
   @@index([categoryId])
 }
+
+// GOS-30/31/32 — Platform-admin capability, Slice 1. These models are
+// deliberately NOT part of the GoService domain model (no ServiceRequest/
+// Quote/Engagement relationship) — they back an internal governance/config
+// tool (feature flags, credentials, admin users, audit log), reachable only
+// via the isolated `/admin/graphql` endpoint (see
+// `src/platform-admin/platform-admin.module.ts`). Kept in the same
+// `schema.prisma` file/database per ADR 0003 (single shared PostgreSQL
+// database), but intentionally namespaced with an `Admin`/`Platform` prefix
+// so they're never mistaken for consumer-domain entities.
+//
+// Field/model conventions mirror the rest of this schema: PascalCase
+// models, camelCase fields, `@db.Uuid` ids, hash-at-rest tokens named
+// `tokenHash @unique` (see `Session.tokenHash` above), `createdAt`/
+// `updatedAt @updatedAt` pairs.
+
+enum AdminUserStatus {
+  INVITED
+  ACTIVE
+  REVOKED
+}
+
+enum AdminSessionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+// The full permission catalog across all 4 planned slices (Slice 1 only
+// ever grants/checks FEATURE_FLAGS_READ/WRITE in code — the rest exist now
+// so `AdminRole` doesn't need a future migration when Slices 2-4 land).
+enum Permission {
+  FEATURE_FLAGS_READ
+  FEATURE_FLAGS_WRITE
+  CREDENTIALS_READ
+  CREDENTIALS_WRITE
+  ADMIN_USERS_MANAGE
+  SESSIONS_READ
+  AUDIT_LOG_READ
+  // GOS-3x follow-up (2026-08-10) — gates `userAccounts`/`updateUserAccount`/
+  // `forceUserAccountPasswordReset` (`src/platform-admin/user-accounts/`), a
+  // full read/write ADMIN surface over the consumer `User` table. NOT the
+  // same thing as the still-unbuilt `ADMIN_USERS_MANAGE`-guarded, future
+  // "Slice 3" admin-to-admin invite management (a different concept:
+  // managing OTHER ADMINS, reserved for `adminUsers`/`AdminInvite` naming) —
+  // see ADR 0005's dedicated section on this feature for the disambiguation.
+  USER_ACCOUNTS_READ
+  USER_ACCOUNTS_WRITE
+  // GOS-3x follow-up (soft-delete, 2026-08-10; REPLACED by hard-delete,
+  // 2026-08-11 — explicit human authorization, see ADR 0005's Tenth round)
+  // — gates `deleteUserAccount`/`bulkDeleteUserAccounts`, which now
+  // PERMANENTLY erase the target `User` row (and, via `onDelete: Cascade`,
+  // every `Session`/`EmailVerificationCode`/`PasswordResetCode`/
+  // `CustomerProfile`/`ProfessionalProfile` it owns). Deliberately its OWN
+  // permission, NOT folded into `USER_ACCOUNTS_WRITE`: an irreversible
+  // full account erasure is more consequential than editing a field, and is
+  // granted to `SUPER_ADMIN` ONLY — see `scripts/bootstrap-super-admin.ts`
+  // and ADR 0005's dedicated section on this decision. `CONFIG_MANAGER`
+  // does NOT get this permission, even though it already holds
+  // `USER_ACCOUNTS_WRITE`. Available in EVERY environment, not gated by
+  // `NODE_ENV` — a deliberate, explicit human decision (this is a
+  // development/testing convenience tool, not a production data-retention
+  // mechanism; see ADR 0005).
+  USER_ACCOUNTS_DELETE
+}
+
+// Fixed, code-seeded catalog for Slice 1 (see
+// `scripts/bootstrap-super-admin.ts`) — not creatable via any GraphQL
+// mutation yet. Whether `AdminRole` becomes admin-creatable later is an
+// open question, flagged for the ADR.
+model AdminRole {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String       @unique
+  permissions Permission[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  adminUsers AdminUser[]
+}
+
+model AdminUser {
+  id          String @id @default(uuid()) @db.Uuid
+  email       String @unique
+  displayName String
+
+  // Never exposed via GraphQL — mirrors `User.passwordHash`. Nullable to
+  // leave room for the Slice-3 invite flow (INVITED admins have no password
+  // yet); Slice 1's bootstrap script always sets it immediately.
+  passwordHash String?
+
+  roleId String    @db.Uuid
+  role   AdminRole @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  status AdminUserStatus @default(INVITED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions  AdminSession[]
+  auditLogs AdminAuditLog[]
+  // Slice 3 consolidation — `PlatformSetting.updatedByAdminUser`'s inverse
+  // relation must live on `AdminUser`, since Prisma requires both sides of a
+  // relation declared together. Replaces the former `updatedFeatureFlags`/
+  // `updatedPlatformCredentials` (now merged into one `PlatformSetting`
+  // table — see that model's own header comment).
+  updatedPlatformSettings PlatformSetting[]
+
+  @@index([status])
+}
+
+model AdminSession {
+  id          String    @id @default(uuid()) @db.Uuid
+  adminUserId String    @db.Uuid
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  // SHA-256 hash of the opaque session token — same hash-at-rest pattern as
+  // `Session.tokenHash`, generated/hashed by this module's OWN
+  // `admin-session-token.util.ts` (zero shared code with
+  // `src/auth/services/session-token.util.ts`).
+  tokenHash String             @unique
+  status    AdminSessionStatus @default(ACTIVE)
+
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
+  lastActivityAt DateTime  @default(now())
+  revokedAt      DateTime?
+
+  @@index([adminUserId, status])
+}
+
+// GOS-30/31/32 — Platform-admin capability. `PlatformSetting` is a Slice-3
+// consolidation of what used to be two separate models, `FeatureFlag`
+// (Slice 1) and `PlatformCredential` (Slice 2) — merged into ONE
+// Magento-`core_config_data`-style table (a path + a value, encryption
+// applied per-row via `isEncrypted`, not via a structurally separate model)
+// at explicit, informed human request, after being told the concrete
+// trade-off this implies: a per-row "remember to encrypt" flag is weaker
+// than a structurally-separate encrypted-only model, because nothing at the
+// TYPE level stops a future row from being mis-flagged. The guardrails below
+// (a DB CHECK constraint enforcing the encrypted-vs-plain column shape, and
+// `PlatformSettingFieldResolver`'s structural GraphQL-layer guard — see
+// `src/platform-admin/platform-settings/platform-setting-field.resolver.ts`)
+// exist SPECIFICALLY to make the accepted risk as safe as this architecture
+// allows, not to pretend the risk doesn't exist.
+//
+// GOS-3x follow-up (2026-08-08): the former `isPublic` column (a manual,
+// per-row "expose this via `platformPublicSettings`?" flag) was REMOVED —
+// see `20260808220000_drop_platform_setting_is_public`. After discussion,
+// a separate manual flag was judged unnecessary complexity: whether a
+// setting is ENCRYPTED is the only gate that matters. A non-encrypted
+// value is, by definition, not a secret, so it is now automatically safe to
+// expose — see `PlatformSettingsRepository.findPublicSettings()`'s
+// `WHERE isEncrypted = false` filter.
+//
+// GOS-3x follow-up #2 (2026-08-10) — REVERSAL, human-approved: `isPublic`
+// is BACK, as an independent, default-OFF opt-in — see
+// `20260810103000_reintroduce_platform_setting_is_public`. Driving reason:
+// more credential-shaped (`isEncrypted: true`) settings are coming soon,
+// and "not encrypted" was being used as a proxy for "meant to be shown to
+// mobile" — that stopped holding once a non-secret setting that is NOT
+// meant to be mobile-facing (backend/admin-only config, still not a
+// secret) became a realistic case rather than a hypothetical. See the
+// `isPublic` field's own comment below, and ADR 0005's dedicated section on
+// this reversal, for the full reasoning.
+//
+// `key` follows a dot-namespaced path convention, e.g.
+// `customer.social-login.google.enabled` — `<audience>.<area>.<...>.<leaf>`
+// — adopted (GOS-30/31/32 Slice 2) so the admin panel can group related
+// settings by path prefix (see `admin-panel/js/settings.js`) and so a
+// boolean flag and a related credential share a predictable, related key
+// shape (`customer.social-login.google.enabled` /
+// `customer.social-login.google.client-id`).
+enum PlatformSettingValueType {
+  BOOLEAN
+  STRING
+  NUMBER
+}
+
+model PlatformSetting {
+  id          String                   @id @default(uuid()) @db.Uuid
+  key         String                   @unique
+  description String
+  valueType   PlatformSettingValueType
+
+  // Per-row encryption flag — see this model's own header comment for why
+  // this is a deliberate, accepted trade-off, not an oversight. Also the
+  // ONLY gate deciding whether `platformConfig` (the
+  // UNAUTHENTICATED, consumer-facing `/graphql` query — see
+  // `src/platform-admin/platform-settings/public/`) may return this row:
+  // every `isEncrypted: false` row is automatically public, no separate
+  // manual flag — see `PlatformSettingsRepository.findPublicSettings()`.
+  isEncrypted Boolean @default(false)
+
+  // Independent of `isEncrypted` — answers a DIFFERENT question. Defaults
+  // to `false`: a brand-new setting is backend/admin-only by default, even
+  // when it isn't a secret, unless someone deliberately opts it in.
+  // `isEncrypted: true` is a HARD VETO over this: a row can never be both
+  // encrypted AND public — enforced structurally by the
+  // `platform_setting_encrypted_not_public_check` CHECK constraint (see the
+  // migration), and defensively at the application/DTO validation layer
+  // (`SetPlatformSettingService`) as the first line of defense with a
+  // clearer error message. `platformConfig` (the UNAUTHENTICATED,
+  // consumer-facing `/graphql` query) requires BOTH `isEncrypted: false`
+  // AND `isPublic: true` — see
+  // `PlatformSettingsRepository.findPublicSettings()`.
+  isPublic Boolean @default(false)
+
+  // Populated ONLY when isEncrypted = false — a DB CHECK constraint
+  // (`platform_setting_encrypted_shape_check`, see the migration) makes any
+  // other combination physically impossible to persist, not just
+  // discouraged by convention.
+  value String?
+
+  // Populated ONLY when isEncrypted = true (mirrors the former
+  // `PlatformCredential` columns exactly — same AES-256-GCM adapter,
+  // unchanged: `src/platform-admin/platform-settings/adapters/aes-gcm-credential-encryption.adapter.ts`).
+  // Plaintext is NEVER stored here or anywhere else; decrypted only in
+  // memory, only by `PlatformSettingPort.getDecryptedValue` (the one
+  // legitimate place plaintext exists at runtime).
+  ciphertext    Bytes?
+  iv            Bytes?
+  authTag       Bytes?
+  // e.g. "termina en •••1234" — never the real value, never reversible back
+  // to it on its own. Populated ONLY when isEncrypted = true (same CHECK
+  // constraint as above).
+  maskedPreview String?
+  // Free-text (GOOGLE, APPLE, ...), deliberately NOT an enum — avoids a
+  // schema migration every time a new provider/credential is added. Only
+  // meaningful when isEncrypted = true; left null otherwise.
+  provider      String?
+
+  updatedByAdminUserId String?    @db.Uuid
+  updatedByAdminUser   AdminUser? @relation(fields: [updatedByAdminUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AdminAuditLog {
+  id               String    @id @default(uuid()) @db.Uuid
+  actorAdminUserId String    @db.Uuid
+  actorAdminUser   AdminUser @relation(fields: [actorAdminUserId], references: [id], onDelete: Restrict)
+
+  // e.g. "FEATURE_FLAG_SET", "ADMIN_USER_REVOKED".
+  action String
+  // e.g. "FeatureFlag", "PlatformCredential", "AdminUser".
+  targetType String
+  targetKey  String
+
+  // Structured detail — MUST NEVER contain credential plaintext/ciphertext
+  // (see the Slice-2 `PlatformCredential` design note in the platform-admin
+  // implementation plan).
+  metadata Json?
+
+  occurredAt DateTime @default(now())
+
+  @@index([targetType, occurredAt])
+  @@index([actorAdminUserId])
+}

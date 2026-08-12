@@ -1,6 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import type { AppConfig } from '../config/configuration';
 import { DateScalar } from '../common/graphql/date.scalar';
 import { UsersModule } from '../users/users.module';
 import { JoseSocialIdentityValidationAdapter } from './adapters/jose-social-identity-validation.adapter';
@@ -18,6 +16,7 @@ import { SocialLoginService } from './services/social-login.service';
 import { SessionsRepository } from './sessions.repository';
 import { SessionGuard } from './guards/session.guard';
 import { AuthResolver } from './auth.resolver';
+import { PlatformSettingsModule } from '../platform-admin/platform-settings/platform-settings.module';
 
 // `PrismaModule` (`src/prisma/`) is `@Global()`, so `PrismaService` doesn't
 // need to be imported here explicitly — see `prisma.module.ts`.
@@ -27,7 +26,17 @@ import { AuthResolver } from './auth.resolver';
 // owned by `users/`, exposed via `UsersModule`'s `exports` array rather
 // than this module reaching into `users/` internals directly.
 @Module({
-  imports: [UsersModule],
+  // `PlatformSettingsModule` (GOS-30/31/32, Slice 3 consolidation of the
+  // former `FeatureFlagsModule`/`PlatformCredentialsModule`): exports ONLY
+  // `PlatformSettingPort`/`CredentialEncryptionPort`/
+  // `PlatformSettingsRepository` — a deliberately resolver-free module (see
+  // its own header comment for why that's load-bearing, not incidental).
+  // Confirmed via a dedicated Slice-1 spike that a module WITH a
+  // `@Resolver()` class, imported transitively through a module listed in a
+  // `GraphQLModule`'s `include` array, DOES leak that resolver's fields
+  // into that schema — so the admin-only `PlatformSettingsResolver` must
+  // never be reachable via this import.
+  imports: [UsersModule, PlatformSettingsModule],
   providers: [
     AuthResolver,
     // Owns `Session` (GOS-7) — never exported outside this module, see
@@ -55,21 +64,16 @@ import { AuthResolver } from './auth.resolver';
     },
     { provide: SessionPort, useClass: PostgresSessionAdapter },
     {
-      // Real Google/Apple endpoints by default — see
+      // Real Google/Apple jwksUri/issuer endpoints by default — see
       // `config/social-auth-provider.config.ts`. Tests override this
-      // provider to point at a locally-served JWKS instead.
+      // provider to point at a locally-served JWKS instead. No longer a
+      // `ConfigService`-dependent factory (GOS-30/31/32 Slice 2): the
+      // client-id/audience values this used to read from
+      // `GOOGLE_CLIENT_ID`/`APPLE_CLIENT_ID` env vars now come from
+      // `PlatformCredentialPort` instead, resolved per-request inside
+      // `JoseSocialIdentityValidationAdapter`.
       provide: SOCIAL_AUTH_PROVIDER_CONFIG,
-      useFactory: (configService: ConfigService<AppConfig, true>) => {
-        const { googleClientId, appleClientId } = configService.get(
-          'socialAuth',
-          { infer: true },
-        );
-        return buildDefaultSocialAuthProviderConfig(
-          googleClientId,
-          appleClientId,
-        );
-      },
-      inject: [ConfigService],
+      useValue: buildDefaultSocialAuthProviderConfig(),
     },
   ],
   // `SessionPort` is exported for `PasswordResetModule` (`src/password-reset/`),

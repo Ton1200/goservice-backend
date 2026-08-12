@@ -1,0 +1,32 @@
+-- GOS-3x follow-up #3 (2026-08-10) — RENAMES the `notifications.email.
+-- resend.*` `PlatformSetting.key` prefix, DROPPING the leading `customer.`
+-- segment it previously carried (`customer.notifications.email.resend.*`).
+-- Human-approved, data-only rename: the admin panel's "Notifications"
+-- settings group is being promoted from a subgroup nested under the
+-- "Customer" root tab to its OWN root-level tab, sibling to "Customer" —
+-- future notification types (e.g. push, SMS) will not necessarily be
+-- customer-scoped, so nesting them under "Customer" would have been
+-- misleading. `admin-panel/js/settings.js`'s `buildSettingsTree`/
+-- `renderRootTabs` derive the admin panel's tab structure purely from each
+-- key's dot-segments (see their own doc comments) — so this key-prefix
+-- rename is the ONLY change needed to move "Notifications" to its own root
+-- tab; no admin-panel UI code changes accompany this migration.
+--
+-- `key` is a plain string column (no enum/CHECK constraint on its shape) —
+-- this is a pure DATA fixup, not a schema migration; no ALTER TABLE/ADD
+-- COLUMN/constraint change accompanies it, mirroring how
+-- `20260810103000_reintroduce_platform_setting_is_public` combined a schema
+-- change with a data fixup UPDATE, minus the schema-change half (there is
+-- none here).
+--
+-- Affects exactly the 4 keys `RESEND_PLATFORM_SETTING_KEYS`
+-- (`goservice-backend/src/email/constants/resend-settings.constants.ts`)
+-- defines: `.enabled`, `.api-key`, `.from-address`, `.from-name`. The
+-- `LIKE 'customer.notifications.%'` predicate is scoped to this one
+-- namespace only — it cannot touch `customer.social-login.*` or any other
+-- `PlatformSetting` row, and is safe/inert (matches zero rows, does
+-- nothing) on any environment where these rows don't exist yet (e.g. a
+-- fresh install seeded directly under the new prefix by `prisma/seed.ts`).
+UPDATE "PlatformSetting"
+SET "key" = REPLACE("key", 'customer.notifications.', 'notifications.')
+WHERE "key" LIKE 'customer.notifications.%';
