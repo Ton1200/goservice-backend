@@ -139,6 +139,12 @@ const KNOWN_SETTING_SLOTS = [
     isEncrypted: false,
   },
   {
+    key: 'notifications.email.resend.enabled',
+    description: 'Gates Resend transactional email delivery.',
+    valueType: 'BOOLEAN',
+    isEncrypted: false,
+  },
+  {
     key: 'notifications.email.resend.api-key',
     description: 'Resend API key (transactional email delivery).',
     valueType: 'STRING',
@@ -147,6 +153,12 @@ const KNOWN_SETTING_SLOTS = [
   {
     key: 'notifications.email.resend.from-address',
     description: 'Verified "from" address Resend sends email as.',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
+  {
+    key: 'notifications.email.resend.from-name',
+    description: '"From" display name Resend sends email as.',
     valueType: 'STRING',
     isEncrypted: false,
   },
