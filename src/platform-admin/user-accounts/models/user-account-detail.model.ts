@@ -1,8 +1,8 @@
 import { Field, GraphQLISODateTime, ID, ObjectType } from '@nestjs/graphql';
 import { CustomerProfile } from '../../../profiles/models/customer-profile.model';
 import { ProfessionalProfile } from '../../../profiles/models/professional-profile.model';
+import { UserAccountStatus } from '../../../users/models/user-account-status.enum';
 import { AuthProvider } from './auth-provider.enum';
-import { UserAccountStatus } from './user-account-status.enum';
 
 /**
  * Admin-facing GraphQL type for `userAccountDetail` (`/admin/graphql` only —

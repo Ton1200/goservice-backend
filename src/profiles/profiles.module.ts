@@ -3,6 +3,7 @@ import { AuthModule } from '../auth/auth.module';
 import { UsersModule } from '../users/users.module';
 import { ProfilesRepository } from './profiles.repository';
 import { ProfilesResolver } from './profiles.resolver';
+import { GetMyAccountService } from './services/get-my-account.service';
 import { GetMyCustomerProfileService } from './services/get-my-customer-profile.service';
 import { GetMyProfessionalProfileService } from './services/get-my-professional-profile.service';
 import { ListCategoriesService } from './services/list-categories.service';
@@ -14,15 +15,18 @@ import { UpsertProfessionalProfileService } from './services/upsert-professional
 //
 // Imports `AuthModule` for `SessionGuard` (every query/mutation here
 // requires an active session — see `profiles.resolver.ts`) and
-// `UsersModule` for `UsersRepository`, needed by `ProfilesRepository` to
-// atomically transition `User.accountStatus` on the first successful
-// `CustomerProfile` creation. Both are the exact same cross-module reuse
+// `UsersModule` for `UsersRepository`, needed both by `ProfilesRepository`
+// (to atomically transition `User.accountStatus` on the first successful
+// `CustomerProfile` OR `ProfessionalProfile` creation, whichever comes
+// first) and by `GetMyAccountService` (`myAccount`'s own direct read of
+// `User.accountStatus`). Both imports are the exact same cross-module reuse
 // seam `PasswordResetModule` already uses for `AuthModule`/`UsersModule`.
 @Module({
   imports: [AuthModule, UsersModule],
   providers: [
     ProfilesResolver,
     ProfilesRepository,
+    GetMyAccountService,
     GetMyCustomerProfileService,
     GetMyProfessionalProfileService,
     ListCategoriesService,

@@ -118,7 +118,7 @@ describe('GraphQL requestPasswordReset (e2e)', () => {
     return { email, userId: user.id };
   }
 
-  async function seedIneligibleUser(
+  async function seedUserWithStatus(
     accountStatus: UserAccountStatus,
   ): Promise<{ email: string; userId: string }> {
     const email = uniqueEmail();
@@ -164,12 +164,11 @@ describe('GraphQL requestPasswordReset (e2e)', () => {
 
   it.each([
     UserAccountStatus.PENDING_EMAIL_VERIFICATION,
-    UserAccountStatus.PENDING_APPROVAL,
     UserAccountStatus.REJECTED,
   ])(
     'returns requested:true and creates no code for a non-login-eligible account (%s)',
     async (accountStatus) => {
-      const { email, userId } = await seedIneligibleUser(accountStatus);
+      const { email, userId } = await seedUserWithStatus(accountStatus);
 
       const response = await requestPasswordResetRequest(email);
       const body = response.body as RequestPasswordResetResponseBody;
@@ -183,6 +182,21 @@ describe('GraphQL requestPasswordReset (e2e)', () => {
 
   it('creates a real PasswordResetCode for an eligible account and returns requested:true', async () => {
     const { email, userId } = await seedEligibleUser();
+
+    const response = await requestPasswordResetRequest(email);
+    const body = response.body as RequestPasswordResetResponseBody;
+
+    expect(body.data?.requestPasswordReset).toEqual({ requested: true });
+    const codes = await prisma.passwordResetCode.findMany({
+      where: { userId, consumedAt: null, invalidatedAt: null },
+    });
+    expect(codes).toHaveLength(1);
+  });
+
+  it('creates a real PasswordResetCode for a PENDING_APPROVAL account too (now login-eligible), returning requested:true', async () => {
+    const { email, userId } = await seedUserWithStatus(
+      UserAccountStatus.PENDING_APPROVAL,
+    );
 
     const response = await requestPasswordResetRequest(email);
     const body = response.body as RequestPasswordResetResponseBody;

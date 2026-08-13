@@ -78,6 +78,17 @@ describe('LoginService', () => {
     expect(createSession).toHaveBeenCalledTimes(1);
   });
 
+  it('logs in successfully (PENDING_APPROVAL) and creates a session', async () => {
+    const { service, createSession } = makeService({
+      user: eligibleUser({ accountStatus: UserAccountStatus.PENDING_APPROVAL }),
+    });
+
+    const result = await service.login(validInput);
+
+    expect(result.userId).toBe('user-1');
+    expect(createSession).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects with AUTHENTICATION_FAILED on a wrong password, never creating a session', async () => {
     const { service, createSession } = makeService({
       user: eligibleUser(),
@@ -118,7 +129,6 @@ describe('LoginService', () => {
 
   it.each([
     UserAccountStatus.PENDING_EMAIL_VERIFICATION,
-    UserAccountStatus.PENDING_APPROVAL,
     UserAccountStatus.REJECTED,
   ])(
     'rejects with AUTHENTICATION_FAILED for ineligible status %s, never creating a session',

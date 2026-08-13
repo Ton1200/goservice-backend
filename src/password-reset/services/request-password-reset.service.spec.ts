@@ -122,7 +122,6 @@ describe('RequestPasswordResetService', () => {
 
   it.each([
     UserAccountStatus.PENDING_EMAIL_VERIFICATION,
-    UserAccountStatus.PENDING_APPROVAL,
     UserAccountStatus.REJECTED,
   ])(
     'returns the same neutral result, with no DB write, for a non-login-eligible account (%s)',
@@ -209,6 +208,23 @@ describe('RequestPasswordResetService', () => {
         authProvider: AuthProvider.PASSWORD,
         passwordHash: 'h',
         accountStatus: UserAccountStatus.APPROVED,
+      },
+      activeCode: null,
+    });
+
+    await service.requestPasswordReset('jane@example.com');
+
+    expect(createPasswordResetCode).toHaveBeenCalled();
+  });
+
+  it('issues a new code for a PENDING_APPROVAL account too (now login-eligible)', async () => {
+    const { service, createPasswordResetCode } = makeService({
+      user: {
+        id: 'u1',
+        email: 'jane@example.com',
+        authProvider: AuthProvider.PASSWORD,
+        passwordHash: 'h',
+        accountStatus: UserAccountStatus.PENDING_APPROVAL,
       },
       activeCode: null,
     });

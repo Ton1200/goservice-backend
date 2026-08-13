@@ -166,6 +166,22 @@ describe('GraphQL login (e2e)', () => {
     expect(sessions).toHaveLength(1);
   });
 
+  it('logs in successfully end-to-end for a PENDING_APPROVAL account (identity approval pending, but login-eligible) and creates a real Session row', async () => {
+    const { email, userId } = await seedUser(
+      UserAccountStatus.PENDING_APPROVAL,
+    );
+
+    const response = await loginRequest(email, PASSWORD);
+    const body = response.body as LoginResponseBody;
+
+    expect(body.errors).toBeUndefined();
+    expect(body.data?.login.userId).toBe(userId);
+
+    const sessions = await prisma.session.findMany({ where: { userId } });
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].status).toBe('ACTIVE');
+  });
+
   it('rejects a wrong password with AUTHENTICATION_FAILED, creating no session', async () => {
     const { email, userId } = await seedUser(UserAccountStatus.EMAIL_VERIFIED);
 
@@ -204,7 +220,6 @@ describe('GraphQL login (e2e)', () => {
 
   it.each([
     UserAccountStatus.PENDING_EMAIL_VERIFICATION,
-    UserAccountStatus.PENDING_APPROVAL,
     UserAccountStatus.REJECTED,
   ])(
     'rejects an ineligible-status (%s) account with the same AUTHENTICATION_FAILED result, creating no session',

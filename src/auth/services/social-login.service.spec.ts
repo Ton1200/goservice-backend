@@ -114,6 +114,18 @@ describe('SocialLoginService', () => {
     expect(result.userId).toBe('existing-user-1');
   });
 
+  it('logs in a returning, eligible (PENDING_APPROVAL) social user', async () => {
+    const { service } = makeService({
+      user: eligibleUser({
+        accountStatus: UserAccountStatus.PENDING_APPROVAL,
+      }),
+    });
+
+    const result = await service.socialLogin(input);
+
+    expect(result.userId).toBe('existing-user-1');
+  });
+
   it('auto-registers a new account for an unrecognized social identity with a brand-new email, then logs it in', async () => {
     const { service, createSocialUser, createSession } = makeService({
       user: null,
@@ -158,7 +170,6 @@ describe('SocialLoginService', () => {
 
   it.each([
     UserAccountStatus.PENDING_EMAIL_VERIFICATION,
-    UserAccountStatus.PENDING_APPROVAL,
     UserAccountStatus.REJECTED,
   ])(
     'rejects with AUTHENTICATION_FAILED for an existing but ineligible status %s, never creating a session',

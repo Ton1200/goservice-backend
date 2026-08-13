@@ -1,6 +1,6 @@
 import { Field, GraphQLISODateTime, ID, ObjectType } from '@nestjs/graphql';
+import { UserAccountStatus } from '../../../users/models/user-account-status.enum';
 import { AuthProvider } from './auth-provider.enum';
-import { UserAccountStatus } from './user-account-status.enum';
 
 /**
  * Admin-facing GraphQL type for `userAccounts`/`updateUserAccount`

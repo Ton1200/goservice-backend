@@ -28,12 +28,17 @@ type ProfessionalProfileWithSpecializations = ProfessionalProfile & {
  * `UsersRepository`/`SessionsRepository`/`PasswordResetRepository` (see
  * goservice-docs/architecture/backend.md).
  *
- * The one deliberate exception: `upsertCustomerProfile` also transitions
- * `User.accountStatus`. Rather than querying `user` directly (which would
- * break that same ownership rule), it delegates that single write to
+ * The one deliberate exception: both `upsertCustomerProfile` AND
+ * `upsertProfessionalProfile` also transition `User.accountStatus`, on the
+ * first successful creation of THEIR OWN profile type, whichever happens
+ * first for a given user. Rather than querying `user` directly (which would
+ * break that same ownership rule), each delegates that single write to
  * `UsersRepository.transitionToPendingApprovalIfEmailVerified`, passing its
  * own `$transaction`'s client through — see that method's doc comment for
- * the full rationale.
+ * the full rationale. Whichever profile type is created second for the same
+ * user is always a safe no-op on this front (the `WHERE accountStatus =
+ * EMAIL_VERIFIED` guard on that shared method already makes this race-safe
+ * — see its own doc comment).
  */
 @Injectable()
 export class ProfilesRepository {
@@ -140,6 +145,12 @@ export class ProfilesRepository {
    * change on an edit even when the same `categoryId` is resubmitted, so a
    * partial diff could leave stale field values in place. `order` is the
    * submitted array's index — never client-supplied.
+   *
+   * On the row's first-ever creation (and only then), atomically
+   * transitions `User.accountStatus` from `EMAIL_VERIFIED` to
+   * `PENDING_APPROVAL` within the same transaction — the exact same
+   * pattern `upsertCustomerProfile` above already uses, sharing the same
+   * underlying `UsersRepository` method: see the class doc comment above.
    */
   async upsertProfessionalProfile(
     userId: string,
@@ -161,6 +172,7 @@ export class ProfilesRepository {
   ): Promise<{
     profile: ProfessionalProfileWithSpecializations;
     wasCreated: boolean;
+    accountStatusTransitioned: boolean;
   }> {
     const { specializations, ...profileData } = data;
 
@@ -199,6 +211,14 @@ export class ProfilesRepository {
         orderBy: { order: 'asc' },
       });
 
+      const wasCreated = existing === null;
+      const accountStatusTransitioned = wasCreated
+        ? await this.usersRepository.transitionToPendingApprovalIfEmailVerified(
+            userId,
+            tx,
+          )
+        : false;
+
       return {
         profile: {
           ...profile,
@@ -210,7 +230,8 @@ export class ProfilesRepository {
             order: row.order,
           })),
         },
-        wasCreated: existing === null,
+        wasCreated,
+        accountStatusTransitioned,
       };
     });
   }

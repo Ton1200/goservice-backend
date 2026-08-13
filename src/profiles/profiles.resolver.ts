@@ -4,9 +4,11 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { Category } from './models/category.model';
 import { CustomerProfile } from './models/customer-profile.model';
+import { MyAccount } from './models/my-account.model';
 import { ProfessionalProfile } from './models/professional-profile.model';
 import { UpsertCustomerProfileInput } from './models/upsert-customer-profile-input.model';
 import { UpsertProfessionalProfileInput } from './models/upsert-professional-profile-input.model';
+import { GetMyAccountService } from './services/get-my-account.service';
 import { GetMyCustomerProfileService } from './services/get-my-customer-profile.service';
 import { GetMyProfessionalProfileService } from './services/get-my-professional-profile.service';
 import { ListCategoriesService } from './services/list-categories.service';
@@ -24,12 +26,22 @@ import { UpsertProfessionalProfileService } from './services/upsert-professional
 @Resolver()
 export class ProfilesResolver {
   constructor(
+    private readonly getMyAccountService: GetMyAccountService,
     private readonly getMyCustomerProfileService: GetMyCustomerProfileService,
     private readonly getMyProfessionalProfileService: GetMyProfessionalProfileService,
     private readonly listCategoriesService: ListCategoriesService,
     private readonly upsertCustomerProfileService: UpsertCustomerProfileService,
     private readonly upsertProfessionalProfileService: UpsertProfessionalProfileService,
   ) {}
+
+  @UseGuards(SessionGuard)
+  @Query(() => MyAccount, {
+    description:
+      "The authenticated user's own account-level state (currently just accountStatus).",
+  })
+  myAccount(@CurrentUser() userId: string): Promise<MyAccount> {
+    return this.getMyAccountService.getMyAccount(userId);
+  }
 
   @UseGuards(SessionGuard)
   @Query(() => CustomerProfile, {
@@ -84,7 +96,7 @@ export class ProfilesResolver {
   @UseGuards(SessionGuard)
   @Mutation(() => ProfessionalProfile, {
     description:
-      "Creates or updates the authenticated user's ProfessionalProfile (idempotent — always exactly one per user). verificationStatus is always UNVERIFIED on creation and cannot be set from this mutation. specializations fully replaces the professional's set of trades — exactly one must have role PRIMARY.",
+      "Creates or updates the authenticated user's ProfessionalProfile (idempotent — always exactly one per user). verificationStatus is always UNVERIFIED on creation and cannot be set from this mutation. specializations fully replaces the professional's set of trades — exactly one must have role PRIMARY. On the first successful creation only, transitions the account's status from EMAIL_VERIFIED to PENDING_APPROVAL.",
   })
   upsertProfessionalProfile(
     @CurrentUser() userId: string,

@@ -8,7 +8,7 @@ import { PasswordResetEmailSenderPort } from '../password-reset/ports/password-r
 import { EmailQueuePasswordResetEmailSenderAdapter } from '../password-reset/adapters/email-queue-password-reset-email-sender.adapter';
 import { IssuePasswordResetCodeService } from '../password-reset/services/issue-password-reset-code.service';
 import './admin-rbac/admin-permission.enum'; // GraphQL enum registration side effect
-import './user-accounts/models/user-account-status.enum'; // GraphQL enum registration side effect
+import '../users/models/user-account-status.enum'; // GraphQL enum registration side effect
 import './user-accounts/models/auth-provider.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';

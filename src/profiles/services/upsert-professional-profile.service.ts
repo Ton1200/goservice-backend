@@ -14,9 +14,12 @@ const DEFAULT_COUNTRY = 'AR';
  * `ProfessionalProfile.userId`'s `@unique`); `verificationStatus` is
  * always `UNVERIFIED` on creation and never mutated here — no code path in
  * this service can set anything else (see `ProfilesRepository`'s
- * `upsertProfessionalProfile`). Never touches `User.accountStatus` — that
- * gate belongs to the account (`CustomerProfile`'s flow), not the
- * professional profile.
+ * `upsertProfessionalProfile`). On the very first successful creation only,
+ * transitions the owning `User.accountStatus` from `EMAIL_VERIFIED` to
+ * `PENDING_APPROVAL` — that transition itself is implemented atomically
+ * inside `ProfilesRepository.upsertProfessionalProfile` — this service
+ * only decides what to log based on the repository's result, it never
+ * re-derives or re-checks the transition itself.
  *
  * Two things the DTO layer can't check on its own, so this service does:
  * every submitted `categoryId` must actually exist
@@ -44,7 +47,7 @@ export class UpsertProfessionalProfileService {
       input.specializations.map((s) => s.categoryId),
     );
 
-    const { profile, wasCreated } =
+    const { profile, wasCreated, accountStatusTransitioned } =
       await this.profilesRepository.upsertProfessionalProfile(userId, {
         displayName: input.displayName,
         city: input.city,
@@ -67,6 +70,13 @@ export class UpsertProfessionalProfileService {
         : 'professional_profile_updated',
       specializationCount: profile.specializations.length,
     });
+    if (accountStatusTransitioned) {
+      this.logger.log({
+        event: 'account_status_transition',
+        from: 'EMAIL_VERIFIED',
+        to: 'PENDING_APPROVAL',
+      });
+    }
 
     return profile;
   }

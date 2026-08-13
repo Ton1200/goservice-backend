@@ -26,11 +26,15 @@ enum AuthProvider {
   APPLE
 }
 
-// Account approval status. GOS-22 only ever assigns the first two values
-// (PENDING_EMAIL_VERIFICATION, EMAIL_VERIFIED) — PENDING_APPROVAL, APPROVED,
-// and REJECTED are reserved for a future identity-document approval story
-// and must exist in the schema now, but no code path in this story assigns
-// them. Do not build any approval logic against them here.
+// Account approval status. PENDING_APPROVAL is actively assigned today: the
+// first CustomerProfile OR ProfessionalProfile ever created for a User
+// (whichever comes first — see ProfilesRepository.upsertCustomerProfile/
+// upsertProfessionalProfile) atomically transitions the account from
+// EMAIL_VERIFIED to PENDING_APPROVAL. APPROVED/REJECTED are assignable
+// today too, but only via the platform-admin `updateUserAccount` manual
+// review mutation (an interim mechanism pending a real KYC/identity
+// verification vendor) — see
+// goservice-docs/decisions/DEC-006-account-identity-verification.md.
 enum UserAccountStatus {
   PENDING_EMAIL_VERIFICATION
   EMAIL_VERIFIED

@@ -9,6 +9,7 @@ describe('UpsertProfessionalProfileService', () => {
   function makeService(overrides?: {
     existingCategoryIds?: string[];
     wasCreated?: boolean;
+    accountStatusTransitioned?: boolean;
   }) {
     const profile = {
       id: 'profile-1',
@@ -36,6 +37,7 @@ describe('UpsertProfessionalProfileService', () => {
     const upsertProfessionalProfile = jest.fn().mockResolvedValue({
       profile,
       wasCreated: overrides?.wasCreated ?? true,
+      accountStatusTransitioned: overrides?.accountStatusTransitioned ?? true,
     });
     const profilesRepository = {
       findExistingCategoryIds,
@@ -290,7 +292,10 @@ describe('UpsertProfessionalProfileService', () => {
   });
 
   it('logs professional_profile_updated on an edit (second/idempotent call), not _created', async () => {
-    const { service } = makeService({ wasCreated: false });
+    const { service } = makeService({
+      wasCreated: false,
+      accountStatusTransitioned: false,
+    });
 
     await service.upsertProfessionalProfile('user-1', validInput());
 
@@ -299,6 +304,33 @@ describe('UpsertProfessionalProfileService', () => {
     );
     expect(events).toContain('professional_profile_updated');
     expect(events).not.toContain('professional_profile_created');
+  });
+
+  it('logs account_status_transition only when the repository reports the transition happened', async () => {
+    const { service } = makeService({
+      wasCreated: true,
+      accountStatusTransitioned: true,
+    });
+
+    await service.upsertProfessionalProfile('user-1', validInput());
+
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'account_status_transition' }),
+    );
+  });
+
+  it('never logs account_status_transition on an edit (second call)', async () => {
+    const { service } = makeService({
+      wasCreated: false,
+      accountStatusTransitioned: false,
+    });
+
+    await service.upsertProfessionalProfile('user-1', validInput());
+
+    const events = (logSpy.mock.calls as unknown[][]).map(
+      (call) => (call[0] as { event: string }).event,
+    );
+    expect(events).not.toContain('account_status_transition');
   });
 
   it('logs specializationCount matching the repository result', async () => {

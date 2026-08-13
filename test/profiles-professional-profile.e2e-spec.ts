@@ -268,8 +268,9 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
   });
 
   it(
-    'creation sets verificationStatus UNVERIFIED and does NOT change ' +
-      "User.accountStatus (that gate belongs to CustomerProfile's flow)",
+    'creation sets verificationStatus UNVERIFIED and transitions ' +
+      'accountStatus EMAIL_VERIFIED -> PENDING_APPROVAL (same rule ' +
+      "CustomerProfile's flow shares — see ProfilesRepository)",
     async () => {
       const { email, userId } = await seedEmailVerifiedUser();
       const sessionToken = await loginSessionToken(email);
@@ -287,7 +288,39 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
       );
 
       const user = await prisma.user.findUnique({ where: { id: userId } });
-      expect(user?.accountStatus).toBe(UserAccountStatus.EMAIL_VERIFIED);
+      expect(user?.accountStatus).toBe(UserAccountStatus.PENDING_APPROVAL);
+    },
+  );
+
+  it(
+    'a second call (edit) does not re-transition/revert accountStatus once ' +
+      'already PENDING_APPROVAL',
+    async () => {
+      const { email, userId } = await seedEmailVerifiedUser();
+      const sessionToken = await loginSessionToken(email);
+      const [categoryId] = await seedCategories(1);
+
+      await upsertProfessionalProfileRequest(
+        baseInput([primarySpecialization(categoryId)]),
+        sessionToken,
+      ).expect(200);
+      const firstUser = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+      expect(firstUser?.accountStatus).toBe(UserAccountStatus.PENDING_APPROVAL);
+
+      await upsertProfessionalProfileRequest(
+        baseInput([
+          primarySpecialization(categoryId, { description: 'Edit.' }),
+        ]),
+        sessionToken,
+      ).expect(200);
+      const secondUser = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+      expect(secondUser?.accountStatus).toBe(
+        UserAccountStatus.PENDING_APPROVAL,
+      );
     },
   );
 

@@ -124,6 +124,25 @@ export class UsersRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
+  /**
+   * `myAccount`'s (consumer, `ProfilesResolver`) narrow read — a minimal
+   * `select: { accountStatus: true }`, same "select exactly the columns the
+   * caller needs, nothing more" discipline as `ADMIN_USER_ACCOUNT_SELECT`
+   * above, just scoped to a single field for a single-field caller. Returns
+   * `null` only if `userId` doesn't resolve to a `User` row at all — should
+   * never happen for an already-`SessionGuard`-authenticated caller, but
+   * kept nullable rather than assumed, same defensive shape as `findById`.
+   */
+  async findAccountStatusById(
+    userId: string,
+  ): Promise<UserAccountStatus | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { accountStatus: true },
+    });
+    return user?.accountStatus ?? null;
+  }
+
   findBySocialProviderSubject(
     authProvider: AuthProvider,
     socialProviderSubject: string,
@@ -186,18 +205,21 @@ export class UsersRepository {
 
   /**
    * GOS-14/GOS-28 — the one and only place `accountStatus` moves to
-   * `PENDING_APPROVAL`. Called by `ProfilesRepository.upsertCustomerProfile`
-   * from within its own `$transaction`, passing that transaction's client
-   * through (`tx`), so the `CustomerProfile` write and this status
-   * transition commit atomically without `ProfilesRepository` ever
-   * querying the `user` table directly — preserving the "one repository
-   * owns one set of tables" rule documented in
-   * goservice-docs/architecture/backend.md.
+   * `PENDING_APPROVAL`. Called by BOTH
+   * `ProfilesRepository.upsertCustomerProfile` AND
+   * `ProfilesRepository.upsertProfessionalProfile`, whichever profile type
+   * is created first for a given user, from within that method's own
+   * `$transaction`, passing that transaction's client through (`tx`), so
+   * the profile write and this status transition commit atomically without
+   * `ProfilesRepository` ever querying the `user` table directly —
+   * preserving the "one repository owns one set of tables" rule documented
+   * in goservice-docs/architecture/backend.md.
    *
    * The `updateMany` `WHERE accountStatus = EMAIL_VERIFIED` guard is what
    * makes "transition exactly once, never revert" race-safe: a concurrent
    * duplicate call, or any later edit after the status has already moved
-   * on, always matches 0 rows and is a silent no-op — no separate
+   * on (including the SECOND profile type being created for the same
+   * user), always matches 0 rows and is a silent no-op — no separate
    * read-then-branch, no TOCTOU race. Returns whether the transition
    * actually happened, purely for the caller's own logging.
    */

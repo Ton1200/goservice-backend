@@ -6,7 +6,7 @@ import {
   IsString,
   MinLength,
 } from 'class-validator';
-import { UserAccountStatus } from './user-account-status.enum';
+import { UserAccountStatus } from '../../../users/models/user-account-status.enum';
 
 /**
  * ALL fields optional — a PARTIAL PATCH, unlike `SetPlatformSettingInput`'s

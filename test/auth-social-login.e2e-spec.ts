@@ -237,6 +237,24 @@ describe('GraphQL socialLogin (e2e, synthetic JWKS substitute for real Google/Ap
     expect(body.data?.socialLogin.userId).toBe(userId);
   });
 
+  it('logs in a pre-seeded, eligible (PENDING_APPROVAL) social user', async () => {
+    const { subject, email, userId } = await seedSocialUser(
+      UserAccountStatus.PENDING_APPROVAL,
+    );
+    const token = await jwksServer.signToken({
+      issuer: ISSUER,
+      audience: AUDIENCE,
+      subject,
+      email,
+    });
+
+    const response = await socialLoginRequest(token);
+    const body = response.body as SocialLoginResponseBody;
+
+    expect(body.errors).toBeUndefined();
+    expect(body.data?.socialLogin.userId).toBe(userId);
+  });
+
   it('auto-registers a brand-new account for a never-seen social identity, and creates a real Session row', async () => {
     const subject = `google-subject-new-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const email = `new-social-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
@@ -321,7 +339,6 @@ describe('GraphQL socialLogin (e2e, synthetic JWKS substitute for real Google/Ap
 
   it.each([
     UserAccountStatus.PENDING_EMAIL_VERIFICATION,
-    UserAccountStatus.PENDING_APPROVAL,
     UserAccountStatus.REJECTED,
   ])(
     'rejects an existing but ineligible-status (%s) social account with the same AUTHENTICATION_FAILED result, creating no session',
