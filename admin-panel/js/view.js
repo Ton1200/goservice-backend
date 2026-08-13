@@ -8,14 +8,14 @@
 // used to navigate via `window.location.href = 'index.html'` on a
 // successful login, but `login.html`/`index.html` were two separate static
 // documents — a full navigation always discards the whole JS module graph,
-// resetting `session.js`'s in-memory `currentToken` to `null` before the
-// destination document's bootstrap script ever ran, which then saw
-// `isLoggedIn() === false` and bounced straight back to the login page.
-// Switching sections via `hidden` (this module) instead of navigating keeps
-// the `session.js` module instance alive across login, while a REAL
-// full-page reload (F5, closing/reopening the tab) still discards it
-// exactly as designed (see ADR 0005) — only the login->dashboard
-// transition itself stops being a navigation.
+// which back when `session.js` was in-memory-only reset its `currentToken`
+// to `null` before the destination document's bootstrap script ever ran.
+// Switching sections via `hidden` (this module) instead of navigating
+// avoided that. `session.js` is now `localStorage`-backed (2026-08-11
+// follow-up) so a real full-page reload no longer discards the session
+// either — but this module still exists and is still used for the same
+// reason: no router library, plain `hidden`-toggling between login and
+// dashboard within the one document.
 const loginView = document.getElementById('login-view');
 const dashboardView = document.getElementById('dashboard-view');
 

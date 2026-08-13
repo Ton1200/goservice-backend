@@ -68,17 +68,6 @@ export interface AppConfig {
     maxAttempts: number;
   };
   /**
-   * Admin-session policy (GOS-30/31/32, Slice 1) — deliberately a SEPARATE,
-   * much shorter TTL than the consumer `session.ttlHours` above (minutes,
-   * not days): the admin panel manages feature flags and (later) encrypted
-   * third-party credentials, so a much lower persistence window is a
-   * deliberate trade-off — see
-   * `src/platform-admin/admin-auth/adapters/postgres-admin-session.adapter.ts`.
-   */
-  adminSession: {
-    ttlMinutes: number;
-  };
-  /**
    * Read ONLY by `scripts/bootstrap-super-admin.ts` — never by the running
    * NestJS app itself. Optional here (the app must still start without
    * them); the bootstrap script itself fails loudly if any is missing at
@@ -240,9 +229,6 @@ export default (): AppConfig => ({
       60,
     ),
     maxAttempts: parsePort(process.env.PASSWORD_RESET_MAX_ATTEMPTS, 5),
-  },
-  adminSession: {
-    ttlMinutes: parsePort(process.env.ADMIN_SESSION_TTL_MINUTES, 30),
   },
   adminBootstrap: {
     email: process.env.ADMIN_BOOTSTRAP_EMAIL,

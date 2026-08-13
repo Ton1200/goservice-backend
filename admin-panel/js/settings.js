@@ -162,6 +162,30 @@ const KNOWN_SETTING_SLOTS = [
     valueType: 'STRING',
     isEncrypted: false,
   },
+  // 2026-08-11 follow-up — was ADMIN_SESSION_TTL_MINUTES, a boot-time env
+  // var; now admin-configurable (human request: "de una vez lo deberíamos
+  // dejar en un campo del admin"). `admin.session.*` is a new root-level
+  // segment — `renderRootTabs` derives tabs purely from the tree's root
+  // children (see that function's own comment), so this alone makes a new
+  // "Admin" tab appear, with a "Session" group inside it — zero other UI
+  // code needed. The first (and, for now, only) NUMBER-valued setting in
+  // this panel — `renderTextField` already branches on `valueType ===
+  // 'NUMBER'` for the input's `type` attribute, so no rendering change was
+  // needed there either.
+  {
+    key: 'admin.session.timeout-minutes',
+    description: 'How long an admin session stays valid after login, in minutes.',
+    valueType: 'NUMBER',
+    isEncrypted: false,
+    // Shown as this unconfigured field's placeholder (see
+    // `renderTextField`) — the backend's own defensive fallback
+    // (`postgres-admin-session.adapter.ts`) is ALSO `30`, kept in sync by
+    // hand (same trade-off every other hardcoded value in this file
+    // already accepts). Without this, the field renders fully blank even
+    // though a real 30-minute timeout is already in effect, which reads as
+    // "not configured"/"broken" rather than "using the default."
+    defaultValue: '30',
+  },
 ];
 
 // Short, static, one-line descriptions shown under a leaf block's title
@@ -290,6 +314,11 @@ function buildSettingsTree(settings) {
       maskedPreview: null,
       provider: null,
       updatedBy: null,
+      // Optional — see KNOWN_SETTING_SLOTS' own per-slot comment (only
+      // `admin.session.timeout-minutes` sets one today). `undefined` for
+      // every slot that doesn't declare one, which `renderTextField`
+      // treats as "no placeholder hint" — unchanged behavior for them.
+      defaultValue: slot.defaultValue,
     });
   }
 
@@ -709,6 +738,16 @@ function renderTextField(fieldName, setting) {
   input.className = 'form-control';
   input.autocomplete = 'off';
   input.value = setting.value ?? ''; // Pre-filled — not a secret.
+  // Unconfigured slot WITH a known default (today: only
+  // `admin.session.timeout-minutes`, via KNOWN_SETTING_SLOTS) — shows the
+  // value actually in effect right now (the backend's own fallback) as
+  // grey placeholder text, NOT as `input.value` (which would look
+  // identical to an already-saved row and silently turn "Save" into
+  // "explicitly write this value" the moment it's clicked without typing
+  // anything). Every other field's placeholder stays empty, unchanged.
+  if (setting.value === null && setting.defaultValue !== undefined) {
+    input.placeholder = `${setting.defaultValue} (default)`;
+  }
 
   const saveButton = document.createElement('button');
   saveButton.type = 'button';
@@ -726,6 +765,22 @@ function renderTextField(fieldName, setting) {
 
 async function handleSaveSetting(setting, inputEl, publicCheckboxEl, saveButton) {
   showError('');
+
+  // Guards against clicking "Save" on a field showing only placeholder
+  // text (e.g. "30 (default)") — `inputEl.value` for an untouched input is
+  // `''` regardless of any placeholder, and the backend's own NUMBER
+  // validation (`Number.isFinite(Number(''))`) treats an empty string as
+  // the valid number `0`, so without this check an admin who never typed
+  // anything could silently save `'0'` (a 0-minute admin session timeout,
+  // for this field's specific case) just by clicking Save on what looks
+  // like an already-filled-in field. Applies to every text/number field
+  // generically, not just this one — an explicitly-saved empty value never
+  // makes sense for any setting in this panel today.
+  if (inputEl.value.trim() === '') {
+    showError('Enter a value before saving.');
+    return;
+  }
+
   inputEl.disabled = true;
   publicCheckboxEl.disabled = true;
   saveButton.disabled = true;

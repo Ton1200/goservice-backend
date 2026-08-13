@@ -25,12 +25,12 @@ export class GraphQLNetworkError extends Error {
 
 /**
  * Posts `{ query, variables }` to this panel's own `graphql` endpoint,
- * attaching the in-memory bearer token (if any). Returns the parsed
- * `{ data, errors }` body on any well-formed GraphQL response — including
- * one that contains `errors` — so callers decide what to do with a
- * domain-level failure. Watches for
+ * attaching the stored bearer token (if any — see `session.js`). Returns
+ * the parsed `{ data, errors }` body on any well-formed GraphQL response —
+ * including one that contains `errors` — so callers decide what to do with
+ * a domain-level failure. Watches for
  * `errors[].extensions.code === 'ADMIN_UNAUTHENTICATED'`: on that specific
- * code, clears the in-memory session (the token is no longer valid — no
+ * code, clears the stored session (the token is no longer valid — no
  * point holding onto it) before returning, so every subsequent request
  * already fails fast rather than repeating a doomed call. Callers (see
  * `settings.js`'s `showLoginView()`-on-401-style handling) still decide

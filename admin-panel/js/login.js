@@ -18,9 +18,12 @@ const ADMIN_LOGIN_MUTATION = `
 /**
  * Up to 2 uppercase initials from a display name (e.g. "Jane Doe" -> "JD",
  * "Jane" -> "J"), for the avatar circle. Never touches innerHTML — only
- * ever assigned via textContent in handleSubmit below.
+ * ever assigned via textContent here and in `bootstrap.js` (which reuses
+ * this same function to redraw the header on a page-reload session
+ * restore, now that `session.js` is `localStorage`-backed — see that
+ * file's own header comment).
  */
-function initialsFor(displayName) {
+export function initialsFor(displayName) {
   const words = displayName.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '?';
   const first = words[0][0];
@@ -70,10 +73,10 @@ async function handleSubmit(event) {
       email: loggedInEmail,
       displayName,
     });
-    // Populated once, right here, right after a successful login — the
-    // session is in-memory-only and a fresh page load always shows the
-    // login view first (no restore-on-reload case exists), so there's no
-    // other point in the app's lifecycle where this needs to run again.
+    // Populated here from the mutation's own fresh response (simplest —
+    // the data is already in hand). `bootstrap.js` populates the SAME
+    // header elements the same way, from `session.js`'s stored identity,
+    // for the page-reload-while-still-logged-in case (see that file).
     // `textContent`, not `innerHTML` — avoid any avoidable XSS surface,
     // same pattern as `settings.js`'s own rendering.
     document.getElementById('admin-display-name').textContent = displayName;

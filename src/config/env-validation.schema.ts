@@ -107,14 +107,19 @@ export const envValidationSchema = Joi.object({
     .default(60),
   PASSWORD_RESET_MAX_ATTEMPTS: Joi.number().integer().positive().default(5),
 
-  // GOS-30/31/32 (platform-admin, Slice 1). ADMIN_SESSION_TTL_MINUTES has a
-  // safe default so the app boots without it. The three ADMIN_BOOTSTRAP_*
-  // vars are deliberately `.optional()` here — they are read ONLY by
-  // `scripts/bootstrap-super-admin.ts`, never by the running app, and that
-  // script itself validates their presence explicitly when actually
-  // invoked, rather than making every environment (including ones that
-  // never run the bootstrap script) require them at startup.
-  ADMIN_SESSION_TTL_MINUTES: Joi.number().integer().positive().default(30),
+  // GOS-30/31/32 (platform-admin, Slice 1). ADMIN_SESSION_TTL_MINUTES
+  // REMOVED (2026-08-11 follow-up, not deprecated — same treatment as
+  // RESEND_API_KEY/EMAIL_FROM_ADDRESS/EMAIL_FROM_NAME before it): the admin
+  // session TTL is now an admin-configurable `PlatformSetting`
+  // (`admin.session.timeout-minutes`, editable from the panel itself), not
+  // a boot-time env var — see
+  // `src/platform-admin/admin-auth/adapters/postgres-admin-session.adapter.ts`.
+  // The three ADMIN_BOOTSTRAP_* vars are deliberately `.optional()` here —
+  // they are read ONLY by `scripts/bootstrap-super-admin.ts`, never by the
+  // running app, and that script itself validates their presence
+  // explicitly when actually invoked, rather than making every environment
+  // (including ones that never run the bootstrap script) require them at
+  // startup.
   ADMIN_BOOTSTRAP_EMAIL: Joi.string().email().optional(),
   ADMIN_BOOTSTRAP_PASSWORD: Joi.string().min(1).optional(),
   ADMIN_BOOTSTRAP_DISPLAY_NAME: Joi.string().min(1).optional(),

@@ -81,6 +81,14 @@ const PLATFORM_SETTINGS: {
   description: string;
   value: string;
   isPublic?: boolean;
+  // Optional, explicit override for rows where the existing "'true'/'false'
+  // -> BOOLEAN, anything else -> STRING" heuristic below gets it wrong —
+  // added alongside the first NUMBER row (`admin.session.timeout-minutes`,
+  // 2026-08-11 follow-up), whose value ('30') is neither 'true' nor
+  // 'false' but also isn't a STRING setting. Every existing row leaves this
+  // unset and keeps relying on the heuristic — never added retroactively
+  // just for consistency.
+  valueType?: 'BOOLEAN' | 'STRING' | 'NUMBER';
 }[] = [
   {
     key: 'customer.social-login.google.enabled',
@@ -107,6 +115,22 @@ const PLATFORM_SETTINGS: {
     value: 'GoService',
     isPublic: false,
   },
+  // GOS-3x follow-up (2026-08-11) — was ADMIN_SESSION_TTL_MINUTES, a
+  // boot-time env var (REMOVED, not deprecated); admin-configurable now,
+  // matching the same env-var-to-PlatformSetting migration pattern as the
+  // Resend rows above. See
+  // `src/platform-admin/admin-auth/adapters/postgres-admin-session.adapter.ts`
+  // for where this is read (fresh, on every login — never cached) and its
+  // own defensive fallback (also `30`) if this row is ever missing.
+  // `isPublic: false` — this is an internal admin-tool setting, the mobile
+  // app has no reason to ever read it.
+  {
+    key: 'admin.session.timeout-minutes',
+    description: 'How long an admin session stays valid after login, in minutes.',
+    value: '30',
+    isPublic: false,
+    valueType: 'NUMBER',
+  },
 ];
 
 async function main(): Promise<void> {
@@ -128,13 +152,16 @@ async function main(): Promise<void> {
       create: {
         key: setting.key,
         description: setting.description,
-        // `from-name` is the one STRING row in this list — every other row
-        // here is a BOOLEAN on/off switch. Keyed off the value shape rather
-        // than adding a per-row `valueType` field, since a boolean's stored
-        // value is always literally `'true'`/`'false'`.
-        valueType: setting.value === 'true' || setting.value === 'false'
-          ? 'BOOLEAN'
-          : 'STRING',
+        // Explicit `valueType` wins when a row sets one (see that field's
+        // own comment on the array's type above); otherwise falls back to
+        // the original heuristic — `'true'`/`'false'` -> BOOLEAN, anything
+        // else -> STRING (every pre-existing row here is boolean-or-string
+        // shaped, so this stays correct for all of them unchanged).
+        valueType:
+          setting.valueType ??
+          (setting.value === 'true' || setting.value === 'false'
+            ? 'BOOLEAN'
+            : 'STRING'),
         isEncrypted: false,
         isPublic: setting.isPublic ?? false,
         value: setting.value,
