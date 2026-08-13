@@ -24,8 +24,8 @@ const DECOY_PLAINTEXT = 'goservice-login-decoy-plaintext-not-a-real-secret';
  * opaque session token on success. Every failure — unknown email, wrong
  * password, social-only account, ineligible account status — collapses to
  * the single shared `authenticationFailed()` result, never distinguishing
- * which case occurred (anti-enumeration, matches `socialLogin`'s
- * semantics exactly).
+ * which case occurred (anti-enumeration, matches `socialLogin`'s semantics
+ * exactly).
  */
 @Injectable()
 export class LoginService {

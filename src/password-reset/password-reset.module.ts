@@ -6,6 +6,7 @@ import { EmailQueuePasswordResetEmailSenderAdapter } from './adapters/email-queu
 import { PasswordResetEmailSenderPort } from './ports/password-reset-email-sender.port';
 import { PasswordResetRepository } from './password-reset.repository';
 import { PasswordResetResolver } from './password-reset.resolver';
+import { IssuePasswordResetCodeService } from './services/issue-password-reset-code.service';
 import { RequestPasswordResetService } from './services/request-password-reset.service';
 import { ResetPasswordService } from './services/reset-password.service';
 
@@ -26,6 +27,11 @@ import { ResetPasswordService } from './services/reset-password.service';
     PasswordResetRepository,
     RequestPasswordResetService,
     ResetPasswordService,
+    // Shared with the admin-triggered `forceUserAccountPasswordReset` — see
+    // this service's own header comment for why it's ALSO registered
+    // directly on `PlatformAdminModule` rather than this (resolver-bearing)
+    // module being imported there.
+    IssuePasswordResetCodeService,
     {
       provide: PasswordResetEmailSenderPort,
       useClass: EmailQueuePasswordResetEmailSenderAdapter,

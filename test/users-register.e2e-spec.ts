@@ -1,8 +1,13 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { RESEND_PLATFORM_SETTING_KEYS } from '../src/email/constants/resend-settings.constants';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { cleanUsersData, createTestApp } from './support/test-app';
+import {
+  cleanUsersData,
+  createTestApp,
+  enableTestEmailDelivery,
+} from './support/test-app';
 
 const REGISTER_MUTATION = `
   mutation Register($input: RegisterInput!) {
@@ -49,6 +54,9 @@ describe('GraphQL register (e2e)', () => {
     const ctx = await createTestApp();
     app = ctx.app;
     prisma = ctx.prisma;
+    // `register` now gates on email-delivery availability first (GOS-3x
+    // follow-up) — see `enableTestEmailDelivery`'s own doc comment.
+    await enableTestEmailDelivery(prisma);
   });
 
   afterAll(async () => {
@@ -148,5 +156,56 @@ describe('GraphQL register (e2e)', () => {
     expect([200, 400]).toContain(response.status);
     expect(body.errors).toBeDefined();
     expect(body.errors?.[0].message).toMatch(/accountStatus/i);
+  });
+
+  /**
+   * GOS-3x follow-up reference case, proven at the API layer: a disabled
+   * `notifications.email.resend.enabled` `PlatformSetting` rejects
+   * `register` with the distinct `EMAIL_DELIVERY_DISABLED` code, checked
+   * before any account is created. Restores the setting afterward so this
+   * suite never leaks state into other e2e files — same pattern as
+   * `test/auth-social-login.e2e-spec.ts`'s own
+   * `PlatformSettingPort.isEnabled gate` describe block.
+   */
+  describe('EnsureEmailDeliveryAvailableService gate (notifications.email.resend.enabled)', () => {
+    afterEach(async () => {
+      await enableTestEmailDelivery(prisma);
+    });
+
+    it('rejects with EMAIL_DELIVERY_DISABLED when email delivery is disabled, creating no account', async () => {
+      await prisma.platformSetting.update({
+        where: { key: RESEND_PLATFORM_SETTING_KEYS.enabled },
+        data: { value: 'false' },
+      });
+
+      const variables = validVariables();
+      const usersBefore = await prisma.user.count();
+
+      const response = await request(app.getHttpServer())
+        .post('/graphql')
+        .send({ query: REGISTER_MUTATION, variables })
+        .expect(200);
+      const body = response.body as RegisterResponseBody;
+
+      expect(body.data).toBeNull();
+      expect(body.errors?.[0].extensions?.code).toBe('EMAIL_DELIVERY_DISABLED');
+
+      const usersAfter = await prisma.user.count();
+      expect(usersAfter).toBe(usersBefore); // no account created
+    });
+
+    it('succeeds again once email delivery is re-enabled', async () => {
+      await enableTestEmailDelivery(prisma);
+
+      const variables = validVariables();
+      const response = await request(app.getHttpServer())
+        .post('/graphql')
+        .send({ query: REGISTER_MUTATION, variables })
+        .expect(200);
+      const body = response.body as RegisterResponseBody;
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.register.emailVerificationRequired).toBe(true);
+    });
   });
 });

@@ -5,9 +5,14 @@ import Redis from 'ioredis';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import type { AppConfig } from '../src/config/configuration';
+import { RESEND_PLATFORM_SETTING_KEYS } from '../src/email/constants/resend-settings.constants';
 import { hashPasswordResetCode } from '../src/password-reset/services/password-reset-code.util';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { cleanUsersData, createTestApp } from './support/test-app';
+import {
+  cleanUsersData,
+  createTestApp,
+  enableTestEmailDelivery,
+} from './support/test-app';
 
 const REQUEST_RESET_MUTATION = `
   mutation RequestPasswordReset($email: String!) {
@@ -18,8 +23,8 @@ const REQUEST_RESET_MUTATION = `
 `;
 
 interface RequestPasswordResetResponseBody {
-  data?: { requestPasswordReset: { requested: boolean } };
-  errors?: { message?: string }[];
+  data?: { requestPasswordReset: { requested: boolean } } | null;
+  errors?: { message?: string; extensions?: { code?: string } }[];
 }
 
 function uniqueEmail(): string {
@@ -42,6 +47,9 @@ describe('GraphQL requestPasswordReset (e2e)', () => {
     const ctx = await createTestApp();
     app = ctx.app;
     prisma = ctx.prisma;
+    // `requestPasswordReset` now gates on email-delivery availability first
+    // (GOS-3x follow-up) — see `enableTestEmailDelivery`'s own doc comment.
+    await enableTestEmailDelivery(prisma);
 
     const redisConfig = app.get(ConfigService<AppConfig, true>).get('redis', {
       infer: true,
@@ -110,7 +118,7 @@ describe('GraphQL requestPasswordReset (e2e)', () => {
     return { email, userId: user.id };
   }
 
-  async function seedIneligibleUser(
+  async function seedUserWithStatus(
     accountStatus: UserAccountStatus,
   ): Promise<{ email: string; userId: string }> {
     const email = uniqueEmail();
@@ -156,12 +164,11 @@ describe('GraphQL requestPasswordReset (e2e)', () => {
 
   it.each([
     UserAccountStatus.PENDING_EMAIL_VERIFICATION,
-    UserAccountStatus.PENDING_APPROVAL,
     UserAccountStatus.REJECTED,
   ])(
     'returns requested:true and creates no code for a non-login-eligible account (%s)',
     async (accountStatus) => {
-      const { email, userId } = await seedIneligibleUser(accountStatus);
+      const { email, userId } = await seedUserWithStatus(accountStatus);
 
       const response = await requestPasswordResetRequest(email);
       const body = response.body as RequestPasswordResetResponseBody;
@@ -175,6 +182,21 @@ describe('GraphQL requestPasswordReset (e2e)', () => {
 
   it('creates a real PasswordResetCode for an eligible account and returns requested:true', async () => {
     const { email, userId } = await seedEligibleUser();
+
+    const response = await requestPasswordResetRequest(email);
+    const body = response.body as RequestPasswordResetResponseBody;
+
+    expect(body.data?.requestPasswordReset).toEqual({ requested: true });
+    const codes = await prisma.passwordResetCode.findMany({
+      where: { userId, consumedAt: null, invalidatedAt: null },
+    });
+    expect(codes).toHaveLength(1);
+  });
+
+  it('creates a real PasswordResetCode for a PENDING_APPROVAL account too (now login-eligible), returning requested:true', async () => {
+    const { email, userId } = await seedUserWithStatus(
+      UserAccountStatus.PENDING_APPROVAL,
+    );
 
     const response = await requestPasswordResetRequest(email);
     const body = response.body as RequestPasswordResetResponseBody;
@@ -231,5 +253,81 @@ describe('GraphQL requestPasswordReset (e2e)', () => {
     });
     expect(activeCodes).toHaveLength(1);
     expect(activeCodes[0].codeHash).not.toBe(hashPasswordResetCode('123456'));
+  });
+
+  /**
+   * GOS-3x follow-up reference case, proven at the API layer: a disabled
+   * `notifications.email.resend.enabled` `PlatformSetting` rejects
+   * `requestPasswordReset` with the distinct `EMAIL_DELIVERY_DISABLED`
+   * code — checked BEFORE the `findByEmail` lookup, so a nonexistent email
+   * and a real, eligible email get the IDENTICAL error/result, preserving
+   * this mutation's own anti-enumeration guarantee (see the describe
+   * block's own top-level doc comment). Restores the setting afterward so
+   * this suite never leaks state into other e2e files — same pattern as
+   * `test/auth-social-login.e2e-spec.ts`'s own gate describe block.
+   */
+  describe('EnsureEmailDeliveryAvailableService gate (notifications.email.resend.enabled)', () => {
+    afterEach(async () => {
+      await enableTestEmailDelivery(prisma);
+    });
+
+    it('rejects with EMAIL_DELIVERY_DISABLED for a nonexistent email when email delivery is disabled', async () => {
+      await prisma.platformSetting.update({
+        where: { key: RESEND_PLATFORM_SETTING_KEYS.enabled },
+        data: { value: 'false' },
+      });
+
+      const response = await requestPasswordResetRequest(
+        'no-such-user@example.com',
+      );
+      const body = response.body as RequestPasswordResetResponseBody;
+
+      expect(body.data).toBeNull();
+      expect(body.errors?.[0].extensions?.code).toBe('EMAIL_DELIVERY_DISABLED');
+    });
+
+    it('rejects a REAL, eligible email with the IDENTICAL EMAIL_DELIVERY_DISABLED error, creating no code — anti-enumeration proof', async () => {
+      await prisma.platformSetting.update({
+        where: { key: RESEND_PLATFORM_SETTING_KEYS.enabled },
+        data: { value: 'false' },
+      });
+
+      const { email, userId } = await seedEligibleUser();
+
+      const [unknownResponse, realResponse] = await Promise.all([
+        requestPasswordResetRequest('still-nobody@example.com'),
+        requestPasswordResetRequest(email),
+      ]);
+      const unknownBody =
+        unknownResponse.body as RequestPasswordResetResponseBody;
+      const realBody = realResponse.body as RequestPasswordResetResponseBody;
+
+      expect(unknownBody.data).toBeNull();
+      expect(realBody.data).toBeNull();
+      expect(realBody.errors?.[0].extensions?.code).toBe(
+        'EMAIL_DELIVERY_DISABLED',
+      );
+      expect(realBody.errors?.[0].extensions?.code).toBe(
+        unknownBody.errors?.[0].extensions?.code,
+      );
+      expect(realBody.errors?.[0].message).toBe(
+        unknownBody.errors?.[0].message,
+      );
+      await expect(
+        prisma.passwordResetCode.findMany({ where: { userId } }),
+      ).resolves.toHaveLength(0);
+    });
+
+    it('succeeds again once email delivery is re-enabled', async () => {
+      await enableTestEmailDelivery(prisma);
+
+      const response = await requestPasswordResetRequest(
+        'no-such-user@example.com',
+      );
+      const body = response.body as RequestPasswordResetResponseBody;
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.requestPasswordReset).toEqual({ requested: true });
+    });
   });
 });

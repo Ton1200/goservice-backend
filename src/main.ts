@@ -2,6 +2,7 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { applySecurityMiddleware } from './bootstrap/apply-security-middleware';
 import type { AppConfig } from './config/configuration';
 
 async function bootstrap(): Promise<void> {
@@ -31,21 +32,22 @@ async function bootstrap(): Promise<void> {
   const configService = app.get(ConfigService<AppConfig, true>);
   const port = configService.get('port', { infer: true });
 
-  // Local-pilot CORS: the Expo Web dev server (a real browser) enforces
-  // CORS, unlike curl/Jest/Node scripts, which is why this gap survived
-  // earlier validation passes. Scoped to an explicit localhost allowlist
-  // (see `config/configuration.ts`) rather than `origin: true`/`'*'`: this
-  // is more honest about what the pilot actually needs, and keeps the door
-  // closed for `credentials: true` (cookies/auth) being added later without
-  // someone having to first widen an already-permissive `*`.
-  const corsAllowedOrigins = configService.get('corsAllowedOrigins', {
-    infer: true,
-  });
-  app.enableCors({ origin: corsAllowedOrigins });
+  // Local-pilot CORS + security headers: the Expo Web dev server (a real
+  // browser) enforces CORS, unlike curl/Jest/Node scripts, which is why
+  // this gap survived earlier validation passes. Scoped to the PUBLIC
+  // `/graphql` endpoint's localhost allowlist only — NOT a global
+  // `app.enableCors(...)` call — plus a real, non-default CSP via helmet.
+  // See `applySecurityMiddleware()`'s own doc comment for the full
+  // rationale (including why the platform-admin panel/`/admin/graphql`
+  // deliberately get zero CORS headers).
+  applySecurityMiddleware(app, configService);
 
   await app.listen(port);
   logger.log(`GoService backend pilot listening on http://localhost:${port}`);
   logger.log(`GraphQL endpoint: http://localhost:${port}/graphql`);
+  logger.log(
+    `Admin panel: http://localhost:${port}${configService.get('adminPanelPath', { infer: true })}`,
+  );
 }
 
 void bootstrap();

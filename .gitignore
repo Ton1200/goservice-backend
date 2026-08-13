@@ -33,6 +33,7 @@ lerna-debug.log*
 
 # generated GraphQL schema (code-first — regenerated on every boot)
 src/schema.gql
+src/admin-schema.gql
 
 # Environment variables — never commit real local secrets.
 .env

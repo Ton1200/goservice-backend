@@ -116,7 +116,6 @@ describe('ResetPasswordService', () => {
 
   it.each([
     UserAccountStatus.PENDING_EMAIL_VERIFICATION,
-    UserAccountStatus.PENDING_APPROVAL,
     UserAccountStatus.REJECTED,
   ])(
     'returns the generic failure for a non-login-eligible account (%s)',

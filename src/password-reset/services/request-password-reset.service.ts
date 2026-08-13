@@ -1,14 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { AuthProvider } from '@prisma/client';
-import type { AppConfig } from '../../config/configuration';
 import { isLoginEligibleStatus } from '../../auth/services/login-eligibility.util';
+import { EnsureEmailDeliveryAvailableService } from '../../email/services/ensure-email-delivery-available.service';
 import { PasswordHasherPort } from '../../users/ports/password-hasher.port';
 import { UsersRepository } from '../../users/users.repository';
-import { PasswordResetEmailSenderPort } from '../ports/password-reset-email-sender.port';
-import { PasswordResetRepository } from '../password-reset.repository';
 import { RequestPasswordResetPayload } from '../models/request-password-reset-payload.model';
-import { generatePasswordResetCode } from './password-reset-code.util';
+import { IssuePasswordResetCodeService } from './issue-password-reset-code.service';
 
 /**
  * A fixed, non-secret plaintext, hashed exactly once (memoized) via the
@@ -39,19 +36,23 @@ export class RequestPasswordResetService {
 
   constructor(
     private readonly usersRepository: UsersRepository,
-    private readonly passwordResetRepository: PasswordResetRepository,
-    private readonly passwordResetEmailSender: PasswordResetEmailSenderPort,
     private readonly passwordHasher: PasswordHasherPort,
-    private readonly configService: ConfigService<AppConfig, true>,
+    private readonly ensureEmailDeliveryAvailable: EnsureEmailDeliveryAvailableService,
+    private readonly issuePasswordResetCodeService: IssuePasswordResetCodeService,
   ) {}
 
   async requestPasswordReset(
     email: string,
   ): Promise<RequestPasswordResetPayload> {
-    const { codeTtlMinutes, resendCooldownSeconds } = this.configService.get(
-      'passwordReset',
-      { infer: true },
-    );
+    // Checked FIRST, BEFORE the `findByEmail` lookup below — critical for
+    // this method's own anti-enumeration guarantee (see this class's own
+    // doc comment). This is a GLOBAL, not-per-account check (see
+    // `EnsureEmailDeliveryAvailableService`'s own doc comment), so running
+    // it ahead of any per-account work does not leak whether `email`
+    // belongs to a real account: every caller gets the identical
+    // `EMAIL_DELIVERY_DISABLED`/`EMAIL_DELIVERY_MISCONFIGURED` error,
+    // unknown email or not.
+    await this.ensureEmailDeliveryAvailable.ensureAvailable();
 
     const user = await this.usersRepository.findByEmail(email);
 
@@ -69,30 +70,21 @@ export class RequestPasswordResetService {
       return { requested: true };
     }
 
-    const activeCode =
-      await this.passwordResetRepository.findActivePasswordResetCode(user.id);
-
-    if (activeCode) {
-      const cooldownEndsAt =
-        activeCode.createdAt.getTime() + resendCooldownSeconds * 1000;
-      if (cooldownEndsAt > Date.now()) {
-        // Still within cooldown — idempotent, do not generate a new code
-        // or send another email.
-        await this.getDecoyHash();
-        this.logAttempt('noop');
-        return { requested: true };
-      }
-      await this.passwordResetRepository.invalidateCode(activeCode.id);
+    // The actual "generate + persist + email" mechanism is shared with the
+    // admin-triggered `forceUserAccountPasswordReset` — see
+    // `IssuePasswordResetCodeService`'s own header comment. Whether it
+    // actually issued a new code (vs. a no-op within the resend cooldown)
+    // only affects THIS service's own logging outcome — the response and
+    // timing profile are identical either way (anti-enumeration).
+    const { issued } = await this.issuePasswordResetCodeService.issueForUser(
+      user.id,
+      user.email,
+    );
+    if (!issued) {
+      await this.getDecoyHash();
+      this.logAttempt('noop');
+      return { requested: true };
     }
-
-    const { code, codeHash } = generatePasswordResetCode();
-    const expiresAt = new Date(Date.now() + codeTtlMinutes * 60_000);
-    await this.passwordResetRepository.createPasswordResetCode({
-      userId: user.id,
-      codeHash,
-      expiresAt,
-    });
-    await this.passwordResetEmailSender.sendPasswordResetCode(user.email, code);
 
     this.logAttempt('success');
     return { requested: true };

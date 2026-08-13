@@ -9,6 +9,7 @@ import { UsersRepository } from '../../users/users.repository';
 import { SocialIdentityValidationService } from './social-identity-validation.service';
 import { LoginService } from './login.service';
 import { SocialLoginService } from './social-login.service';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 
 /**
  * Explicit "single result" regression test (GOS-7): `login` and
@@ -81,10 +82,18 @@ describe('login/socialLogin authentication-failure parity', () => {
     const sessionPort = {
       createSession: jest.fn(),
     } as unknown as SessionPort;
+    // Always enabled — this parity test exercises token-validation/account
+    // failure modes, not the PlatformSettingPort gate (see
+    // `social-login.service.spec.ts`'s own dedicated describe block for
+    // that).
+    const featureFlagPort = {
+      isEnabled: jest.fn().mockResolvedValue(true),
+    } as unknown as PlatformSettingPort;
     return new SocialLoginService(
       usersRepository,
       socialIdentityValidationService,
       sessionPort,
+      featureFlagPort,
     );
   }
 
@@ -143,7 +152,10 @@ describe('login/socialLogin authentication-failure parity', () => {
       // socialLogin: existing but ineligible (REJECTED)
       captureFailure(
         makeSocialLoginService({
-          user: { id: 'u1', accountStatus: UserAccountStatus.REJECTED },
+          user: {
+            id: 'u1',
+            accountStatus: UserAccountStatus.REJECTED,
+          },
         }).socialLogin(socialInput),
       ),
       // socialLogin: token validation throws
