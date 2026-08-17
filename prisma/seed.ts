@@ -131,6 +131,80 @@ const PLATFORM_SETTINGS: {
     isPublic: false,
     valueType: 'NUMBER',
   },
+  // Identity Verification (Didit integration) — every toggle below starts
+  // OFF/empty by default, unlike the social-login flags above: no real
+  // Didit account/credentials exist yet, and this is a much higher-stakes
+  // capability (it drives real account approval/rejection) to ever
+  // accidentally leave on. An admin must deliberately load real sandbox
+  // credentials AND flip these on together — see
+  // `src/identity-verification/constants/didit-settings.constants.ts` for
+  // the full key reference these mirror, and that module's own README-style
+  // header comments for the runtime behavior each key drives.
+  //
+  // `identity.enabled` — the GLOBAL kill switch. `isPublic: true`: exposed
+  // via the unauthenticated `platformConfig` query (as `identity.enabled`
+  // in its nested tree) so mobile can decide whether to offer/attempt the
+  // identity-verification flow at all, without a mobile deploy — see
+  // `src/platform-admin/platform-settings/public/known-platform-config-defaults.ts`,
+  // which also registers this key so it always has a present (default
+  // `false`) branch in that response even before this seed has run.
+  {
+    key: 'identity.enabled',
+    description:
+      'Global kill switch for identity verification (gates startIdentityVerification).',
+    value: 'false',
+    isPublic: true,
+  },
+  // `identity.didit.enabled` — the Didit-PROVIDER-specific kill switch
+  // (distinct from `identity.enabled` so an incident with Didit itself, or
+  // a future second provider, can be toggled independently of the whole
+  // feature). `isPublic: false`: this is an internal provider detail, not
+  // something a mobile client needs to branch on — it only ever needs to
+  // know "is identity verification available AT ALL" (`identity.enabled`).
+  //
+  // A former `identity.routing.AR.enabled`/`identity.routing.CO.enabled`
+  // pair of per-country routing switches was REMOVED here (2026-08-15,
+  // human-requested simplification) — see
+  // `IdentityVerificationProviderRegistry`'s own header comment: Didit is
+  // the sole provider and already covers every `CountryCode`, so these two
+  // switches alone (`identity.enabled` + `identity.didit.enabled`) are now
+  // the entire gate.
+  {
+    key: 'identity.didit.enabled',
+    description: 'Gates the Didit identity-verification provider specifically.',
+    value: 'false',
+    isPublic: false,
+  },
+  // `identity.didit.mode` — selects which of the two credential sets below
+  // (`sandbox.*` / `production.*`) `DiditIdentityVerificationAdapter`
+  // actually reads on every call. Defaults to SANDBOX (never PRODUCTION) —
+  // see `parseDiditMode`'s own fail-closed rationale in
+  // `didit-settings.constants.ts`. `isPublic: false` — purely an
+  // operational/backend concern, see `platformConfig`'s own "Nota
+  // deliberada" in the implementation plan for why this is deliberately
+  // NEVER exposed to the client, even indirectly.
+  {
+    key: 'identity.didit.mode',
+    description:
+      'Which Didit credential set is active: SANDBOX or PRODUCTION.',
+    value: 'SANDBOX',
+    isPublic: false,
+  },
+  // `identity.didit.sandbox.api-key` / `.workflow-id` / `.webhook-secret`
+  // and their `production.*` counterparts are DELIBERATELY NOT seeded here
+  // at all — same "no safe default exists" reasoning as
+  // `notifications.email.resend.api-key`/`.from-address` above: an admin
+  // must configure them for the first time via `setPlatformSetting` in the
+  // panel. They render as "not configured yet" placeholders there via the
+  // generalized `KNOWN_SETTING_SLOTS` mechanism
+  // (`admin-panel/js/settings.js`) instead. `.api-key`/`.webhook-secret`
+  // (both modes) are real secrets (`isEncrypted: true`); `.workflow-id`
+  // is not a secret but still has no safe default value.
+  //
+  // `identity.didit.callback-url` (the post-verification browser-redirect
+  // URL) was REMOVED entirely (2026-08-17, human-requested simplification)
+  // — GOS-33 is backend-only, no mobile deep-link/screen exists yet to
+  // point it at, and `createSession` never depended on it for correctness.
 ];
 
 async function main(): Promise<void> {

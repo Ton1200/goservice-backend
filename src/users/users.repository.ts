@@ -235,6 +235,33 @@ export class UsersRepository {
   }
 
   /**
+   * Identity Verification's own `accountStatus` transition — the SECOND way
+   * (alongside the pre-existing manual `updateForAdmin`/`updateUserAccount`
+   * path) `PENDING_APPROVAL` can move to `APPROVED`/`REJECTED`, this one
+   * driven automatically by `HandleIdentityVerificationWebhookService` when
+   * a Didit webhook reports a final decision. Same guarded-`updateMany`
+   * race-safety pattern as
+   * `transitionToPendingApprovalIfEmailVerified` above: the `WHERE
+   * accountStatus = PENDING_APPROVAL` guard makes this idempotent against a
+   * duplicate webhook delivery (second call always matches 0 rows, a safe
+   * no-op) AND makes it never overwrite a decision the admin manual path
+   * already made (if `updateForAdmin` already moved the account to
+   * `APPROVED`/`REJECTED`, this guard also matches 0 rows) — no separate
+   * read-then-branch, no TOCTOU race. Returns whether the transition
+   * actually happened, purely for the caller's own logging.
+   */
+  async transitionFromPendingApproval(
+    userId: string,
+    to: Extract<UserAccountStatus, 'APPROVED' | 'REJECTED'>,
+  ): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: { id: userId, accountStatus: UserAccountStatus.PENDING_APPROVAL },
+      data: { accountStatus: to },
+    });
+    return count === 1;
+  }
+
+  /**
    * Persists a new password hash for an existing user (GOS-9,
    * `resetPassword`'s successful-completion step). Callers must already
    * have hashed `newPasswordHash` via `PasswordHasherPort.hash()` — this

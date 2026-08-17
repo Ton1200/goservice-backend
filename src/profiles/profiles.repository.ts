@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   Category,
+  CountryCode,
   CustomerProfile,
   ProfessionalProfile,
   ProfessionalVerificationStatus,
@@ -49,6 +50,40 @@ export class ProfilesRepository {
 
   findCustomerProfileByUserId(userId: string): Promise<CustomerProfile | null> {
     return this.prisma.customerProfile.findUnique({ where: { userId } });
+  }
+
+  /**
+   * Identity Verification's ONE server-side source of truth for "which
+   * country is this user in" — `StartIdentityVerificationService` calls
+   * this instead of ever accepting a `country` argument from a GraphQL
+   * input (see that service's own comment for why). Narrow
+   * `select: { country: true }` reads on both tables, never the full
+   * profile row.
+   *
+   * A user may hold both a `CustomerProfile` and a `ProfessionalProfile`
+   * (no exclusivity rule — see this class's own header comment) with, in
+   * theory, two different `country` values. `CustomerProfile` wins when
+   * both exist — an arbitrary but deterministic, documented tie-break (not
+   * a confirmed product rule; the plan left this open) since GoService's
+   * KYC concern is about verifying the PERSON, not any one specific
+   * profile's declared service area. Returns `null` only if the user has
+   * created neither profile yet, which should never happen for an account
+   * already in `PENDING_APPROVAL` (see `UsersRepository`'s own comment on
+   * `transitionToPendingApprovalIfEmailVerified`) — callers still treat
+   * `null` defensively rather than assuming it can't happen.
+   */
+  async findCountryForUser(userId: string): Promise<CountryCode | null> {
+    const [customerProfile, professionalProfile] = await Promise.all([
+      this.prisma.customerProfile.findUnique({
+        where: { userId },
+        select: { country: true },
+      }),
+      this.prisma.professionalProfile.findUnique({
+        where: { userId },
+        select: { country: true },
+      }),
+    ]);
+    return customerProfile?.country ?? professionalProfile?.country ?? null;
   }
 
   async findProfessionalProfileByUserId(
@@ -101,7 +136,7 @@ export class ProfilesRepository {
       addressLine: string;
       city: string;
       province: string;
-      country: string;
+      country: CountryCode;
       photoUrl?: string;
     },
   ): Promise<{
@@ -157,7 +192,7 @@ export class ProfilesRepository {
     data: {
       displayName: string;
       city: string;
-      country: string;
+      country: CountryCode;
       serviceAreaDescription: string;
       bio: string;
       photoUrl?: string;

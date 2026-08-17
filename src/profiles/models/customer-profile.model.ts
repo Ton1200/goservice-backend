@@ -1,4 +1,5 @@
 import { Field, GraphQLISODateTime, ID, ObjectType } from '@nestjs/graphql';
+import { CountryCode } from './country-code.enum';
 
 /**
  * A client's profile — GOS-14/GOS-28. `userId` is deliberately NOT exposed
@@ -23,8 +24,8 @@ export class CustomerProfile {
   @Field()
   province!: string;
 
-  @Field()
-  country!: string;
+  @Field(() => CountryCode)
+  country!: CountryCode;
 
   // No object-storage provider is decided yet — see infrastructure.md —
   // so this is just a URL string, nullable until a real upload flow exists.

@@ -186,6 +186,97 @@ const KNOWN_SETTING_SLOTS = [
     // "not configured"/"broken" rather than "using the default."
     defaultValue: '30',
   },
+  // Identity Verification (Didit integration) — `identity.*` is a new
+  // root-level segment, same mechanism as `admin.session.*` above: this
+  // alone makes a new "Identity" tab appear (derived purely from the
+  // tree's root children by `renderRootTabs`). The 2 boolean toggles
+  // (`identity.enabled`/`identity.didit.enabled`) and `identity.didit.mode`
+  // (STRING) ARE seeded by `prisma/seed.ts` (all `false`/`'SANDBOX'` by
+  // default) so they don't strictly need a `KNOWN_SETTING_SLOTS` entry to
+  // render post-seed — included below anyway for the SAME reason
+  // `notifications.email.resend.enabled` already is: consistency, and so
+  // the field still renders correctly on an environment where the seed
+  // hasn't run yet. The 6 credential fields (`sandbox`/`production` ×
+  // `api-key`/`workflow-id`/`webhook-secret`) are NOT seeded at all (no
+  // safe default exists — see `prisma/seed.ts`'s own comment) — for THOSE,
+  // this manifest is load-bearing, exactly like
+  // `notifications.email.resend.api-key` above.
+  //
+  // A former `identity.routing.AR.enabled`/`identity.routing.CO.enabled`
+  // pair of per-country routing switches (and their own "Routing" leaf
+  // group) was REMOVED here (2026-08-15, human-requested simplification) —
+  // see `IdentityVerificationProviderRegistry`'s own header comment:
+  // Didit is the sole provider and already covers every `CountryCode`, so
+  // `identity.enabled` + `identity.didit.enabled` alone are now the entire
+  // gate.
+  //
+  // A former `identity.didit.callback-url` field was also REMOVED
+  // (2026-08-17, human-requested simplification) — see
+  // `didit-settings.constants.ts`'s own header comment: GOS-33 is
+  // backend-only, with no mobile deep-link/screen to point it at yet.
+  //
+  // The `sandbox`/`production` credential sub-groups are collapsed by
+  // `mergeActiveModeCredentials` (below `buildSettingsTree`) BEFORE this
+  // tree is ever rendered — by the time any `render*` function sees the
+  // `identity.didit` node, it has ONE flat set of fields
+  // (`enabled`/`mode`/`api-key`/`workflow-id`/`webhook-secret`, whichever
+  // mode is active), not two nested blocks — see that function's own
+  // comment for why.
+  {
+    key: 'identity.enabled',
+    description: 'Global kill switch for identity verification.',
+    valueType: 'BOOLEAN',
+    isEncrypted: false,
+  },
+  {
+    key: 'identity.didit.enabled',
+    description: 'Gates the Didit identity-verification provider specifically.',
+    valueType: 'BOOLEAN',
+    isEncrypted: false,
+  },
+  {
+    key: 'identity.didit.mode',
+    description: 'Which Didit credential set is active: SANDBOX or PRODUCTION.',
+    valueType: 'STRING',
+    isEncrypted: false,
+    defaultValue: 'SANDBOX',
+  },
+  {
+    key: 'identity.didit.sandbox.api-key',
+    description: 'Didit SANDBOX Application api-key (x-api-key header).',
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
+  {
+    key: 'identity.didit.sandbox.workflow-id',
+    description: 'Didit SANDBOX Application workflow_id.',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
+  {
+    key: 'identity.didit.sandbox.webhook-secret',
+    description: "Didit SANDBOX webhook destination's secret_shared_key (X-Signature-V2).",
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
+  {
+    key: 'identity.didit.production.api-key',
+    description: 'Didit PRODUCTION Application api-key (x-api-key header).',
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
+  {
+    key: 'identity.didit.production.workflow-id',
+    description: 'Didit PRODUCTION Application workflow_id.',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
+  {
+    key: 'identity.didit.production.webhook-secret',
+    description: "Didit PRODUCTION webhook destination's secret_shared_key (X-Signature-V2).",
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
 ];
 
 // Short, static, one-line descriptions shown under a leaf block's title
@@ -195,10 +286,16 @@ const KNOWN_SETTING_SLOTS = [
 // entry here. A label with no entry simply renders no description
 // (`describeLeafBlock` returns '') rather than throwing or showing a
 // placeholder.
+// "Sandbox"/"Production" no longer appear here (2026-08-17,
+// human-requested simplification): `mergeActiveModeCredentials` collapses
+// those two sub-groups into `identity.didit`'s own fields before this tree
+// ever renders, so "Sandbox"/"Production" are never a leaf block's label
+// anymore — see that function's own comment.
 const LEAF_BLOCK_DESCRIPTIONS = {
   Google: 'Google sign-in configuration.',
   Apple: 'Apple sign-in configuration.',
   Resend: 'Resend transactional email provider configuration.',
+  Didit: 'Didit identity-verification provider configuration — credentials shown/edited below always match whichever Mode is currently selected.',
 };
 
 function describeLeafBlock(label) {
@@ -322,7 +419,53 @@ function buildSettingsTree(settings) {
     });
   }
 
+  mergeActiveModeCredentials(root);
+
   return root;
+}
+
+// Environment-split credentials UX (2026-08-17, human-requested
+// simplification, replacing an earlier "render only the active child as
+// its own separate block" approach): a node that carries its own `mode`
+// field (see `SELECT_FIELD_OPTIONS`'s `identity.didit.mode` comment) AND
+// children literally named `sandbox`/`production` — today: only
+// `identity.didit`, written generically so the next provider with the
+// same shape gets this for free — gets its ENTIRE credential UI collapsed
+// into ONE flat leaf block: the active child's fields (`api-key`/
+// `workflow-id`/`webhook-secret`) are merged directly into the parent
+// node's own `fields` (so they render alongside `enabled`/`mode` in the
+// SAME block — "one group from Enable to Webhook Secret" — instead of a
+// separate nested "Sandbox"/"Production" heading below it), and BOTH
+// `sandbox`/`production` are then deleted from the parent's `children`
+// entirely. This never touches the database: the inactive bucket's saved
+// values are untouched, just not rendered until `mode` is switched back
+// and the panel reloads. Mutates the tree in place; called once, from
+// `buildSettingsTree`, before any `render*` function ever sees the tree —
+// every `render*` function downstream is therefore unaware this
+// collapsing ever happened and needs no special-casing of its own (no
+// more "mixed root node" edge case for `renderRootTabPanelContent` to
+// worry about, for this node specifically).
+function mergeActiveModeCredentials(node) {
+  for (const child of Object.values(node.children)) {
+    mergeActiveModeCredentials(child); // Post-order: deepest nodes first.
+  }
+
+  const modeField = node.fields.mode;
+  if (!modeField) return;
+
+  const sandboxChild = node.children.sandbox;
+  const productionChild = node.children.production;
+  if (!sandboxChild || !productionChild) return;
+
+  // Mirrors the backend's own `parseDiditMode` exactly (anything other
+  // than the literal string `'PRODUCTION'` is SANDBOX) — the admin UI and
+  // the runtime adapter must never disagree about which bucket is active.
+  const activeChild =
+    modeField.value === 'PRODUCTION' ? productionChild : sandboxChild;
+
+  Object.assign(node.fields, activeChild.fields);
+  delete node.children.sandbox;
+  delete node.children.production;
 }
 
 function sortedEntries(obj) {
@@ -687,6 +830,97 @@ async function handleSaveCredential(setting, inputEl, previewEl) {
   }
 }
 
+// Fields rendered as a closed `<select>` instead of a free-text input,
+// keyed by the setting's full `key` — same flat-lookup convention as
+// `LEAF_BLOCK_DESCRIPTIONS` above (a key with no entry here just falls
+// through to the regular `renderTextField`). `identity.didit.mode` is the
+// first entry: the backend (`parseDiditMode`) already treats any value
+// other than the literal string `'PRODUCTION'` as `'SANDBOX'`, so a
+// free-text field only invited silent typos (`"sandbox"` lowercase,
+// `"Prod"`, a trailing space) that LOOK saved correctly but quietly behave
+// as SANDBOX — now that this same value also decides which credential
+// block is even VISIBLE (see `resolveModeGatedChild`), that ambiguity is
+// worse than before, not just cosmetic.
+const SELECT_FIELD_OPTIONS = {
+  'identity.didit.mode': ['SANDBOX', 'PRODUCTION'],
+};
+
+/**
+ * Renders one STRING setting restricted to a closed set of options (see
+ * `SELECT_FIELD_OPTIONS`) as a `<select>` + "Guardar" button — otherwise
+ * identical in structure/behavior to `renderTextField` (same "Expose in
+ * platformConfig" checkbox, same `handleSaveSetting` submit path, since a
+ * `<select>`'s `.value` is a plain string just like an `<input>`'s).
+ */
+function renderSelectField(fieldName, setting, options) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'mb-2';
+
+  const labelRow = document.createElement('div');
+  labelRow.className = 'd-flex align-items-center justify-content-between mb-1';
+
+  const label = document.createElement('label');
+  label.className = 'form-label mb-0';
+  label.textContent = humanizeSegment(fieldName);
+  const inputId = `setting-select-${setting.key}`;
+  label.setAttribute('for', inputId);
+
+  const publicWrapper = document.createElement('div');
+  publicWrapper.className = 'form-check mb-0';
+
+  const publicCheckbox = document.createElement('input');
+  publicCheckbox.type = 'checkbox';
+  publicCheckbox.className = 'form-check-input';
+  publicCheckbox.id = `expose-checkbox-${setting.key}`;
+  publicCheckbox.checked = setting.isPublic === true;
+
+  const publicLabel = document.createElement('label');
+  publicLabel.className = 'form-check-label small text-secondary';
+  publicLabel.setAttribute('for', publicCheckbox.id);
+  publicLabel.textContent = 'Expose in platformConfig';
+
+  publicWrapper.append(publicCheckbox, publicLabel);
+  labelRow.append(label, publicWrapper);
+
+  const inputGroup = document.createElement('div');
+  inputGroup.className = 'input-group';
+
+  const select = document.createElement('select');
+  select.id = inputId;
+  select.className = 'form-select';
+
+  // Current/default value might not literally be one of `options` (e.g. a
+  // never-saved slot, or a stray value written before this field became a
+  // `<select>`) — always offer it as a selectable option too, rather than
+  // silently snapping the dropdown to the first option while the
+  // underlying stored value is actually something else.
+  const currentValue = setting.value ?? setting.defaultValue ?? options[0];
+  const allOptions = options.includes(currentValue)
+    ? options
+    : [currentValue, ...options];
+
+  for (const optionValue of allOptions) {
+    const optionEl = document.createElement('option');
+    optionEl.value = optionValue;
+    optionEl.textContent = optionValue;
+    select.appendChild(optionEl);
+  }
+  select.value = currentValue;
+
+  const saveButton = document.createElement('button');
+  saveButton.type = 'button';
+  saveButton.className = 'btn btn-primary';
+  saveButton.textContent = 'Save';
+
+  saveButton.addEventListener('click', () =>
+    handleSaveSetting(setting, select, publicCheckbox, saveButton),
+  );
+
+  inputGroup.append(select, saveButton);
+  wrapper.append(labelRow, inputGroup);
+  return wrapper;
+}
+
 /**
  * Renders one STRING/NUMBER, non-encrypted setting as a labeled input
  * PRE-FILLED with its current `value` (these aren't secrets — unlike
@@ -840,6 +1074,10 @@ function renderSettingField(fieldName, setting) {
   if (setting.valueType === 'BOOLEAN') {
     return renderFlagField(setting);
   }
+  const selectOptions = SELECT_FIELD_OPTIONS[setting.key];
+  if (selectOptions) {
+    return renderSelectField(fieldName, setting, selectOptions);
+  }
   return renderTextField(fieldName, setting);
 }
 
@@ -936,12 +1174,32 @@ let groupContentIdCounter = 0;
 function renderGroupChildren(node, headingLevel) {
   const contentFragment = document.createDocumentFragment();
 
+  // `identity.didit`'s former `sandbox`/`production` children (and any
+  // future node with the same "mode" shape) never reach this function at
+  // all anymore — `mergeActiveModeCredentials` (called from
+  // `buildSettingsTree`) already collapsed them into the parent's own
+  // `fields` before the tree was handed to any `render*` function. Plain
+  // `sortedEntries` is correct here unconditionally.
   const childEntries = sortedEntries(node.children);
   const leafChildren = childEntries.filter(([, child]) =>
     Object.keys(child.fields).length > 0,
   );
+  // Identity Verification follow-up: was `Object.keys(child.fields).length
+  // === 0` (mutually exclusive with `leafChildren` above) — that silently
+  // DROPPED any child that has BOTH its own fields AND its own nested
+  // children (e.g. `identity.didit` — holds `mode`/`callback-url` fields
+  // directly, AND `sandbox`/`production` sub-groups): such a node used to
+  // render ONLY as a leaf block (via `leafChildren`), and its
+  // `sandbox`/`production` credential fields were never reachable in the
+  // UI at all. `leafChildren`/`groupChildren` are now independent checks
+  // (a node can legitimately appear in BOTH), not an either/or branch — a
+  // "mixed" node renders its own leaf block AND a nested collapsible group
+  // (same label) for its children, so nothing is ever silently dropped.
+  // Every PRE-EXISTING key shape in this panel has fields only at
+  // TERMINAL segments (no mixed nodes), so this is backward-compatible:
+  // every current leaf/group still renders exactly as before.
   const groupChildren = childEntries.filter(
-    ([, child]) => Object.keys(child.fields).length === 0,
+    ([, child]) => Object.keys(child.children).length > 0,
   );
 
   if (leafChildren.length > 0) {
@@ -1061,6 +1319,30 @@ function renderGroupNode(node, headingLevel) {
  */
 function renderRootTabPanelContent(node, headingLevel) {
   const hasOwnFields = Object.keys(node.fields).length > 0;
+  const hasChildren = Object.keys(node.children).length > 0;
+
+  // Identity Verification follow-up: a ROOT tab node can also be mixed
+  // (e.g. "identity" — carries `identity.enabled` directly AND nests a
+  // `didit` sub-group), the same shape `renderGroupChildren`
+  // already handles one level down for `identity.didit` (see that
+  // function's own comment). This used to branch either/or on
+  // `hasOwnFields` alone, so a mixed root node's children were silently
+  // dropped from the tab entirely — e.g. the "Identity" tab rendered only
+  // the `identity.enabled` toggle and nothing else. `hasOwnFields`/
+  // `hasChildren` are now independent checks (a root node can legitimately
+  // be both), not mutually exclusive branches. Every pre-existing root
+  // node ("customer", "notifications", "admin") has fields only at deeper
+  // segments, never directly on the root node itself, so this is
+  // backward-compatible — they still render exactly as before.
+  if (hasOwnFields && hasChildren) {
+    const fragment = document.createDocumentFragment();
+    const blocksContainer = document.createElement('div');
+    blocksContainer.className = 'gs-settings-blocks mb-3';
+    blocksContainer.appendChild(renderLeafBlock(node, headingLevel + 1));
+    fragment.appendChild(blocksContainer);
+    fragment.appendChild(renderGroupChildren(node, headingLevel));
+    return fragment;
+  }
   if (hasOwnFields) {
     return renderLeafBlock(node, headingLevel + 1);
   }

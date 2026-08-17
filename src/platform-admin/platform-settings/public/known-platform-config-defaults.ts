@@ -52,4 +52,25 @@ export const KNOWN_PLATFORM_CONFIG_BOOLEAN_DEFAULTS: ReadonlyArray<KnownPlatform
   [
     { key: 'customer.social-login.google.enabled', defaultValue: false },
     { key: 'customer.social-login.apple.enabled', defaultValue: false },
+    // Identity Verification (Didit) — mobile needs `config.identity.enabled`
+    // to decide whether to offer/attempt the `startIdentityVerification`
+    // flow at all, WITHOUT a mobile deploy — same reasoning as the
+    // social-login flags above. `identity.enabled` is ALSO seeded
+    // (`prisma/seed.ts`, `false` by default) — listed here too purely for
+    // the same defensive "renders correctly even before the seed has run"
+    // reason `notifications.email.resend.enabled`'s sibling flags don't need
+    // (that one is deliberately NOT public — see this file's own header
+    // comment on why only booleans, and `prisma/seed.ts`'s comment on why
+    // `identity.didit.enabled` itself is NOT public/listed here: it's a
+    // provider detail, not a client-relevant signal).
+    //
+    // A former `identity.routing.AR.enabled`/`identity.routing.CO.enabled`
+    // pair of per-country routing defaults was REMOVED here (2026-08-15,
+    // human-requested simplification) — see
+    // `IdentityVerificationProviderRegistry`'s own header comment: Didit is
+    // the sole provider and already covers every `CountryCode`, so
+    // `identity.enabled` + `identity.didit.enabled` alone are now the
+    // entire gate, and no per-country signal exists for `platformConfig` to
+    // expose anymore.
+    { key: 'identity.enabled', defaultValue: false },
   ];

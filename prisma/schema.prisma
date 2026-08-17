@@ -26,6 +26,28 @@ enum AuthProvider {
   APPLE
 }
 
+// Identity Verification (Didit integration) — retroactive typing of
+// CustomerProfile.country/ProfessionalProfile.country, previously a bare
+// `String @default("AR")` (GOS-28). Promoted to a real enum because a
+// downstream feature (IdentityVerification.country, below) needed a safe,
+// closed set of values a free-text String could never guarantee. Starts
+// with AR/CO (GoService's initial market + the first confirmed expansion
+// target); adding a new country is a pure additive migration
+// (`ALTER TYPE ... ADD VALUE`), never a breaking one.
+//
+// A former per-country `identity.routing.<country>.enabled`
+// `PlatformSetting` gate (that `IdentityVerificationProviderRegistry.resolve`
+// used to branch on this value to build) was REMOVED (2026-08-15,
+// human-requested simplification) — see that class's own header comment:
+// Didit is the sole provider and already covers every `CountryCode`, so
+// only two GLOBAL kill switches remain (`identity.enabled`/
+// `identity.didit.enabled`), and `country` is no longer used to gate
+// anything, only to record which country an attempt was for.
+enum CountryCode {
+  AR
+  CO
+}
+
 // Account approval status. PENDING_APPROVAL is actively assigned today: the
 // first CustomerProfile OR ProfessionalProfile ever created for a User
 // (whichever comes first — see ProfilesRepository.upsertCustomerProfile/
@@ -69,6 +91,10 @@ model User {
   // once (no exclusivity rule): see profiles.repository.ts.
   customerProfile        CustomerProfile?
   professionalProfile    ProfessionalProfile?
+  // Identity Verification (Didit) — 1:N, a User may have more than one
+  // attempt (e.g. an earlier session was Abandoned). See
+  // `src/identity-verification/`.
+  identityVerifications  IdentityVerification[]
 
   // Non-unique: real uniqueness is enforced by the `email` unique
   // constraint above. This index only speeds up the socialLogin fast-path
@@ -184,22 +210,28 @@ model Category {
 }
 
 model CustomerProfile {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @unique @db.Uuid
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String      @id @default(uuid()) @db.Uuid
+  userId      String      @unique @db.Uuid
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   displayName String
   addressLine String
   city        String
   province    String
   // Defaults to Argentina — GoService's initial market — anticipating the
   // documented later expansion to Latin America without a future migration.
-  country     String   @default("AR")
+  // A real CountryCode enum (not a bare String) since Identity Verification
+  // (`src/identity-verification/`) branches on this value — see that
+  // enum's own header comment above. Retroactively migrated from
+  // `String @default("AR")` — see
+  // `prisma/migrations/*_convert_country_to_enum/migration.sql`'s own
+  // comment for the `USING country::"CountryCode"` cast this required.
+  country     CountryCode @default(AR)
   // Reference to an externally-stored image (no object-storage provider is
   // decided yet — see infrastructure.md's open hosting-provider question —
   // so this is just a URL string today, not backed by any real upload flow).
   photoUrl    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -216,7 +248,9 @@ model ProfessionalProfile {
   // serviceAreaDescription below) anticipates Professional Discovery
   // needing to filter/index by category+city without a future migration.
   city                   String
-  country                String                         @default("AR")
+  // Real CountryCode enum — see CustomerProfile.country's own comment above
+  // for the full rationale (retroactive String -> enum migration).
+  country                CountryCode                    @default(AR)
   serviceAreaDescription String
   bio                    String
   // Same caveat as CustomerProfile.photoUrl — a URL string, no real upload
@@ -283,6 +317,60 @@ model ProfessionalSpecialization {
   @@id([professionalProfileId, categoryId])
   // Anticipates Professional Discovery's "find professionals in category X".
   @@index([categoryId])
+}
+
+// Identity Verification (Didit integration) — DEC-006's own "open question"
+// (automated KYC). See `src/identity-verification/` for the full
+// Port/Registry/Adapter design. `User.accountStatus` (PENDING_APPROVAL ->
+// APPROVED|REJECTED) remains the ONE source of truth the rest of the app
+// gates on — this table only records the verification ATTEMPTS that can
+// drive that transition, automatically (via the Didit webhook) or as
+// context for the pre-existing manual `updateUserAccount` admin path.
+
+// Detected document type, reported by Didit's hosted flow AFTER capture
+// (never declared by the user beforehand) — UNKNOWN is the default until a
+// webhook actually reports one.
+enum IdentityDocumentType {
+  NATIONAL_ID
+  PASSPORT
+  DRIVERS_LICENSE
+  FOREIGN_ID
+  UNKNOWN
+}
+
+enum IdentityVerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model IdentityVerification {
+  id      String      @id @default(uuid()) @db.Uuid
+  userId  String      @db.Uuid
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // The country resolved server-side (from the owning User's
+  // CustomerProfile/ProfessionalProfile) at the moment this attempt was
+  // started — never client-supplied. See `StartIdentityVerificationService`.
+  country CountryCode
+
+  // Free-text, not an enum — "didit" today; a second provider later is a
+  // new string value, not a schema migration.
+  provider          String  @default("didit")
+  // Didit's own `session_id`, set once `createSession` succeeds. Also used
+  // as this row's own `id` for `vendor_data` when the session is created —
+  // see `StartIdentityVerificationService`.
+  providerReference String?
+
+  documentType         IdentityDocumentType       @default(UNKNOWN)
+  documentCheckPassed  Boolean?
+  biometricCheckPassed Boolean?
+  status               IdentityVerificationStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([provider, providerReference])
 }
 
 // GOS-30/31/32 — Platform-admin capability, Slice 1. These models are
@@ -382,8 +470,8 @@ model AdminUser {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sessions  AdminSession[]
-  auditLogs AdminAuditLog[]
+  sessions                AdminSession[]
+  auditLogs               AdminAuditLog[]
   // Slice 3 consolidation — `PlatformSetting.updatedByAdminUser`'s inverse
   // relation must live on `AdminUser`, since Prisma requires both sides of a
   // relation declared together. Replaces the former `updatedFeatureFlags`/
@@ -528,7 +616,7 @@ model AdminAuditLog {
   actorAdminUser   AdminUser @relation(fields: [actorAdminUserId], references: [id], onDelete: Restrict)
 
   // e.g. "FEATURE_FLAG_SET", "ADMIN_USER_REVOKED".
-  action String
+  action     String
   // e.g. "FeatureFlag", "PlatformCredential", "AdminUser".
   targetType String
   targetKey  String

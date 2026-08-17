@@ -1,12 +1,13 @@
 import { Field, InputType } from '@nestjs/graphql';
 import {
+  IsEnum,
   IsOptional,
   IsString,
   IsUrl,
-  Length,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { CountryCode } from './country-code.enum';
 
 /**
  * Structurally closed input: no `userId`/`ownerId`/`creatorId` field exists
@@ -37,14 +38,16 @@ export class UpsertCustomerProfileInput {
   @MinLength(1)
   province!: string;
 
-  // Optional — defaults server-side to "AR" (Argentina) when omitted, so
+  // Optional — defaults server-side to AR (Argentina) when omitted, so
   // the current single-market mobile app never has to send it. See
-  // `upsert-customer-profile.service.ts`.
-  @Field({ nullable: true })
+  // `upsert-customer-profile.service.ts`. `@IsEnum` (not
+  // `@IsString() @Length(2, 2)`) since `CountryCode` is now a real Prisma
+  // enum, not a bare String — see that enum's own comment
+  // (`country-code.enum.ts`) for why.
+  @Field(() => CountryCode, { nullable: true })
   @IsOptional()
-  @IsString()
-  @Length(2, 2)
-  country?: string;
+  @IsEnum(CountryCode)
+  country?: CountryCode;
 
   // No object-storage provider is decided yet (see infrastructure.md) — a
   // client must upload the image elsewhere itself and pass the resulting

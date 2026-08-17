@@ -11,6 +11,7 @@ import type { SocialAuthProviderConfigMap } from '../../src/auth/config/social-a
 import { applySecurityMiddleware } from '../../src/bootstrap/apply-security-middleware';
 import type { AppConfig } from '../../src/config/configuration';
 import { RESEND_PLATFORM_SETTING_KEYS } from '../../src/email/constants/resend-settings.constants';
+import { CredentialEncryptionPort } from '../../src/platform-admin/platform-settings/ports/credential-encryption.port';
 
 export interface TestAppContext {
   app: INestApplication<App>;
@@ -125,7 +126,15 @@ export async function createTestApp(options?: {
 
     const moduleFixture: TestingModule = await moduleBuilder.compile();
 
-    const app = moduleFixture.createNestApplication<INestApplication<App>>();
+    // `rawBody: true` — mirrors `main.ts`'s own bootstrap option (see that
+    // file's comment): needed so e2e coverage of `DiditWebhookController`'s
+    // signature verification can exercise the REAL body-parsing pipeline,
+    // not a mock. `TestingModule`/`createNestApplication()` bypasses
+    // `main.ts` entirely, same reasoning as the `ValidationPipe`/
+    // `applySecurityMiddleware` replication below.
+    const app = moduleFixture.createNestApplication<INestApplication<App>>({
+      rawBody: true,
+    });
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,
@@ -175,6 +184,197 @@ export async function cleanProfilesData(prisma: PrismaService): Promise<void> {
   await prisma.professionalSpecialization.deleteMany();
   await prisma.professionalProfile.deleteMany();
   await prisma.customerProfile.deleteMany();
+}
+
+/**
+ * Deletes every `IdentityVerification` row — call before `cleanUsersData`
+ * (whose `user.deleteMany()` would otherwise cascade-delete these anyway
+ * via `onDelete: Cascade`, but an explicit, ordered cleanup here matches
+ * every other `clean*Data` helper's own convention of being independently
+ * callable).
+ */
+export async function cleanIdentityVerificationData(
+  prisma: PrismaService,
+): Promise<void> {
+  await prisma.identityVerification.deleteMany();
+}
+
+/**
+ * Deletes every `identity.*` `PlatformSetting` row — scoped cleanup, same
+ * reasoning as `cleanPlatformSettingsData` (this codebase's generic
+ * key-list version, reused here with the exact key list
+ * `enableTestIdentityVerification` below writes).
+ */
+export const IDENTITY_VERIFICATION_TEST_SETTING_KEYS = [
+  'identity.enabled',
+  'identity.didit.enabled',
+  'identity.didit.mode',
+  'identity.didit.sandbox.api-key',
+  'identity.didit.sandbox.workflow-id',
+  'identity.didit.sandbox.webhook-secret',
+];
+
+/**
+ * A CLEARLY SYNTHETIC, non-real Didit sandbox `webhook-secret` — never a
+ * real credential. Exported (not just used internally) so e2e specs that
+ * need to compute a matching `X-Signature-V2` HMAC over their own webhook
+ * fixture bodies can reuse the exact same value
+ * `DiditIdentityVerificationAdapter.verifyWebhookSignature` will read back
+ * out of `PlatformSettingPort`.
+ */
+export const TEST_DIDIT_WEBHOOK_SECRET = 'e2e-test-webhook-secret';
+
+/**
+ * Upserts the `identity.*` `PlatformSetting` rows to a known-good,
+ * ENABLED-and-fully-configured SANDBOX baseline — since 2026-08-15 (removal
+ * of the former per-country `identity.routing.<country>.enabled` switches)
+ * there is nothing country-specific left to configure here at all: both AR
+ * and CO (and every other `CountryCode` value) resolve to the same Didit
+ * adapter once the two global switches below are on — same
+ * "explicitly opt this baseline IN, idempotent upsert" pattern as
+ * `enableTestEmailDelivery`. `identity.didit.sandbox.api-key`/
+ * `.workflow-id` are synthetic placeholders — `DiditIdentityVerificationAdapter.
+ * createSession` itself is ALWAYS mocked at the `global.fetch` level by any
+ * e2e spec that exercises the happy path (see that spec's own setup); no
+ * e2e test in this codebase ever calls the real `verification.didit.me`.
+ *
+ * Takes the running `app` (not just `prisma`) so the two ENCRYPTED rows
+ * (`api-key`/`webhook-secret`) can be encrypted via the SAME
+ * `CredentialEncryptionPort` instance/key the app itself will decrypt them
+ * with (`app.get(CredentialEncryptionPort)`) — hand-rolling fake
+ * ciphertext/iv/authTag bytes here would fail `PrismaPlatformSettingAdapter.
+ * getValue()`'s real AES-GCM decrypt (wrong auth tag) the moment the app
+ * tries to read them back.
+ */
+export async function enableTestIdentityVerification(
+  app: INestApplication,
+  prisma: PrismaService,
+): Promise<void> {
+  const credentialEncryptionPort = app.get(CredentialEncryptionPort);
+  const rows: {
+    key: string;
+    description: string;
+    valueType: 'BOOLEAN' | 'STRING';
+    value: string;
+  }[] = [
+    {
+      key: 'identity.enabled',
+      description: 'Global identity verification kill switch.',
+      valueType: 'BOOLEAN',
+      value: 'true',
+    },
+    {
+      key: 'identity.didit.enabled',
+      description: 'Didit provider kill switch.',
+      valueType: 'BOOLEAN',
+      value: 'true',
+    },
+    {
+      key: 'identity.didit.mode',
+      description: 'Active Didit credential set (SANDBOX or PRODUCTION).',
+      valueType: 'STRING',
+      value: 'SANDBOX',
+    },
+    {
+      key: 'identity.didit.sandbox.workflow-id',
+      description: 'Didit sandbox workflow-id.',
+      valueType: 'STRING',
+      value: 'e2e-test-workflow-id',
+    },
+  ];
+
+  for (const row of rows) {
+    await prisma.platformSetting.upsert({
+      where: { key: row.key },
+      update: {
+        isEncrypted: false,
+        isPublic: false,
+        value: row.value,
+        ciphertext: null,
+        iv: null,
+        authTag: null,
+        maskedPreview: null,
+        provider: null,
+      },
+      create: {
+        key: row.key,
+        description: row.description,
+        valueType: row.valueType,
+        isEncrypted: false,
+        isPublic: false,
+        value: row.value,
+      },
+    });
+  }
+
+  // `api-key`/`webhook-secret` are the two ENCRYPTED credentials — each
+  // actually run through `credentialEncryptionPort.encrypt()` (real
+  // AES-256-GCM, the app's own instance/key — see this function's own
+  // header comment), so `PrismaPlatformSettingAdapter.getValue()` can
+  // successfully decrypt them back when the app under test reads them.
+  const encryptedApiKey = credentialEncryptionPort.encrypt(
+    'e2e-test-sandbox-api-key',
+  );
+  await prisma.platformSetting.upsert({
+    where: { key: 'identity.didit.sandbox.api-key' },
+    update: {
+      isEncrypted: true,
+      isPublic: false,
+      value: null,
+      ciphertext: encryptedApiKey.ciphertext,
+      iv: encryptedApiKey.iv,
+      authTag: encryptedApiKey.authTag,
+      maskedPreview: credentialEncryptionPort.maskedPreview(
+        'e2e-test-sandbox-api-key',
+      ),
+      provider: null,
+    },
+    create: {
+      key: 'identity.didit.sandbox.api-key',
+      description: 'Didit sandbox api-key.',
+      valueType: 'STRING',
+      isEncrypted: true,
+      isPublic: false,
+      ciphertext: encryptedApiKey.ciphertext,
+      iv: encryptedApiKey.iv,
+      authTag: encryptedApiKey.authTag,
+      maskedPreview: credentialEncryptionPort.maskedPreview(
+        'e2e-test-sandbox-api-key',
+      ),
+    },
+  });
+
+  const encryptedWebhookSecret = credentialEncryptionPort.encrypt(
+    TEST_DIDIT_WEBHOOK_SECRET,
+  );
+  await prisma.platformSetting.upsert({
+    where: { key: 'identity.didit.sandbox.webhook-secret' },
+    update: {
+      isEncrypted: true,
+      isPublic: false,
+      value: null,
+      ciphertext: encryptedWebhookSecret.ciphertext,
+      iv: encryptedWebhookSecret.iv,
+      authTag: encryptedWebhookSecret.authTag,
+      maskedPreview: credentialEncryptionPort.maskedPreview(
+        TEST_DIDIT_WEBHOOK_SECRET,
+      ),
+      provider: null,
+    },
+    create: {
+      key: 'identity.didit.sandbox.webhook-secret',
+      description: 'Didit sandbox webhook-secret.',
+      valueType: 'STRING',
+      isEncrypted: true,
+      isPublic: false,
+      ciphertext: encryptedWebhookSecret.ciphertext,
+      iv: encryptedWebhookSecret.iv,
+      authTag: encryptedWebhookSecret.authTag,
+      maskedPreview: credentialEncryptionPort.maskedPreview(
+        TEST_DIDIT_WEBHOOK_SECRET,
+      ),
+    },
+  });
 }
 
 /**

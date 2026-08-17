@@ -7,7 +7,14 @@ import type { AppConfig } from './config/configuration';
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  // `rawBody: true` (Identity Verification / Didit webhook) — populates
+  // `req.rawBody` (a `Buffer` of the exact, unmodified request bytes)
+  // alongside Nest's normal JSON body-parsing, WITHOUT disabling the
+  // latter — every other route keeps using `req.body` exactly as before.
+  // `DiditWebhookController` needs the pristine bytes to verify Didit's
+  // HMAC signature against the literal bytes it was computed over; see
+  // that controller's own header comment.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Ensures NestJS forwards OS shutdown signals (SIGINT/SIGTERM — e.g.
   // Ctrl+C, `docker stop`) into the module lifecycle, so `OnModuleDestroy`

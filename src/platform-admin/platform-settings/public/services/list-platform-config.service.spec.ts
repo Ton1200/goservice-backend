@@ -39,6 +39,19 @@ describe('ListPlatformConfigService', () => {
     socialLogin: { google: { enabled: false }, apple: { enabled: false } },
   };
 
+  // Identity Verification (Didit) follow-up: `identity.enabled` joined the
+  // manifest alongside the social-login flags above (see
+  // `known-platform-config-defaults.ts`) — every test below that asserts a
+  // FULL tree shape (not just a `tree.customer.*` sub-path) now also needs
+  // this branch present, same reasoning as `DEFAULT_SOCIAL_LOGIN_BRANCH`.
+  // A former `routing: { AR: {...}, CO: {...} }` sibling (per-country
+  // routing switches) was REMOVED (2026-08-15, human-requested
+  // simplification) — `platformConfig` no longer exposes any per-country
+  // identity signal, see `known-platform-config-defaults.ts`'s own comment.
+  const DEFAULT_IDENTITY_BRANCH = {
+    enabled: false,
+  };
+
   it('nests settings into a single tree, one level per dot-segment of the key', async () => {
     const service = makeService([
       {
@@ -73,6 +86,7 @@ describe('ListPlatformConfigService', () => {
           apple: { enabled: true },
         },
       },
+      identity: DEFAULT_IDENTITY_BRANCH,
     });
   });
 
@@ -94,6 +108,7 @@ describe('ListPlatformConfigService', () => {
     expect(tree).toEqual({
       standalonesetting: true,
       customer: DEFAULT_SOCIAL_LOGIN_BRANCH,
+      identity: DEFAULT_IDENTITY_BRANCH,
     });
   });
 
@@ -105,7 +120,10 @@ describe('ListPlatformConfigService', () => {
     // No longer a bare `{}` — the known-boolean-default-fill pass (see the
     // dedicated describe block below) still runs even with zero
     // `PlatformSetting` rows at all.
-    expect(tree).toEqual({ customer: DEFAULT_SOCIAL_LOGIN_BRANCH });
+    expect(tree).toEqual({
+      customer: DEFAULT_SOCIAL_LOGIN_BRANCH,
+      identity: DEFAULT_IDENTITY_BRANCH,
+    });
   });
 
   it('processes rows in key-sorted order for deterministic object key insertion order', async () => {
@@ -132,16 +150,17 @@ describe('ListPlatformConfigService', () => {
 
     const tree = await service.listPlatformConfig();
 
-    // 'customer' (added last, by the default-fill pass — see the dedicated
-    // describe block below) intentionally breaks strict alphabetical
-    // insertion order here; this test's own point (real rows insert in
-    // sorted order) still holds for 'aaa'/'zzz', which are unaffected by
-    // the manifest.
-    expect(Object.keys(tree)).toEqual(['aaa', 'zzz', 'customer']);
+    // 'customer'/'identity' (added last, by the default-fill pass — see the
+    // dedicated describe block below, in manifest-array order) intentionally
+    // break strict alphabetical insertion order here; this test's own point
+    // (real rows insert in sorted order) still holds for 'aaa'/'zzz', which
+    // are unaffected by the manifest.
+    expect(Object.keys(tree)).toEqual(['aaa', 'zzz', 'customer', 'identity']);
     expect(tree).toEqual({
       aaa: { feature: { a: true } },
       zzz: { feature: { a: true, b: true } },
       customer: DEFAULT_SOCIAL_LOGIN_BRANCH,
+      identity: DEFAULT_IDENTITY_BRANCH,
     });
   });
 
@@ -172,6 +191,7 @@ describe('ListPlatformConfigService', () => {
             google: { enabled: false },
           },
         },
+        identity: DEFAULT_IDENTITY_BRANCH,
       });
     });
 
@@ -207,6 +227,7 @@ describe('ListPlatformConfigService', () => {
       expect(tree).toEqual({
         feature: { someLongFieldName: 'x' },
         customer: DEFAULT_SOCIAL_LOGIN_BRANCH,
+        identity: DEFAULT_IDENTITY_BRANCH,
       });
     });
   });
@@ -227,6 +248,7 @@ describe('ListPlatformConfigService', () => {
       expect(tree).toEqual({
         feature: { maxRetries: 3 },
         customer: DEFAULT_SOCIAL_LOGIN_BRANCH,
+        identity: DEFAULT_IDENTITY_BRANCH,
       });
     });
 
@@ -242,7 +264,10 @@ describe('ListPlatformConfigService', () => {
 
       const tree = await service.listPlatformConfig();
 
-      expect(tree).toEqual({ customer: DEFAULT_SOCIAL_LOGIN_BRANCH });
+      expect(tree).toEqual({
+        customer: DEFAULT_SOCIAL_LOGIN_BRANCH,
+        identity: DEFAULT_IDENTITY_BRANCH,
+      });
     });
   });
 
@@ -274,6 +299,7 @@ describe('ListPlatformConfigService', () => {
       // the real `customer.enabled` leaf — a sibling key, no collision.
       expect(tree).toEqual({
         customer: { enabled: true, ...DEFAULT_SOCIAL_LOGIN_BRANCH },
+        identity: DEFAULT_IDENTITY_BRANCH,
       });
     });
 
@@ -317,6 +343,7 @@ describe('ListPlatformConfigService', () => {
           aaaBbb: { nested: true },
           ...DEFAULT_SOCIAL_LOGIN_BRANCH,
         },
+        identity: DEFAULT_IDENTITY_BRANCH,
       });
     });
 
@@ -351,6 +378,7 @@ describe('ListPlatformConfigService', () => {
           // no row here and is default-filled (`false`).
           socialLogin: { google: { enabled: true }, apple: { enabled: false } },
         },
+        identity: DEFAULT_IDENTITY_BRANCH,
       });
     });
   });
@@ -426,7 +454,7 @@ describe('ListPlatformConfigService', () => {
       // No `standalonesetting`, no `feature`, nothing outside what the
       // manifest declares — proves the default-fill pass does not invent
       // branches for arbitrary/unrelated keys.
-      expect(Object.keys(tree)).toEqual(['customer']);
+      expect(Object.keys(tree)).toEqual(['customer', 'identity']);
       expect(
         (tree.customer as { socialLogin: Record<string, unknown> }).socialLogin,
       ).toEqual({
@@ -454,6 +482,41 @@ describe('ListPlatformConfigService', () => {
       expect(tree.customer.socialLogin.google).toEqual({
         clientId: 'abc123',
         enabled: false,
+      });
+    });
+
+    it('the identity.* branch is fully default-filled (enabled) when no identity rows exist', async () => {
+      const service = makeService([]);
+
+      const tree = (await service.listPlatformConfig()) as {
+        identity: {
+          enabled: boolean;
+        };
+      };
+
+      expect(tree.identity).toEqual({
+        enabled: false,
+      });
+    });
+
+    it('a real identity.enabled row is NOT overwritten by the default', async () => {
+      const service = makeService([
+        {
+          key: 'identity.enabled',
+          description: 'Global kill switch.',
+          valueType: 'BOOLEAN',
+          value: 'true',
+        },
+      ]);
+
+      const tree = (await service.listPlatformConfig()) as {
+        identity: {
+          enabled: boolean;
+        };
+      };
+
+      expect(tree.identity).toEqual({
+        enabled: true,
       });
     });
   });

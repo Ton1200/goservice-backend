@@ -1,11 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DomainException } from '../../common/errors/domain-exception';
+import { CountryCode } from '../models/country-code.enum';
 import { ProfessionalProfile } from '../models/professional-profile.model';
 import { SpecializationRole } from '../models/specialization-role.enum';
 import { UpsertProfessionalProfileInput } from '../models/upsert-professional-profile-input.model';
 import { ProfilesRepository } from '../profiles.repository';
 
-const DEFAULT_COUNTRY = 'AR';
+const DEFAULT_COUNTRY = CountryCode.AR;
 
 /**
  * Orchestrates `upsertProfessionalProfile` (GOS-14/GOS-28, restructured to

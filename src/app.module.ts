@@ -17,6 +17,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SystemStatusModule } from './system-status/system-status.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { IdentityVerificationModule } from './identity-verification/identity-verification.module';
 import { PasswordResetModule } from './password-reset/password-reset.module';
 import { ProfilesModule } from './profiles/profiles.module';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module';
@@ -64,6 +65,7 @@ import type { AppConfig } from './config/configuration';
           PasswordResetModule,
           ProfilesModule,
           PlatformPublicSettingsModule,
+          IdentityVerificationModule,
         ],
         sortSchema: true,
         // GOS-8 acceptance criterion #11: error responses must never include
@@ -229,6 +231,7 @@ import type { AppConfig } from './config/configuration';
     ProfilesModule,
     PlatformAdminModule,
     PlatformPublicSettingsModule,
+    IdentityVerificationModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },
