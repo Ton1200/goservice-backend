@@ -13,7 +13,7 @@ import { UsersRepository } from './users.repository';
 import { UsersResolver } from './users.resolver';
 
 // `PrismaModule` (`src/prisma/`) is `@Global()`, so `PrismaService` doesn't
-// need to be imported here explicitly — see `prisma.module.ts`.
+// need to be imported here explicitly — see `prisma.module.ts`..
 //
 // `UsersRepository` and `PasswordHasherPort` are exported for `AuthModule`
 // (`src/auth/`), which imports this module to reach `login`/`socialLogin`'s
