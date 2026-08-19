@@ -15,6 +15,7 @@ import type { AppConfig } from '../src/config/configuration';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
   cleanProfilesData,
+  cleanQuotesAndEngagementsData,
   cleanServiceRequestsData,
   cleanUsersData,
   createTestApp,
@@ -62,6 +63,21 @@ const REQUEST_UPLOAD_URL_MUTATION = `
     requestServiceRequestAttachmentUploadUrl(input: $input) {
       ref uploadUrl fileUrl expiresAt
     }
+  }
+`;
+
+// GOS-41 — minimal Quote/Engagement mutations, only what this file's own
+// cancel-vs-accept regression coverage needs. Full Quote/Engagement e2e
+// coverage lives in `test/quotes.e2e-spec.ts`.
+const SUBMIT_QUOTE_MUTATION = `
+  mutation SubmitQuote($input: SubmitQuoteInput!) {
+    submitQuote(input: $input) { id status }
+  }
+`;
+
+const ACCEPT_QUOTE_MUTATION = `
+  mutation AcceptQuote($quoteId: ID!) {
+    acceptQuote(quoteId: $quoteId) { id status }
   }
 `;
 
@@ -168,6 +184,7 @@ describe('GraphQL ServiceRequest (GOS-38, e2e)', () => {
   });
 
   afterAll(async () => {
+    await cleanQuotesAndEngagementsData(prisma);
     await cleanServiceRequestsData(prisma);
     await cleanProfilesData(prisma);
     await prisma.category.deleteMany({
@@ -786,5 +803,169 @@ describe('GraphQL ServiceRequest (GOS-38, e2e)', () => {
 
     expect(body.data).toBeNull();
     expect(body.errors?.[0]?.extensions?.code).toBe('UNAUTHENTICATED');
+  });
+
+  // GOS-41 — cancelling an already-ENGAGED ServiceRequest must always be
+  // rejected: an active Engagement + a CANCELLED ServiceRequest must never
+  // coexist. See the GOS-41 plan's bugfix section.
+  it('cancelling an already-ENGAGED ServiceRequest -> SERVICE_REQUEST_HAS_ENGAGEMENT', async () => {
+    const [categoryId] = await seedCategories(1);
+    const customer = await seedApprovedCustomer();
+    const customerToken = await loginSessionToken(customer.email);
+    const professional = await seedApprovedProfessional([categoryId]);
+    const professionalToken = await loginSessionToken(professional.email);
+
+    const published = await gqlRequest(
+      PUBLISH_SERVICE_REQUEST_MUTATION,
+      { input: publishInput(categoryId) },
+      customerToken,
+    ).expect(200);
+    const publishedBody =
+      published.body as ServiceRequestResponseBody<'publishServiceRequest'>;
+    const serviceRequestId = publishedBody.data!.publishServiceRequest.id;
+
+    const quoteResponse = await gqlRequest(
+      SUBMIT_QUOTE_MUTATION,
+      {
+        input: {
+          serviceRequestId,
+          price: 5000,
+          message: 'Puedo hacerlo mañana.',
+        },
+      },
+      professionalToken,
+    ).expect(200);
+    const quoteBody = quoteResponse.body as {
+      data: { submitQuote: { id: string; status: string } } | null;
+      errors?: GraphQLErrorEntry[];
+    };
+    expect(quoteBody.errors).toBeUndefined();
+    const quoteId = quoteBody.data!.submitQuote.id;
+
+    const acceptResponse = await gqlRequest(
+      ACCEPT_QUOTE_MUTATION,
+      { quoteId },
+      customerToken,
+    ).expect(200);
+    const acceptBody = acceptResponse.body as {
+      data: { acceptQuote: { id: string; status: string } } | null;
+      errors?: GraphQLErrorEntry[];
+    };
+    expect(acceptBody.errors).toBeUndefined();
+    expect(acceptBody.data!.acceptQuote.status).toBe('ENGAGED');
+
+    const cancelResponse = await gqlRequest(
+      CANCEL_SERVICE_REQUEST_MUTATION,
+      { serviceRequestId },
+      customerToken,
+    ).expect(200);
+    const cancelBody =
+      cancelResponse.body as ServiceRequestResponseBody<'cancelServiceRequest'>;
+
+    expect(cancelBody.data).toBeNull();
+    expect(cancelBody.errors?.[0]?.extensions?.code).toBe(
+      'SERVICE_REQUEST_HAS_ENGAGEMENT',
+    );
+  });
+
+  // GOS-41 — regression test for the concurrency bug this plan fixes
+  // (`ServiceRequestsRepository.cancel()` used to be an unconditional
+  // `update()`): concurrent `cancelServiceRequest` + `acceptQuote` calls
+  // against the SAME OPEN ServiceRequest/SENT Quote must never both
+  // succeed — the DB must never end up with an active `Engagement` AND
+  // `ServiceRequest.status === 'CANCELLED'` at the same time.
+  it('a concurrent cancelServiceRequest + acceptQuote race never leaves both an active Engagement and a CANCELLED ServiceRequest', async () => {
+    const [categoryId] = await seedCategories(1);
+    const customer = await seedApprovedCustomer();
+    const customerToken = await loginSessionToken(customer.email);
+    const professional = await seedApprovedProfessional([categoryId]);
+    const professionalToken = await loginSessionToken(professional.email);
+
+    const published = await gqlRequest(
+      PUBLISH_SERVICE_REQUEST_MUTATION,
+      { input: publishInput(categoryId) },
+      customerToken,
+    ).expect(200);
+    const publishedBody =
+      published.body as ServiceRequestResponseBody<'publishServiceRequest'>;
+    const serviceRequestId = publishedBody.data!.publishServiceRequest.id;
+
+    const quoteResponse = await gqlRequest(
+      SUBMIT_QUOTE_MUTATION,
+      {
+        input: {
+          serviceRequestId,
+          price: 5000,
+          message: 'Puedo hacerlo mañana.',
+        },
+      },
+      professionalToken,
+    ).expect(200);
+    const quoteBody = quoteResponse.body as {
+      data: { submitQuote: { id: string; status: string } } | null;
+      errors?: GraphQLErrorEntry[];
+    };
+    expect(quoteBody.errors).toBeUndefined();
+    const quoteId = quoteBody.data!.submitQuote.id;
+
+    const [cancelResponse, acceptResponse] = await Promise.all([
+      gqlRequest(
+        CANCEL_SERVICE_REQUEST_MUTATION,
+        { serviceRequestId },
+        customerToken,
+      ),
+      gqlRequest(ACCEPT_QUOTE_MUTATION, { quoteId }, customerToken),
+    ]);
+
+    const cancelBody =
+      cancelResponse.body as ServiceRequestResponseBody<'cancelServiceRequest'>;
+    const acceptBody = acceptResponse.body as {
+      data: { acceptQuote: { id: string; status: string } } | null;
+      errors?: GraphQLErrorEntry[];
+    };
+
+    const finalServiceRequest = await prisma.serviceRequest.findUnique({
+      where: { id: serviceRequestId },
+    });
+    const engagement = await prisma.engagement.findUnique({
+      where: { serviceRequestId },
+    });
+
+    // THE regression assertion: never both at once.
+    expect(
+      finalServiceRequest?.status === 'CANCELLED' && engagement !== null,
+    ).toBe(false);
+
+    const cancelSucceeded =
+      !cancelBody.errors &&
+      cancelBody.data?.cancelServiceRequest.status === 'CANCELLED';
+    const acceptSucceeded =
+      !acceptBody.errors && acceptBody.data?.acceptQuote.status === 'ENGAGED';
+
+    // Exactly one of the two concurrent calls won the race — never both,
+    // never neither.
+    expect(cancelSucceeded).toBe(!acceptSucceeded);
+
+    if (cancelSucceeded) {
+      expect(finalServiceRequest?.status).toBe('CANCELLED');
+      expect(engagement).toBeNull();
+      // The loser's error depends on exactly where in acceptQuote's flow
+      // it lost the race — either the pre-read already saw the
+      // no-longer-OPEN ServiceRequest, or it reached the guarded CAS
+      // inside the transaction and lost there.
+      expect(acceptBody.errors?.[0]?.extensions?.code).toEqual(
+        expect.stringMatching(
+          /^(SERVICE_REQUEST_NOT_OPEN|QUOTE_ACCEPT_CONFLICT)$/,
+        ),
+      );
+    } else {
+      expect(finalServiceRequest?.status).toBe('ENGAGED');
+      expect(engagement).not.toBeNull();
+      // Same reasoning — cancelServiceRequest's loser error depends on
+      // whether its pre-read or its post-CAS re-read caught the race.
+      expect(cancelBody.errors?.[0]?.extensions?.code).toBe(
+        'SERVICE_REQUEST_HAS_ENGAGEMENT',
+      );
+    }
   });
 });

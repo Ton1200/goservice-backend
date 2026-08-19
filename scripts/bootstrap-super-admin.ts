@@ -67,6 +67,9 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // + hierarchy management. SUPER_ADMIN gets every permission.
       Permission.CATEGORIES_READ,
       Permission.CATEGORIES_WRITE,
+      // Quotes admin grid follow-up (2026-08-19) — quotes/quoteDetail,
+      // read-only admin grid. SUPER_ADMIN gets every permission.
+      Permission.QUOTES_READ,
     ],
   },
   {
@@ -97,6 +100,10 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // SERVICE_REQUESTS_READ/WRITE's own presence on this role.
       Permission.CATEGORIES_READ,
       Permission.CATEGORIES_WRITE,
+      // Quotes admin grid follow-up (2026-08-19) — explicit human decision:
+      // CONFIG_MANAGER-and-above can view Quotes, mirroring
+      // SERVICE_REQUESTS_READ/CATEGORIES_READ's own presence on this role.
+      Permission.QUOTES_READ,
     ],
   },
   {
@@ -114,6 +121,10 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // this role can view the catalog/tree but never create/rename/
       // reorder/re-parent/delete.
       Permission.CATEGORIES_READ,
+      // Quotes admin grid follow-up (2026-08-19) — same read-only
+      // semantics; this role can view Quotes but there is no write
+      // capability to withhold anyway (no QUOTES_WRITE exists).
+      Permission.QUOTES_READ,
     ],
   },
 ];
