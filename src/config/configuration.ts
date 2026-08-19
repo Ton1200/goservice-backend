@@ -137,6 +137,27 @@ export interface AppConfig {
    * paths (e.g. via traffic inspection, a leaked link, or brute-forcing).
    */
   adminPanelPath: string;
+  /**
+   * GOS-38 — `LocalDevStorageAdapter` (`src/service-requests/adapters/`),
+   * the LOCAL DEV/TEST ONLY placeholder implementation of `StoragePort`
+   * (`src/service-requests/ports/storage.port.ts`). No real object-storage
+   * provider is decided yet (see infrastructure.md's open hosting-provider
+   * question) — this is only used to compose the local `uploadUrl`/
+   * `publicUrl` this adapter's own `UploadsController` serves.
+   */
+  storageLocal: {
+    baseUrl: string;
+    /**
+     * HMAC secret signing this adapter's upload tokens. Optional — when
+     * unset, `LocalDevStorageAdapter` generates a fresh random secret once
+     * per process at construction (same "ephemeral synthetic secret"
+     * precedent `test/support/test-app.ts` already uses for
+     * `ADMIN_CREDENTIALS_ENCRYPTION_KEY`), which is fine for this
+     * single-process, local-dev/test-only adapter. Set explicitly only if
+     * running multiple processes that must agree on the same signature.
+     */
+    signingSecret: string | undefined;
+  };
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
@@ -241,4 +262,8 @@ export default (): AppConfig => ({
     false,
   ),
   adminPanelPath: parseAdminPanelPath(process.env.ADMIN_PANEL_PATH),
+  storageLocal: {
+    baseUrl: process.env.STORAGE_LOCAL_BASE_URL ?? 'http://localhost:3000',
+    signingSecret: process.env.STORAGE_LOCAL_SIGNING_SECRET,
+  },
 });

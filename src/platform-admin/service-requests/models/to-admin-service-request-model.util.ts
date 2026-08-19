@@ -1,0 +1,66 @@
+import type {
+  AdminServiceRequestDetailRow,
+  AdminServiceRequestRow,
+} from '../../../service-requests/service-requests.repository';
+import { AdminServiceRequestCustomerModel } from './admin-service-request-customer.model';
+import { AdminServiceRequestDetailModel } from './admin-service-request-detail.model';
+import { AdminServiceRequestModel } from './admin-service-request.model';
+
+function toCustomerModel(
+  customerProfile: AdminServiceRequestRow['customerProfile'],
+): AdminServiceRequestCustomerModel {
+  const model = new AdminServiceRequestCustomerModel();
+  model.id = customerProfile.id;
+  model.userId = customerProfile.user.id;
+  model.displayName = customerProfile.displayName;
+  model.email = customerProfile.user.email;
+  model.firstName = customerProfile.user.firstName;
+  model.lastName = customerProfile.user.lastName;
+  return model;
+}
+
+/**
+ * Maps a `ServiceRequestsRepository.ADMIN_SERVICE_REQUEST_SELECT`-shaped
+ * row to the GraphQL-facing `AdminServiceRequestModel` (grid row).
+ */
+export function toAdminServiceRequestModel(
+  row: AdminServiceRequestRow,
+): AdminServiceRequestModel {
+  const model = new AdminServiceRequestModel();
+  model.id = row.id;
+  model.customer = toCustomerModel(row.customerProfile);
+  model.category = row.category;
+  model.description = row.description;
+  model.urgency = row.urgency;
+  model.indicativeBudgetMin = row.indicativeBudgetMin;
+  model.indicativeBudgetMax = row.indicativeBudgetMax;
+  model.status = row.status;
+  model.cancelledAt = row.cancelledAt;
+  model.attachmentsCount = row._count.attachments;
+  model.createdAt = row.createdAt;
+  model.updatedAt = row.updatedAt;
+  return model;
+}
+
+/**
+ * Maps a `ServiceRequestsRepository.ADMIN_SERVICE_REQUEST_DETAIL_SELECT`-shaped
+ * row to the GraphQL-facing `AdminServiceRequestDetailModel`.
+ */
+export function toAdminServiceRequestDetailModel(
+  row: AdminServiceRequestDetailRow,
+): AdminServiceRequestDetailModel {
+  const model = new AdminServiceRequestDetailModel();
+  model.id = row.id;
+  model.customer = toCustomerModel(row.customerProfile);
+  model.category = row.category;
+  model.description = row.description;
+  model.urgency = row.urgency;
+  model.indicativeBudgetMin = row.indicativeBudgetMin;
+  model.indicativeBudgetMax = row.indicativeBudgetMax;
+  model.status = row.status;
+  model.cancelledAt = row.cancelledAt;
+  model.attachments = row.attachments;
+  model.createdAt = row.createdAt;
+  model.updatedAt = row.updatedAt;
+  return model;
+}

@@ -118,6 +118,27 @@ const ADMIN_ONLY_FIELDS = [
   // deactivateUserAccount/reactivateUserAccount/bulkDeactivateUserAccounts.
   'deleteUserAccount',
   'bulkDeleteUserAccounts',
+  // GOS-38 follow-up (2026-08-18) — the admin panel's Service Requests
+  // grid (read-only) and its "create on behalf of an approved customer"
+  // flow. `serviceRequestCategories` is deliberately named distinctly from
+  // the consumer schema's own `categories` (same underlying catalog,
+  // different resolver) — see that field's own description.
+  'serviceRequests',
+  'serviceRequestDetail',
+  'serviceRequestCategories',
+  'eligibleServiceRequestCustomers',
+  'createServiceRequestForCustomer',
+  // Category-tree follow-up (2026-08-18) — full Category catalog CRUD +
+  // hierarchy management (`src/platform-admin/categories/`). `adminCategories`/
+  // `adminCategoryTree` are deliberately named distinctly from the consumer
+  // schema's own `categories` AND from this same admin schema's own
+  // `serviceRequestCategories` (a different, narrower query) so none of the
+  // three ever collide.
+  'adminCategories',
+  'adminCategoryTree',
+  'createCategory',
+  'updateCategory',
+  'deleteCategory',
 ];
 
 // Fields that must NEVER appear on `/admin/graphql` — consumer-only
@@ -243,6 +264,15 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         'userAccounts',
         // GOS-3x follow-up ("View" row action, 2026-08-11).
         'userAccountDetail',
+        // GOS-38 follow-up (2026-08-18) — Service Requests admin grid +
+        // "create on behalf of an approved customer" flow.
+        'serviceRequests',
+        'serviceRequestDetail',
+        'serviceRequestCategories',
+        'eligibleServiceRequestCustomers',
+        // Category-tree follow-up (2026-08-18).
+        'adminCategories',
+        'adminCategoryTree',
       ].sort(),
     );
     expect(
@@ -259,6 +289,12 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         // bulkDeactivateUserAccounts.
         'deleteUserAccount',
         'bulkDeleteUserAccounts',
+        // GOS-38 follow-up (2026-08-18).
+        'createServiceRequestForCustomer',
+        // Category-tree follow-up (2026-08-18).
+        'createCategory',
+        'updateCategory',
+        'deleteCategory',
       ].sort(),
     );
   });

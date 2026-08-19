@@ -10,6 +10,8 @@ import { IssuePasswordResetCodeService } from '../password-reset/services/issue-
 import './admin-rbac/admin-permission.enum'; // GraphQL enum registration side effect
 import '../users/models/user-account-status.enum'; // GraphQL enum registration side effect
 import './user-accounts/models/auth-provider.enum'; // GraphQL enum registration side effect
+import '../service-requests/models/service-request-status.enum'; // GraphQL enum registration side effect
+import '../service-requests/models/service-request-urgency.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
 import { AdminPermissionsGuard } from './admin-rbac/guards/admin-permissions.guard';
@@ -34,6 +36,20 @@ import { ForceUserAccountPasswordResetService } from './user-accounts/services/f
 import { DeleteUserAccountService } from './user-accounts/services/delete-user-account.service';
 import { BulkDeleteUserAccountsService } from './user-accounts/services/bulk-delete-user-accounts.service';
 import { GetUserAccountDetailService } from './user-accounts/services/get-user-account-detail.service';
+import { ServiceRequestsRepository } from '../service-requests/service-requests.repository';
+import { ProfilesRepository } from '../profiles/profiles.repository';
+import { ListCategoriesService } from '../profiles/services/list-categories.service';
+import { AdminServiceRequestsResolver } from './service-requests/admin-service-requests.resolver';
+import { ListAdminServiceRequestsService } from './service-requests/services/list-admin-service-requests.service';
+import { GetAdminServiceRequestDetailService } from './service-requests/services/get-admin-service-request-detail.service';
+import { ListEligibleServiceRequestCustomersService } from './service-requests/services/list-eligible-service-request-customers.service';
+import { CreateServiceRequestForCustomerService } from './service-requests/services/create-service-request-for-customer.service';
+import { AdminCategoriesResolver } from './categories/admin-categories.resolver';
+import { ListAdminCategoriesService } from './categories/services/list-admin-categories.service';
+import { ListAdminCategoryTreeService } from './categories/services/list-admin-category-tree.service';
+import { CreateCategoryService } from './categories/services/create-category.service';
+import { UpdateCategoryService } from './categories/services/update-category.service';
+import { DeleteCategoryService } from './categories/services/delete-category.service';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -234,6 +250,60 @@ import { GetUserAccountDetailService } from './user-accounts/services/get-user-a
     // leak class documented above), since only the TYPE, never a service
     // from it, is needed here.
     GetUserAccountDetailService,
+
+    // service-requests (GOS-38 follow-up, 2026-08-18) — `serviceRequests`/
+    // `serviceRequestDetail`, read-only. `ServiceRequestsRepository` is
+    // reused CONCRETE CLASS from `src/service-requests/` — same
+    // "never import the resolver-bearing module" pattern as
+    // `UsersRepository` above; `ServiceRequestsModule` itself is never
+    // imported here (it has its own `ServiceRequestsResolver`, the same
+    // leak class documented above). `Category`/`ServiceRequestStatus`/
+    // `ServiceRequestUrgency`/`ServiceRequestAttachmentModel` are reused
+    // directly as field types on `AdminServiceRequestModel`/
+    // `AdminServiceRequestDetailModel`, the same "orphaned type made
+    // reachable from an admin field" pattern `userAccountDetail` already
+    // established for `CustomerProfile`/`ProfessionalProfile` — only the
+    // enum registrations need an explicit side-effect import (see above);
+    // the `@ObjectType()` classes need no DI registration at all.
+    ServiceRequestsRepository,
+    AdminServiceRequestsResolver,
+    ListAdminServiceRequestsService,
+    GetAdminServiceRequestDetailService,
+
+    // service-requests "create for a customer" (GOS-38 follow-up, same day)
+    // — `categories`/`eligibleServiceRequestCustomers`/
+    // `createServiceRequestForCustomer`. UPDATES the claim the
+    // `userAccountDetail` comment above makes ("only the TYPE, never a
+    // service, from ProfilesModule is needed here"): `ProfilesRepository`
+    // IS now a real provider here, for a NEW, different reason — this flow
+    // genuinely needs to read/query `CustomerProfile`/`Category` data
+    // (find an approved customer, validate a category id), not just reuse
+    // a type shape. Still the same "reuse the concrete repository/service
+    // CLASS directly, never import the resolver-bearing `ProfilesModule`"
+    // pattern as every other cross-feature reuse in this module — that
+    // module has its own `ProfilesResolver`, the same leak class documented
+    // throughout this file. `ListCategoriesService` is reused directly too
+    // (a plain injectable, no resolver of its own).
+    ProfilesRepository,
+    ListCategoriesService,
+    ListEligibleServiceRequestCustomersService,
+    CreateServiceRequestForCustomerService,
+
+    // categories (category-tree follow-up, 2026-08-18) — full CRUD +
+    // hierarchy management (`adminCategories`/`adminCategoryTree`/
+    // `createCategory`/`updateCategory`/`deleteCategory`). `ProfilesRepository`
+    // is already a provider above (reused, not duplicated) — it owns every
+    // `Category` Prisma query, reads AND writes, per its own header comment.
+    // `ServiceRequestsRepository` is likewise already a provider above,
+    // reused for `DeleteCategoryService`'s "in use" pre-check (the
+    // ServiceRequest half of it — the ProfessionalSpecialization half stays
+    // on ProfilesRepository, per-table ownership either way).
+    AdminCategoriesResolver,
+    ListAdminCategoriesService,
+    ListAdminCategoryTreeService,
+    CreateCategoryService,
+    UpdateCategoryService,
+    DeleteCategoryService,
   ],
 })
 export class PlatformAdminModule {}

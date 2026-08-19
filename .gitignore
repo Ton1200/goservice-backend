@@ -42,3 +42,7 @@ src/admin-schema.gql
 
 # temp
 /tmp
+
+# GOS-38 — LocalDevStorageAdapter's local file storage (dev/test only,
+# never committed).
+/var/uploads

@@ -128,7 +128,11 @@
    `.tabulator-tableholder` once there are more columns than fit the card's
    width, rather than crushing every column down to unreadable widths or
    losing columns off the right edge entirely. */
-#usuarios-grid {
+/* #service-requests-grid (GOS-38 follow-up, 2026-08-18) — the second
+   Tabulator grid in this panel, same container styling/reasoning as
+   #usuarios-grid above. */
+#usuarios-grid,
+#service-requests-grid {
   border-radius: 4px;
   overflow-x: auto;
   overflow-y: hidden;

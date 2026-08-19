@@ -79,15 +79,24 @@ describe('GraphQL /admin/graphql — adminLogin/adminLogout/adminMe (e2e)', () =
     prisma = ctx.prisma;
   });
 
-  afterAll(async () => {
-    await cleanAdminUsersData(prisma);
-    // This suite calls the throttled `adminLogin` mutation several times
-    // across its cases (limit 5/60s — see `AdminAuthResolver`'s
-    // `@Throttle`). Flush the shared Redis-backed throttle counters so this
-    // suite doesn't leak a "throttled" state into
-    // `admin-feature-flags.e2e-spec.ts`, which also calls `adminLogin` and
-    // may run in the same 60s window. Same pattern as
-    // `auth-login.e2e-spec.ts`.
+  // This suite calls the throttled `adminLogin` mutation several times
+  // across its cases (limit 5/60s — see `AdminAuthResolver`'s `@Throttle`).
+  // Flushing only in `afterAll` (the ORIGINAL, pre-category-tree-follow-up
+  // shape of this file) assumed nothing else touching `adminLogin` would
+  // run adjacent to this suite in the same 60s window — Jest's default
+  // test sequencer orders `.e2e-spec.ts` files by (roughly) size/duration,
+  // not a fixed/alphabetical order, so adding ANY new adminLogin-heavy file
+  // elsewhere in this repo can silently reshuffle this suite next to one
+  // that hasn't flushed yet. Confirmed live (category-tree follow-up,
+  // 2026-08-18): adding `admin-categories.e2e-spec.ts` (~9 `adminLogin`
+  // calls) caused THIS suite to start failing with
+  // `ThrottlerException: Too Many Requests` even though nothing in this
+  // file itself changed. Fixed the same way every OTHER adminLogin-heavy
+  // e2e file in this repo already protects itself: flush before EVERY
+  // test, not just once at the end — see
+  // `admin-service-requests.e2e-spec.ts`/`admin-categories.e2e-spec.ts`'s
+  // own identical `flushRedis`/`beforeEach` pattern.
+  async function flushRedis(): Promise<void> {
     const redisConfig = app.get(ConfigService<AppConfig, true>).get('redis', {
       infer: true,
     });
@@ -98,6 +107,15 @@ describe('GraphQL /admin/graphql — adminLogin/adminLogout/adminMe (e2e)', () =
     });
     await redis.flushdb();
     await redis.quit();
+  }
+
+  beforeEach(async () => {
+    await flushRedis();
+  });
+
+  afterAll(async () => {
+    await cleanAdminUsersData(prisma);
+    await flushRedis();
     await app.close();
   });
 

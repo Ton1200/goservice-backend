@@ -72,7 +72,7 @@ export class ProfilesResolver {
   @UseGuards(SessionGuard)
   @Query(() => [Category], {
     description:
-      'The full read-only service category catalog. No CRUD — seeded via `npm run prisma:seed`.',
+      'The full service category catalog, flat and tree-pre-ordered (every parent immediately followed by its own children). Read-only from this schema — managed exclusively from the admin panel (src/platform-admin/categories/), originally seeded via `npm run prisma:seed`.',
   })
   categories(): Promise<Category[]> {
     return this.listCategoriesService.listCategories();

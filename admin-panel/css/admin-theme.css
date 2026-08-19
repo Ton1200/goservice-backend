@@ -605,3 +605,284 @@ h6.gs-settings-group-heading {
   margin-bottom: 1rem;
   display: block;
 }
+
+/* Service Requests detail modal's "Attachments" list (GOS-38 follow-up,
+   2026-08-18, js/serviceRequests.js) — plain links, one per line, no
+   default list bullets/indent. */
+.gs-attachment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gs-attachment-list li {
+  margin-bottom: 0.5rem;
+  word-break: break-all;
+}
+
+.gs-attachment-list li:last-child {
+  margin-bottom: 0;
+}
+
+/* ---- Category tree (category-tree follow-up, 2026-08-18, js/categories.js)
+   ---------------------------------------------------------------------
+   An actual expand/collapse tree, not a grid — Tabulator has no vendored
+   tree module in this panel, and this data is inherently hierarchical.
+   Indentation/hierarchy is drawn with REAL box-drawn guide lines (│/├/└ —
+   see `.gs-tree-guides` below), the same technique classic file-explorer/
+   directory-tree UIs use, not just flat padding. Per-row action buttons
+   are visually hidden until hover/focus so a deep tree doesn't turn into a
+   wall of icons — `:focus-within` keeps them reachable for keyboard/
+   touch users who can't hover.
+
+   Drag-and-drop (same day follow-up) is powered by vendored SortableJS
+   (`../vendor/sortablejs/NOTICE.md`) — `.gs-category-node-row-ghost`/
+   `-chosen`/`-drag` below are SortableJS's own configurable class hooks
+   (`ghostClass`/`chosenClass`/`dragClass` in `js/categories.js`), not
+   hand-rolled drag-state classes. */
+
+.gs-category-tree {
+  font-size: 0.9375rem;
+}
+
+.gs-category-node-row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 4px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .gs-category-node-row:hover {
+    background-color: var(--gs-background-secondary);
+  }
+}
+
+/* ---- Tree guides (│ ├ └) — box-drawn via borders, not ASCII characters,
+   so they inherit the theme's border color automatically. One
+   `.gs-tree-guide-cell` per ANCESTOR level above the immediate parent
+   (blank if that ancestor was the last child among ITS OWN siblings — its
+   branch already ended, so no line continues in that column), followed by
+   ONE `.gs-tree-elbow` for this row's own connection to its immediate
+   parent: a "└" (`.gs-tree-elbow-last`, top-left quadrant border only) if
+   this is the last child, or a "├" (adds a continuing bottom-half line) if
+   more siblings follow. Root-level rows render zero guides/elbow (see
+   `buildTreeGuides`'s own `depth === 0` case). */
+.gs-tree-guides {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.gs-tree-guide-cell {
+  display: inline-block;
+  width: 1.5rem;
+  flex-shrink: 0;
+}
+
+.gs-tree-guide-cell-line {
+  border-left: 1px dashed var(--gs-border-default);
+}
+
+.gs-tree-elbow {
+  position: relative;
+  display: inline-block;
+  width: 1.5rem;
+  flex-shrink: 0;
+}
+
+.gs-tree-elbow::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 50%;
+  height: 50%;
+  border-left: 1px dashed var(--gs-border-default);
+  border-bottom: 1px dashed var(--gs-border-default);
+}
+
+.gs-tree-elbow:not(.gs-tree-elbow-last)::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  bottom: 0;
+  border-left: 1px dashed var(--gs-border-default);
+}
+
+/* ---- Drag handle (grip) — the ONLY element `js/categories.js` marks as
+   SortableJS's `handle`, so dragging never fights with clicking the
+   toggle/name/action buttons elsewhere in the row. Faded by default,
+   fully visible on row hover/focus — same "don't clutter every row"
+   instinct as `.gs-category-node-actions` below. */
+.gs-category-node-grip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  color: var(--gs-text-muted);
+  opacity: 0.35;
+  cursor: grab;
+  transition: opacity 0.1s ease;
+}
+
+.gs-category-node-grip:active {
+  cursor: grabbing;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .gs-category-node-row:hover .gs-category-node-grip {
+    opacity: 1;
+  }
+}
+
+.gs-category-node-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--gs-text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.gs-category-node-toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.gs-category-node-toggle[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+.gs-category-node-toggle-spacer {
+  visibility: hidden;
+  cursor: default;
+}
+
+.gs-category-node-toggle:not(:disabled):hover,
+.gs-category-node-toggle:focus-visible {
+  background-color: var(--gs-surface-secondary);
+  color: var(--gs-text-primary);
+}
+
+.gs-category-node-toggle:focus-visible {
+  outline: 2px solid var(--gs-action-primary);
+  outline-offset: 1px;
+}
+
+.gs-category-node-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--gs-text-muted);
+}
+
+.gs-category-node-name {
+  flex-grow: 1;
+  font-weight: var(--tblr-font-weight-medium, 500);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gs-category-node-badge {
+  flex-shrink: 0;
+  font-weight: var(--tblr-font-weight-medium, 500);
+}
+
+.gs-category-node-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .gs-category-node-row:hover .gs-category-node-actions {
+    opacity: 1;
+  }
+}
+
+.gs-category-node-actions:focus-within {
+  opacity: 1;
+}
+
+.gs-tree-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--gs-text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .gs-tree-icon-button:hover {
+    background-color: var(--gs-surface-secondary);
+    color: var(--gs-text-primary);
+  }
+}
+
+.gs-tree-icon-button:focus-visible {
+  outline: 2px solid var(--gs-action-primary);
+  outline-offset: 1px;
+}
+
+.gs-tree-icon-button-danger:hover {
+  color: var(--gs-feedback-error);
+}
+
+/* `.gs-category-node-children` needs no border/margin of its own anymore
+   — the tree guides (`.gs-tree-guides` above) are drawn PER ROW now, not
+   via one continuous border on the container. It DOES need a real
+   minimum height even when empty (a leaf category's container), or
+   SortableJS's `emptyInsertThreshold` has nothing to hit-test against —
+   see `js/categories.js`'s own comment on dropping into an empty
+   container. */
+.gs-category-node-children:empty {
+  min-height: 0.5rem;
+}
+
+/* ---- SortableJS drag-state classes (configured as `ghostClass`/
+   `chosenClass`/`dragClass` in `js/categories.js`'s `Sortable.create`
+   call) — SortableJS itself decides WHEN each applies; these only decide
+   HOW they look, using this panel's existing tokens (nothing new
+   invented). */
+
+/* The placeholder left behind at the row's ORIGINAL position while
+   dragging — a light dashed outline, same idea as this panel's other
+   "reserved space" indicators. */
+.gs-category-node-row-ghost {
+  opacity: 0.4;
+  background-color: var(--gs-background-secondary);
+  border: 1px dashed var(--gs-action-primary);
+  border-radius: 4px;
+}
+
+/* The row actually being picked up (briefly, right as the drag starts,
+   before the ghost/floating clone take over). */
+.gs-category-node-row-chosen {
+  background-color: var(--gs-surface-secondary);
+}
+
+/* The floating clone that follows the pointer during the drag itself. */
+.gs-category-node-row-drag {
+  background-color: var(--gs-surface-primary);
+  box-shadow: 0 2px 8px rgba(28, 36, 48, 0.2);
+  border-radius: 4px;
+}
+
