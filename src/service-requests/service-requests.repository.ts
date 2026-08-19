@@ -232,11 +232,52 @@ export class ServiceRequestsRepository {
     });
   }
 
-  cancel(id: string): Promise<ServiceRequestWithRelations> {
-    return this.prisma.serviceRequest.update({
-      where: { id },
+  /**
+   * GOS-41 bugfix — this used to be a plain, unconditional `update()`,
+   * which raced unsafely against the new `acceptQuote` mutation: nothing
+   * stopped a `cancelServiceRequest` call from overwriting a ServiceRequest
+   * that had JUST been accepted into `ENGAGED` a moment earlier,
+   * leaving `Engagement` active + `ServiceRequest CANCELLED` simultaneously
+   * — the exact inconsistent state this project's business rules forbid.
+   * Now a guarded `updateMany` (CAS), same idiom as
+   * `UsersRepository.transitionToPendingApprovalIfEmailVerified`/
+   * `transitionFromPendingApproval`: only actually cancels while still
+   * `OPEN`, and reports whether it did via `{count}` — `count === 0` means
+   * the caller lost a race (or the pre-read was stale), which
+   * `CancelServiceRequestService` handles by re-reading and throwing the
+   * correct specific error (`SERVICE_REQUEST_ALREADY_CANCELLED` or
+   * `SERVICE_REQUEST_HAS_ENGAGEMENT`). `updateMany` cannot `include`
+   * relations, so the caller re-fetches via `findById` after a successful
+   * `count === 1`.
+   */
+  async cancel(id: string): Promise<{ count: number }> {
+    return this.prisma.serviceRequest.updateMany({
+      where: { id, status: ServiceRequestStatus.OPEN },
       data: { status: ServiceRequestStatus.CANCELLED, cancelledAt: new Date() },
-      include: SERVICE_REQUEST_INCLUDE,
+    });
+  }
+
+  /**
+   * GOS-41 — the `ServiceRequest` half of `AcceptQuoteService`'s
+   * transaction: a guarded `updateMany` (CAS), `OPEN` -> `ENGAGED`, setting
+   * `acceptedQuoteId` atomically with the status change. Same idiom as
+   * `cancel()` above / `UsersRepository.transitionToPendingApprovalIfEmailVerified`
+   * — `count !== 1` means this `ServiceRequest` was no longer `OPEN` by the
+   * time this write ran (lost a race against a concurrent
+   * `acceptQuote`/`cancelServiceRequest`, or the caller's own pre-read was
+   * already stale). Runs inside the caller's own `tx` — reused directly by
+   * `quotes/`'s `AcceptQuoteService` as a concrete provider (this module is
+   * never imported by `quotes/`/`engagements/` — see
+   * `service-requests.module.ts`'s own comment on avoiding that cycle).
+   */
+  transitionToEngagedIfOpen(
+    tx: Prisma.TransactionClient,
+    id: string,
+    acceptedQuoteId: string,
+  ): Promise<{ count: number }> {
+    return tx.serviceRequest.updateMany({
+      where: { id, status: ServiceRequestStatus.OPEN },
+      data: { status: ServiceRequestStatus.ENGAGED, acceptedQuoteId },
     });
   }
 

@@ -25,6 +25,10 @@ describe('CancelServiceRequestService', () => {
   function makeService(overrides?: {
     customerProfile?: typeof customerProfile | null;
     existing?: ReturnType<typeof makeExisting> | null;
+    cancelCount?: number;
+    // Second findById call, only relevant when the CAS (cancel) reports
+    // count !== 1 (a lost race) — defaults to `existing` itself.
+    reReadExisting?: ReturnType<typeof makeExisting> | null;
   }) {
     const findCustomerProfileByUserId = jest
       .fn()
@@ -39,11 +43,27 @@ describe('CancelServiceRequestService', () => {
 
     const existing =
       overrides?.existing === undefined ? makeExisting() : overrides.existing;
-    const findById = jest.fn().mockResolvedValue(existing);
-    const cancel = jest.fn().mockResolvedValue({
+    const cancelled = {
       ...(existing ?? makeExisting()),
       status: ServiceRequestStatus.CANCELLED,
-    });
+    };
+    const reReadExisting =
+      overrides?.reReadExisting === undefined
+        ? existing
+        : overrides.reReadExisting;
+
+    const findById = jest
+      .fn()
+      // First call: the pre-read. Second call (only reached on a lost
+      // race, count !== 1): the re-read. Third call (only reached on a WON
+      // race, count === 1): re-fetch the now-cancelled row.
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(
+        overrides?.cancelCount === 0 ? reReadExisting : cancelled,
+      );
+    const cancel = jest
+      .fn()
+      .mockResolvedValue({ count: overrides?.cancelCount ?? 1 });
     const serviceRequestsRepository = {
       findById,
       cancel,
@@ -105,11 +125,46 @@ describe('CancelServiceRequestService', () => {
     ).rejects.toMatchObject({ code: 'SERVICE_REQUEST_ALREADY_CANCELLED' });
   });
 
+  it('throws SERVICE_REQUEST_HAS_ENGAGEMENT when cancelling an ENGAGED ServiceRequest', async () => {
+    const { service, cancel } = makeService({
+      existing: makeExisting({ status: ServiceRequestStatus.ENGAGED }),
+    });
+
+    await expect(
+      service.cancelServiceRequest('user-1', 'service-request-1'),
+    ).rejects.toMatchObject({ code: 'SERVICE_REQUEST_HAS_ENGAGEMENT' });
+    // Never even attempts the write once the pre-read already shows ENGAGED.
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   it('throws CUSTOMER_PROFILE_REQUIRED when the caller has no CustomerProfile', async () => {
     const { service } = makeService({ customerProfile: null });
 
     await expect(
       service.cancelServiceRequest('user-1', 'service-request-1'),
     ).rejects.toMatchObject({ code: 'CUSTOMER_PROFILE_REQUIRED' });
+  });
+
+  it('re-reads and throws SERVICE_REQUEST_HAS_ENGAGEMENT when the CAS loses a race against a concurrent acceptQuote', async () => {
+    const { service, cancel } = makeService({
+      cancelCount: 0,
+      reReadExisting: makeExisting({ status: ServiceRequestStatus.ENGAGED }),
+    });
+
+    await expect(
+      service.cancelServiceRequest('user-1', 'service-request-1'),
+    ).rejects.toMatchObject({ code: 'SERVICE_REQUEST_HAS_ENGAGEMENT' });
+    expect(cancel).toHaveBeenCalledWith('service-request-1');
+  });
+
+  it('re-reads and throws SERVICE_REQUEST_ALREADY_CANCELLED when the CAS loses a race against a concurrent cancelServiceRequest', async () => {
+    const { service } = makeService({
+      cancelCount: 0,
+      reReadExisting: makeExisting({ status: ServiceRequestStatus.CANCELLED }),
+    });
+
+    await expect(
+      service.cancelServiceRequest('user-1', 'service-request-1'),
+    ).rejects.toMatchObject({ code: 'SERVICE_REQUEST_ALREADY_CANCELLED' });
   });
 });

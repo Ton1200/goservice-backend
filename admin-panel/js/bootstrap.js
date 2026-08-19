@@ -21,6 +21,7 @@ import { graphqlRequest } from './graphqlClient.js';
 import { loadSettings } from './settings.js';
 import { loadUserAccounts } from './userAccounts.js';
 import { loadServiceRequests } from './serviceRequests.js';
+import { loadQuotes } from './quotes.js';
 import { loadCategories } from './categories.js';
 import { showLoginView, showDashboardView } from './view.js';
 import { initNav, showSection } from './nav.js';
@@ -35,6 +36,9 @@ initNav({
   // GOS-38 follow-up (2026-08-18) — same "fetch fresh data every time this
   // section is shown" pattern.
   'service-requests-section': loadServiceRequests,
+  // Quotes admin grid follow-up (2026-08-19) — same "fetch fresh data every
+  // time this section is shown" pattern.
+  'quotes-section': loadQuotes,
   // Category-tree follow-up (2026-08-18) — same "fetch fresh data every
   // time this section is shown" pattern.
   'categories-section': loadCategories,

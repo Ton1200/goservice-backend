@@ -269,6 +269,11 @@ model CustomerProfile {
 
   // GOS-38 — purely additive back-reference, no new column here.
   serviceRequests ServiceRequest[]
+  // GOS-41 — purely additive back-reference, no new column here.
+  // Deliberately denormalized on Engagement itself (also derivable via
+  // serviceRequest.customerProfileId) — see Engagement's own header
+  // comment for why.
+  engagements     Engagement[]
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -305,6 +310,12 @@ model ProfessionalProfile {
   updatedAt              DateTime                       @updatedAt
 
   specializations ProfessionalSpecialization[]
+  // GOS-41 — purely additive back-references, no new column here.
+  quotes          Quote[]
+  // Deliberately denormalized on Engagement itself (also derivable via
+  // quote.professionalProfileId) — see Engagement's own header comment for
+  // why.
+  engagements     Engagement[]
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
   // User" constraint. Indexes anticipate Discovery (country+city) and a
@@ -359,20 +370,27 @@ model ProfessionalSpecialization {
 // GOS-38 — first ServiceRequest-side domain entities. A ServiceRequest
 // belongs to exactly one CustomerProfile (Confirmed rule —
 // goservice-docs/product/business-rules.md) and references exactly one
-// Category. Quote/Engagement (goservice-docs/architecture/domain-model.md)
-// remain hypotheses, not modeled here — see the GOS-38 plan's "Future Quote
-// compatibility" section for what does/doesn't need to change later.
+// Category.
+//
+// GOS-41 — Quote/Engagement (goservice-docs/architecture/domain-model.md)
+// are now real, modeled below (they used to be hypotheses only — see the
+// GOS-38 plan's "Future Quote compatibility" section for the shape that
+// section anticipated, which this mostly follows).
 
-// DELIBERATELY MINIMAL for this ticket's actual scope (publish + cancel
-// only — no Quote/Engagement flow exists yet in this backend). OPEN is the
-// only "live" state; CANCELLED is the only Customer-initiated terminal
-// state. Adding a value later (e.g. once Quote exists) is a pure additive
-// `ALTER TYPE "ServiceRequestStatus" ADD VALUE '...'` migration — same
-// "reserved for later, added when the trigger exists" posture as
-// ProfessionalVerificationStatus's PENDING_REVIEW/VERIFIED/REJECTED.
+// OPEN while visible to compatible Professionals and open to new Quotes;
+// CANCELLED once the owning Customer cancels it (only ever possible while
+// still OPEN — see ServiceRequestsRepository.cancel()); ENGAGED
+// (GOS-41 addition) once one of its Quotes has been accepted — an active
+// Engagement now exists (see ServiceRequest.engagement below). Both
+// CANCELLED and ENGAGED are terminal — neither ever reverts to OPEN. Adding
+// `ENGAGED` here is a pure additive `ALTER TYPE "ServiceRequestStatus" ADD
+// VALUE '...'` migration, same "reserved for later, added when the trigger
+// exists" posture as ProfessionalVerificationStatus's
+// PENDING_REVIEW/VERIFIED/REJECTED.
 enum ServiceRequestStatus {
   OPEN
   CANCELLED
+  ENGAGED
 }
 
 // Proposed by the GOS-38 ticket itself. NOT confirmed against
@@ -405,11 +423,31 @@ model ServiceRequest {
   indicativeBudgetMax Int?
   status              ServiceRequestStatus  @default(OPEN)
   cancelledAt         DateTime?
+  // GOS-41 — set atomically with the OPEN->ENGAGED transition, inside
+  // AcceptQuoteService's single transaction (see that service's own header
+  // comment). `@unique` here is itself part of the DB-level guarantee that
+  // at most one Quote can ever be the accepted one for a given
+  // ServiceRequest — a scalar column can only ever point at one value.
+  // Named relation ("ServiceRequestAcceptedQuote") because Quote and
+  // ServiceRequest also have a SEPARATE, unrelated relation below (every
+  // Quote submitted against a ServiceRequest, regardless of status) —
+  // Prisma requires an explicit name to disambiguate the two.
+  acceptedQuoteId     String?               @unique @db.Uuid
+  acceptedQuote       Quote?                @relation("ServiceRequestAcceptedQuote", fields: [acceptedQuoteId], references: [id], onDelete: Cascade)
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
 
   attachments          ServiceRequestAttachment[]
   attachmentUploadRefs ServiceRequestAttachmentUploadRef[]
+  // GOS-41 — every Quote ever submitted against this ServiceRequest
+  // (SENT/WITHDRAWN/REJECTED/ACCEPTED alike), NOT just the accepted one —
+  // see Quote.serviceRequest below and acceptedQuote above for that
+  // separate, single-row relation.
+  quotes               Quote[]                            @relation("ServiceRequestQuotes")
+  // GOS-41 — the one Engagement created once a Quote is accepted for this
+  // ServiceRequest, if any. Engagement (not ServiceRequest) holds the FK
+  // (`Engagement.serviceRequestId @unique`) — see that model below.
+  engagement           Engagement?
 
   // Supports `myPublishedServiceRequests` (WHERE customerProfileId = ?
   // ORDER BY createdAt DESC) without a sort spill. Postgres does NOT
@@ -420,6 +458,110 @@ model ServiceRequest {
   // The index `compatibleServiceRequests` needs — see
   // ServiceRequestsRepository.findManyCompatible.
   @@index([status, categoryId])
+}
+
+// GOS-41 — a Professional's offer against one OPEN ServiceRequest. SENT is
+// the only non-terminal state; WITHDRAWN/REJECTED/ACCEPTED are all
+// terminal. REJECTED is used both for an explicit Customer rejection
+// (`rejectQuote`) AND for the automatic rejection of every OTHER SENT Quote
+// on the same ServiceRequest once one is accepted (`AcceptQuoteService`) —
+// deliberately the same value for both triggers, no separate
+// "auto-rejected" state (see the GOS-41 plan's decision #2).
+//
+// Deliberately NO `@@unique([serviceRequestId, professionalProfileId])` —
+// whether a Professional may resubmit a Quote after withdrawing an earlier
+// one is a genuine open product question, left unenforced at the DB level
+// rather than guessed at (see the GOS-41 plan's decision #8).
+enum QuoteStatus {
+  SENT
+  WITHDRAWN
+  REJECTED
+  ACCEPTED
+}
+
+model Quote {
+  id                     String              @id @default(uuid()) @db.Uuid
+  serviceRequestId       String              @db.Uuid
+  // Named relation — see ServiceRequest.quotes/acceptedQuote's own comments
+  // for why Quote<->ServiceRequest needs two distinct, explicitly-named
+  // relations. Cascade: see this schema's own "GOS-41 onDelete" note on
+  // ServiceRequest.customerProfile above and the GOS-41 plan's decision #12
+  // — Quote must never block a User/CustomerProfile/ProfessionalProfile/
+  // ServiceRequest hard-delete (`deleteUserAccount`/
+  // `bulkDeleteUserAccounts`, already implemented and e2e-tested).
+  serviceRequest         ServiceRequest      @relation("ServiceRequestQuotes", fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  professionalProfileId  String              @db.Uuid
+  professionalProfile    ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  price                  Int
+  message                String
+  status                 QuoteStatus         @default(SENT)
+  withdrawnAt            DateTime?
+  rejectedAt             DateTime?
+  acceptedAt             DateTime?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  // Inverse of ServiceRequest.acceptedQuote (named "ServiceRequestAcceptedQuote")
+  // — at most one ServiceRequest can ever point at a given Quote as its
+  // accepted one. Quote does not hold this FK; ServiceRequest does
+  // (`ServiceRequest.acceptedQuoteId`).
+  acceptedByServiceRequest ServiceRequest?   @relation("ServiceRequestAcceptedQuote")
+  // The Engagement created if/when this Quote is accepted. Engagement holds
+  // the FK (`Engagement.quoteId @unique`) — see that model below.
+  engagement               Engagement?
+
+  // Supports quotesForServiceRequest (WHERE serviceRequestId = ?) and the
+  // SENT-only lookups AcceptQuoteService/WithdrawQuoteService/
+  // RejectQuoteService all do.
+  @@index([serviceRequestId, status])
+  // Supports myQuotes (WHERE professionalProfileId = ? ORDER BY createdAt
+  // DESC).
+  @@index([professionalProfileId, createdAt])
+}
+
+// GOS-41 — deliberately a single value for now (`ACCEPTED`). No
+// IN_PROGRESS/COMPLETED/etc. is added speculatively — see the GOS-41 plan's
+// decision #6: those states get added when a real trigger for them exists,
+// not before, same "reserved for later" posture as
+// ProfessionalVerificationStatus/ServiceRequestStatus already establish
+// elsewhere in this schema.
+enum EngagementStatus {
+  ACCEPTED
+}
+
+// GOS-41 — created exactly once, atomically, inside AcceptQuoteService's
+// transaction, the moment a Quote is accepted. `serviceRequestId`/`quoteId`
+// are both `@unique` — a ServiceRequest can have at most one Engagement,
+// and a Quote can become at most one Engagement, matching
+// ServiceRequestStatus.ENGAGED/QuoteStatus.ACCEPTED both being terminal,
+// one-way transitions.
+//
+// `customerProfileId`/`professionalProfileId` are DELIBERATELY
+// denormalized — both are already derivable via
+// `serviceRequest.customerProfileId`/`quote.professionalProfileId` — so
+// that a future Chat/Notifications module (not built yet — see
+// goservice-docs/product/roadmap.md) can query "my Engagements" directly by
+// either party without a join through ServiceRequest+Quote. A documented
+// trade-off (see the GOS-41 plan's decision #6), not silent duplication.
+model Engagement {
+  id                     String           @id @default(uuid()) @db.Uuid
+  serviceRequestId       String           @unique @db.Uuid
+  serviceRequest         ServiceRequest   @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  quoteId                String           @unique @db.Uuid
+  quote                  Quote            @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  customerProfileId      String           @db.Uuid
+  customerProfile        CustomerProfile  @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  professionalProfileId  String           @db.Uuid
+  professionalProfile    ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  status                 EngagementStatus @default(ACCEPTED)
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  // Supports myEngagementsAsCustomer/myEngagementsAsProfessional (WHERE
+  // <profile>Id = ? ORDER BY createdAt DESC). serviceRequestId/quoteId
+  // above already get a unique index for free from `@unique`.
+  @@index([customerProfileId, createdAt])
+  @@index([professionalProfileId, createdAt])
 }
 
 model ServiceRequestAttachment {
@@ -626,6 +768,15 @@ enum Permission {
   // populated, but an admin can now create/rename/reorder/delete entries
   // from the panel).
   CATEGORIES_WRITE
+  // Quotes admin grid follow-up (GOS-41 admin surface, 2026-08-19) — gates
+  // the read-only admin surface over Quote (`quotes`/`quoteDetail`, see
+  // `src/platform-admin/quotes/`). Read-only, mirroring
+  // SERVICE_REQUESTS_READ's own semantics — there is no
+  // QUOTES_WRITE: unlike ServiceRequest, there is no sensible admin analog
+  // to an admin fabricating a Quote on behalf of a Professional, so this
+  // grid never grew a "create on behalf of" mutation the way
+  // createServiceRequestForCustomer did.
+  QUOTES_READ
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see

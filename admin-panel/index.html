@@ -126,6 +126,17 @@
               </a>
             </li>
             <li class="nav-item">
+              <a class="nav-link" href="#quotes" data-nav-target="quotes-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M16.7 8a3 3 0 0 0 -2.7 -2h-4a3 3 0 0 0 0 6h4a3 3 0 0 1 0 6h-4a3 3 0 0 1 -2.7 -2" />
+                    <path d="M12 3v3m0 12v3" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Quotes</span>
+              </a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link" href="#categories" data-nav-target="categories-section">
                 <span class="nav-link-icon d-md-none d-lg-inline-block">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -482,6 +493,52 @@
               <p id="service-requests-detail-error" class="alert alert-danger" role="alert" hidden></p>
               <p id="service-requests-detail-loading" class="text-secondary" hidden>Loading…</p>
               <div id="service-requests-detail-content"></div>
+            </dialog>
+          </section>
+
+          <!-- Quotes admin grid follow-up (2026-08-19) — a real,
+               functional, READ-ONLY data grid over `Quote`
+               (quotes/quoteDetail, js/quotes.js), mirroring the Service
+               Requests section above exactly (same "Columns" toolbar
+               button, no create dialog — unlike Service Requests, there is
+               no sensible admin-initiated "create a Quote" action, see
+               AdminQuotesResolver's own header comment). -->
+          <section id="quotes-section" class="gs-section" hidden aria-labelledby="quotes-heading">
+            <div class="page-header d-print-none">
+              <h2 id="quotes-heading" class="page-title">Quotes</h2>
+            </div>
+
+            <p id="quotes-error" class="alert alert-danger" role="alert" hidden></p>
+            <p id="quotes-success" class="alert alert-success" role="status" hidden></p>
+
+            <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+              <button id="quotes-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                Columns
+              </button>
+            </div>
+
+            <div class="card">
+              <!-- Tabulator mounts into this container (js/quotes.js).
+                   No mock rows here — the grid is empty until the first
+                   fetch resolves. -->
+              <div id="quotes-grid"></div>
+            </div>
+
+            <!-- "View" row-detail modal. Fetches `quoteDetail(id)` on
+                 demand (never pre-loaded alongside the grid) when opened
+                 from a row's "View" button. Content is built entirely in
+                 js/quotes.js via document.createElement, never innerHTML —
+                 only this dialog's own static chrome (heading, close
+                 button, loading/error placeholders) lives here, same
+                 convention as the Service Requests detail dialog. -->
+            <dialog id="quotes-detail-dialog" class="gs-detail-dialog" aria-labelledby="quotes-detail-heading">
+              <div class="d-flex justify-content-between align-items-start mb-3">
+                <h3 id="quotes-detail-heading" class="mb-0">Quote details</h3>
+                <button type="button" id="quotes-detail-close" class="btn-close" aria-label="Close"></button>
+              </div>
+              <p id="quotes-detail-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="quotes-detail-loading" class="text-secondary" hidden>Loading…</p>
+              <div id="quotes-detail-content"></div>
             </dialog>
           </section>
 

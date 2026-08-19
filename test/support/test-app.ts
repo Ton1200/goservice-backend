@@ -187,8 +187,29 @@ export async function cleanProfilesData(prisma: PrismaService): Promise<void> {
 }
 
 /**
+ * GOS-41 — deletes all `quotes`/`engagements`-module rows, in FK-safe order
+ * (`Engagement` first — it references both `ServiceRequest` and `Quote` —
+ * then `Quote`). Call BEFORE `cleanServiceRequestsData` below. Strictly
+ * speaking every one of these FKs is `onDelete: Cascade` toward
+ * `ServiceRequest` (see the GOS-41 plan's decision #12), so
+ * `cleanServiceRequestsData`'s own `serviceRequest.deleteMany()` would
+ * sweep these away too — this explicit helper exists anyway, same
+ * "independently callable, matches every other `clean*Data` helper's own
+ * convention" reasoning `cleanIdentityVerificationData` already documents
+ * for its own Cascade-redundant cleanup.
+ */
+export async function cleanQuotesAndEngagementsData(
+  prisma: PrismaService,
+): Promise<void> {
+  await prisma.engagement.deleteMany();
+  await prisma.quote.deleteMany();
+}
+
+/**
  * Deletes all service-requests-module rows — child tables first (FK order).
- * Call BEFORE `cleanProfilesData`/`cleanUsersData`, whose
+ * Call `cleanQuotesAndEngagementsData` above BEFORE this (Engagement/Quote
+ * both reference `ServiceRequest`). Call this BEFORE
+ * `cleanProfilesData`/`cleanUsersData`, whose
  * `customerProfile.deleteMany()`/`user.deleteMany()` would otherwise fail
  * on the `ServiceRequest.customerProfileId`/
  * `ServiceRequestAttachmentUploadRef.userId` FKs.

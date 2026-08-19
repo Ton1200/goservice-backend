@@ -139,6 +139,10 @@ const ADMIN_ONLY_FIELDS = [
   'createCategory',
   'updateCategory',
   'deleteCategory',
+  // Quotes admin grid follow-up (2026-08-19) — READ-ONLY (no write
+  // mutation — see AdminQuotesResolver's own header comment for why).
+  'quotes',
+  'quoteDetail',
 ];
 
 // Fields that must NEVER appear on `/admin/graphql` — consumer-only
@@ -273,6 +277,10 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         // Category-tree follow-up (2026-08-18).
         'adminCategories',
         'adminCategoryTree',
+        // Quotes admin grid follow-up (2026-08-19) — READ-ONLY, no write
+        // mutation (see AdminQuotesResolver's own header comment for why).
+        'quotes',
+        'quoteDetail',
       ].sort(),
     );
     expect(

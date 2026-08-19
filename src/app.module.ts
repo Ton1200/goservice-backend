@@ -22,6 +22,8 @@ import { PasswordResetModule } from './password-reset/password-reset.module';
 import { ProfilesModule } from './profiles/profiles.module';
 import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { PlatformPublicSettingsModule } from './platform-admin/platform-settings/public/platform-public-settings.module';
+import { EngagementsModule } from './engagements/engagements.module';
+import { QuotesModule } from './quotes/quotes.module';
 import { ServiceRequestsModule } from './service-requests/service-requests.module';
 import type { AppConfig } from './config/configuration';
 
@@ -68,6 +70,8 @@ import type { AppConfig } from './config/configuration';
           PlatformPublicSettingsModule,
           IdentityVerificationModule,
           ServiceRequestsModule,
+          QuotesModule,
+          EngagementsModule,
         ],
         sortSchema: true,
         // GOS-8 acceptance criterion #11: error responses must never include
@@ -235,6 +239,8 @@ import type { AppConfig } from './config/configuration';
     PlatformPublicSettingsModule,
     IdentityVerificationModule,
     ServiceRequestsModule,
+    QuotesModule,
+    EngagementsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },

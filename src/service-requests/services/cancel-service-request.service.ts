@@ -3,6 +3,7 @@ import { ServiceRequestStatus } from '@prisma/client';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { customerProfileRequired } from '../errors/customer-profile-required.error';
 import { serviceRequestAlreadyCancelled } from '../errors/service-request-already-cancelled.error';
+import { serviceRequestHasEngagement } from '../errors/service-request-has-engagement.error';
 import { serviceRequestNotFound } from '../errors/service-request-not-found.error';
 import { ServiceRequestModel } from '../models/service-request.model';
 import { ServiceRequestsRepository } from '../service-requests.repository';
@@ -14,6 +15,16 @@ import { ServiceRequestsRepository } from '../service-requests.repository';
  * can never cancel another Customer's `ServiceRequest` because there is no
  * way to even attempt it other than by id, and id ownership is checked
  * below before anything is mutated.
+ *
+ * GOS-41 — a `ServiceRequest` that is `ENGAGED` (a Quote has been accepted)
+ * can never be cancelled — see `serviceRequestHasEngagement()`'s own
+ * comment. The pre-read below exists purely for a good, specific error
+ * message in the common (non-race) case — the ACTUAL safety mechanism
+ * against a concurrent `acceptQuote` is the guarded CAS in
+ * `ServiceRequestsRepository.cancel()`: if the pre-read still saw `OPEN`
+ * but a concurrent `acceptQuote` won the race first, the CAS reports
+ * `count === 0` and this service re-reads and throws the correct error
+ * instead of silently reporting success.
  */
 @Injectable()
 export class CancelServiceRequestService {
@@ -43,19 +54,43 @@ export class CancelServiceRequestService {
       throw serviceRequestNotFound();
     }
 
-    if (existing.status === ServiceRequestStatus.CANCELLED) {
-      throw serviceRequestAlreadyCancelled();
+    this.assertCancellable(existing.status);
+
+    const { count } =
+      await this.serviceRequestsRepository.cancel(serviceRequestId);
+    if (count !== 1) {
+      // Lost a race against a concurrent acceptQuote/cancelServiceRequest
+      // between the pre-read above and the CAS write — re-read to report
+      // the correct current-state error instead of a generic failure.
+      const current =
+        await this.serviceRequestsRepository.findById(serviceRequestId);
+      this.assertCancellable(current?.status ?? existing.status);
+      // assertCancellable above always throws for a non-OPEN status, so
+      // this line is unreachable in practice — kept only as a defensive
+      // fallback in case current is somehow still OPEN (should never
+      // happen: this branch only runs when the CAS itself reported it did
+      // NOT transition anything away from OPEN).
+      throw serviceRequestNotFound();
     }
 
     const cancelled =
-      await this.serviceRequestsRepository.cancel(serviceRequestId);
+      await this.serviceRequestsRepository.findById(serviceRequestId);
 
     this.logger.log({
       event: 'service_request_cancelled',
       outcome: 'success',
-      serviceRequestId: cancelled.id,
+      serviceRequestId,
     });
 
-    return cancelled;
+    return cancelled!;
+  }
+
+  private assertCancellable(status: ServiceRequestStatus): void {
+    if (status === ServiceRequestStatus.CANCELLED) {
+      throw serviceRequestAlreadyCancelled();
+    }
+    if (status === ServiceRequestStatus.ENGAGED) {
+      throw serviceRequestHasEngagement();
+    }
   }
 }

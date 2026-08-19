@@ -12,6 +12,8 @@ import '../users/models/user-account-status.enum'; // GraphQL enum registration 
 import './user-accounts/models/auth-provider.enum'; // GraphQL enum registration side effect
 import '../service-requests/models/service-request-status.enum'; // GraphQL enum registration side effect
 import '../service-requests/models/service-request-urgency.enum'; // GraphQL enum registration side effect
+import '../quotes/models/quote-status.enum'; // GraphQL enum registration side effect
+import '../engagements/models/engagement-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
 import { AdminPermissionsGuard } from './admin-rbac/guards/admin-permissions.guard';
@@ -50,6 +52,10 @@ import { ListAdminCategoryTreeService } from './categories/services/list-admin-c
 import { CreateCategoryService } from './categories/services/create-category.service';
 import { UpdateCategoryService } from './categories/services/update-category.service';
 import { DeleteCategoryService } from './categories/services/delete-category.service';
+import { QuotesRepository } from '../quotes/quotes.repository';
+import { AdminQuotesResolver } from './quotes/admin-quotes.resolver';
+import { ListAdminQuotesService } from './quotes/services/list-admin-quotes.service';
+import { GetAdminQuoteDetailService } from './quotes/services/get-admin-quote-detail.service';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -304,6 +310,25 @@ import { DeleteCategoryService } from './categories/services/delete-category.ser
     CreateCategoryService,
     UpdateCategoryService,
     DeleteCategoryService,
+
+    // quotes (Quotes admin grid follow-up, 2026-08-19) — `quotes`/
+    // `quoteDetail`, READ-ONLY (no `QUOTES_WRITE`/write mutation — see
+    // `AdminQuotesResolver`'s own header comment for why no admin-initiated
+    // "create" analog exists here, unlike service-requests above).
+    // `QuotesRepository` is reused CONCRETE CLASS from `src/quotes/` — same
+    // "never import the resolver-bearing module" pattern as
+    // `ServiceRequestsRepository` above; `QuotesModule` itself is never
+    // imported here (it has its own `QuotesResolver`, the same leak class
+    // documented throughout this file). `AdminQuoteServiceRequestModel`
+    // reuses `AdminServiceRequestCustomerModel` (already declared above)
+    // directly for its nested customer, and `Category`/`ServiceRequestStatus`
+    // are reused the same "orphaned type made reachable" way — no new DI
+    // registration needed for any of those, only the `QuoteStatus`/
+    // `EngagementStatus` enum side-effect imports at the top of this file.
+    QuotesRepository,
+    AdminQuotesResolver,
+    ListAdminQuotesService,
+    GetAdminQuoteDetailService,
   ],
 })
 export class PlatformAdminModule {}

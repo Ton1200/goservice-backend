@@ -1,11 +1,14 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { EngagementsRepository } from '../engagements/engagements.repository';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
 import { ProfilesModule } from '../profiles/profiles.module';
+import { QuotesRepository } from '../quotes/quotes.repository';
 import { UsersModule } from '../users/users.module';
 import { LocalDevStorageAdapter } from './adapters/local-dev-storage.adapter';
 import { UploadsController } from './controllers/uploads.controller';
 import { StoragePort } from './ports/storage.port';
+import { ServiceRequestFieldResolver } from './service-request-field.resolver';
 import { CancelServiceRequestService } from './services/cancel-service-request.service';
 import { ListCompatibleServiceRequestsService } from './services/list-compatible-service-requests.service';
 import { ListMyServiceRequestsService } from './services/list-my-service-requests.service';
@@ -49,6 +52,17 @@ import { ServiceRequestsResolver } from './service-requests.resolver';
  * second, after `DiditWebhookController`) — registered via `controllers`,
  * not `providers`; NOT part of either GraphQL schema's `include` array
  * (see `app.module.ts`).
+ *
+ * GOS-41 follow-up — `ServiceRequestFieldResolver`
+ * (`acceptedQuote`/`engagement`) needs `QuotesRepository`/
+ * `EngagementsRepository`, reused here as CONCRETE provider classes,
+ * deliberately NOT via importing `QuotesModule`/`EngagementsModule` (both
+ * are "resolver-bearing" modules of their own) — same "reuse the concrete
+ * repository class directly, never import the resolver-bearing Module"
+ * pattern this file's own comment above already establishes for
+ * `ProfilesRepository`. This also keeps the module graph acyclic:
+ * `quotes/`/`engagements/` never import `ServiceRequestsModule` back (see
+ * `quotes.module.ts`'s own comment).
  */
 @Module({
   imports: [
@@ -61,6 +75,9 @@ import { ServiceRequestsResolver } from './service-requests.resolver';
   providers: [
     ServiceRequestsResolver,
     ServiceRequestsRepository,
+    ServiceRequestFieldResolver,
+    QuotesRepository,
+    EngagementsRepository,
     LocalDevStorageAdapter,
     { provide: StoragePort, useExisting: LocalDevStorageAdapter },
     PublishServiceRequestService,
