@@ -163,4 +163,10 @@ export const envValidationSchema = Joi.object({
   ADMIN_PANEL_PATH: Joi.string()
     .pattern(/^\/[a-zA-Z0-9._-]+$/)
     .optional(),
+
+  // GOS-38 — `LocalDevStorageAdapter`. See `configuration.ts`'s
+  // `storageLocal` doc comment: both are optional, with safe local-dev
+  // defaults/fallbacks — no environment is required to set either.
+  STORAGE_LOCAL_BASE_URL: Joi.string().uri().optional(),
+  STORAGE_LOCAL_SIGNING_SECRET: Joi.string().min(1).optional(),
 }).unknown(true); // allow other, unrelated env vars (PATH, etc.) through untouched

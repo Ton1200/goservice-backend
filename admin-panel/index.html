@@ -113,6 +113,29 @@
               </a>
             </li>
             <li class="nav-item">
+              <a class="nav-link" href="#service-requests" data-nav-target="service-requests-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="5" y="3" width="14" height="18" rx="2" />
+                    <path d="M9 7h6" />
+                    <path d="M9 11h6" />
+                    <path d="M9 15h4" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Service Requests</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#categories" data-nav-target="categories-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 5a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5z" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Categories</span>
+              </a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link" href="#credenciales" data-nav-target="credenciales-section">
                 <span class="nav-link-icon d-md-none d-lg-inline-block">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -342,6 +365,204 @@
               <p id="usuarios-detail-error" class="alert alert-danger" role="alert" hidden></p>
               <p id="usuarios-detail-loading" class="text-secondary" hidden>Loading…</p>
               <div id="usuarios-detail-content"></div>
+            </dialog>
+          </section>
+
+          <!-- Service Requests — GOS-38 follow-up (2026-08-18). A real,
+               READ-ONLY data grid over ServiceRequest (serviceRequests/
+               serviceRequestDetail), mirroring the Users grid's
+               structure/conventions. No bulk actions/edit — a
+               ServiceRequest's lifecycle stays customer-owned; the only
+               row action is "View", opening a detail dialog. Every row
+               shows the owning Customer's name/email (js/serviceRequests.js). -->
+          <section id="service-requests-section" class="gs-section" hidden aria-labelledby="service-requests-heading">
+            <div class="page-header d-print-none">
+              <h2 id="service-requests-heading" class="page-title">Service Requests</h2>
+            </div>
+
+            <nav class="nav nav-tabs gs-subtabs" aria-label="Service Requests subsections" hidden></nav>
+
+            <p id="service-requests-error" class="alert alert-danger" role="alert" hidden></p>
+            <p id="service-requests-success" class="alert alert-success" role="status" hidden></p>
+
+            <!-- "Columns" (column-visibility follow-up, same convention as
+                 the Users grid's own toolbar — js/dropdownMenu.js's generic
+                 popup, content built by js/serviceRequests.js's own
+                 `columnVisibilityMenu`) + "Create Service Request" (GOS-38
+                 follow-up, 2026-08-18) — top-right toolbar, same placement
+                 convention as the Users grid's own toolbar. The create
+                 button opens #service-requests-create-dialog below; only
+                 creatable for a Customer whose account is already APPROVED
+                 (identity validated) — enforced server-side by
+                 createServiceRequestForCustomer, not just by the picker. -->
+            <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+              <button id="service-requests-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                Columns
+              </button>
+              <button id="service-requests-create-button" type="button" class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="me-1">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                Create Service Request
+              </button>
+            </div>
+
+            <div class="card">
+              <!-- Tabulator mounts into this container (js/serviceRequests.js).
+                   No mock rows here — the grid is empty until the first
+                   fetch resolves. -->
+              <div id="service-requests-grid"></div>
+            </div>
+
+            <!-- "Create Service Request" form dialog (GOS-38 follow-up,
+                 2026-08-18). Customer picker only ever lists APPROVED
+                 accounts (eligibleServiceRequestCustomers) — but the
+                 mutation itself re-validates that server-side too, this is
+                 a UI convenience, not the actual enforcement. Category
+                 options are fetched once per dialog open (js/serviceRequests.js). -->
+            <dialog id="service-requests-create-dialog" class="gs-detail-dialog" aria-labelledby="service-requests-create-heading">
+              <div class="d-flex justify-content-between align-items-start mb-3">
+                <h3 id="service-requests-create-heading" class="mb-0">Create Service Request</h3>
+                <button type="button" id="service-requests-create-close" class="btn-close" aria-label="Close"></button>
+              </div>
+              <p id="service-requests-create-error" class="alert alert-danger" role="alert" hidden></p>
+              <form id="service-requests-create-form">
+                <div class="mb-3">
+                  <label for="service-requests-create-customer-search" class="form-label">Customer</label>
+                  <input id="service-requests-create-customer-search" type="text" class="form-control mb-2" placeholder="Search by name or email…" autocomplete="off" />
+                  <select id="service-requests-create-customer-select" class="form-select" required size="5"></select>
+                  <div class="form-hint">Only APPROVED (identity-validated) customers are eligible.</div>
+                </div>
+                <div class="mb-3">
+                  <label for="service-requests-create-category" class="form-label">Category</label>
+                  <select id="service-requests-create-category" class="form-select" required></select>
+                </div>
+                <div class="mb-3">
+                  <label for="service-requests-create-description" class="form-label">Description</label>
+                  <textarea id="service-requests-create-description" class="form-control" rows="3" required></textarea>
+                </div>
+                <div class="mb-3">
+                  <label for="service-requests-create-urgency" class="form-label">Urgency</label>
+                  <select id="service-requests-create-urgency" class="form-select" required>
+                    <option value="FLEXIBLE">Flexible</option>
+                    <option value="THIS_WEEK">This week</option>
+                    <option value="URGENT">Urgent</option>
+                  </select>
+                </div>
+                <div class="row">
+                  <div class="col mb-3">
+                    <label for="service-requests-create-budget-min" class="form-label">Indicative budget — min</label>
+                    <input id="service-requests-create-budget-min" type="number" min="1" class="form-control" />
+                  </div>
+                  <div class="col mb-3">
+                    <label for="service-requests-create-budget-max" class="form-label">Indicative budget — max</label>
+                    <input id="service-requests-create-budget-max" type="number" min="1" class="form-control" />
+                  </div>
+                </div>
+                <div class="d-flex justify-content-end gap-2 mt-3">
+                  <button type="button" id="service-requests-create-cancel" class="btn btn-outline-secondary">Cancel</button>
+                  <button type="submit" id="service-requests-create-submit" class="btn btn-primary">Create</button>
+                </div>
+              </form>
+            </dialog>
+
+            <!-- "View" row-detail modal. Fetches `serviceRequestDetail(id)`
+                 on demand (never pre-loaded alongside the grid) when opened
+                 from a row's "View" button. Content is built entirely in
+                 js/serviceRequests.js via document.createElement, never
+                 innerHTML — only this dialog's own static chrome (heading,
+                 close button, loading/error placeholders) lives here, same
+                 convention as the Users grid's detail dialog. -->
+            <dialog id="service-requests-detail-dialog" class="gs-detail-dialog" aria-labelledby="service-requests-detail-heading">
+              <div class="d-flex justify-content-between align-items-start mb-3">
+                <h3 id="service-requests-detail-heading" class="mb-0">Service request details</h3>
+                <button type="button" id="service-requests-detail-close" class="btn-close" aria-label="Close"></button>
+              </div>
+              <p id="service-requests-detail-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="service-requests-detail-loading" class="text-secondary" hidden>Loading…</p>
+              <div id="service-requests-detail-content"></div>
+            </dialog>
+          </section>
+
+          <!-- Categories (category-tree follow-up, 2026-08-18) — full CRUD
+               (create/rename/reorder/re-parent/delete) over the Category
+               catalog, rendered as an actual tree by js/categories.js
+               (document.createElement only — this section's own markup is
+               just static chrome: heading, banners, toolbar button, the
+               tree's mount point, and the one shared create/edit dialog). -->
+          <section id="categories-section" class="gs-section" hidden aria-labelledby="categories-heading">
+            <div class="page-header d-print-none">
+              <h2 id="categories-heading" class="page-title">Categories</h2>
+            </div>
+
+            <nav class="nav nav-tabs gs-subtabs" aria-label="Categories subsections" hidden></nav>
+
+            <p id="categories-error" class="alert alert-danger" role="alert" hidden></p>
+            <p id="categories-success" class="alert alert-success" role="status" hidden></p>
+
+            <!-- "Create Category" — top-right toolbar button, same
+                 placement convention as the Service Requests grid's own
+                 toolbar. Creates a ROOT category; a subcategory is created
+                 via a node's own inline "+" button instead (both open the
+                 same #categories-form-dialog below). -->
+            <div class="d-flex align-items-center justify-content-end mb-3">
+              <button id="categories-create-root-button" type="button" class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="me-1">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                Create Category
+              </button>
+            </div>
+
+            <div class="card">
+              <div class="card-body">
+                <!-- Tree mounts here (js/categories.js). No mock rows —
+                     empty until the first fetch resolves. -->
+                <div id="categories-tree" class="gs-category-tree"></div>
+                <div id="categories-empty" class="empty" hidden>
+                  <div class="empty-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 5a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5z" />
+                    </svg>
+                  </div>
+                  <p class="empty-title">No categories yet</p>
+                  <p class="empty-subtitle text-secondary">Create the first one with the button above.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Shared create/edit form dialog — js/categories.js decides
+                 create-vs-edit (and pre-fills a locked parent when opened
+                 via a node's "+ Add subcategory" action) via its own
+                 in-memory state, never two separate dialogs. -->
+            <dialog id="categories-form-dialog" class="gs-detail-dialog" aria-labelledby="categories-form-heading">
+              <div class="d-flex justify-content-between align-items-start mb-3">
+                <h3 id="categories-form-heading" class="mb-0">Create category</h3>
+                <button type="button" id="categories-form-close" class="btn-close" aria-label="Close"></button>
+              </div>
+              <p id="categories-form-error" class="alert alert-danger" role="alert" hidden></p>
+              <form id="categories-form">
+                <div class="mb-3">
+                  <label for="categories-form-name" class="form-label">Name</label>
+                  <input id="categories-form-name" type="text" class="form-control" required maxlength="100" />
+                </div>
+                <div class="mb-3">
+                  <label for="categories-form-parent" class="form-label">Parent category</label>
+                  <select id="categories-form-parent" class="form-select"></select>
+                  <div class="form-hint">Leave as "No parent" for a root-level category.</div>
+                </div>
+                <div class="mb-3">
+                  <label for="categories-form-display-order" class="form-label">Display order</label>
+                  <input id="categories-form-display-order" type="number" class="form-control" value="0" />
+                  <div class="form-hint">Lower numbers show first among sibling categories. Ties are broken alphabetically — or just use the ↑/↓ buttons instead.</div>
+                </div>
+                <div class="d-flex justify-content-end gap-2 mt-3">
+                  <button type="button" id="categories-form-cancel" class="btn btn-outline-secondary">Cancel</button>
+                  <button type="submit" id="categories-form-submit" class="btn btn-primary">Save</button>
+                </div>
+              </form>
             </dialog>
           </section>
 

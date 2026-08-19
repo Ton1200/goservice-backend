@@ -20,6 +20,8 @@ import { isLoggedIn, clearSession, getCurrentAdminIdentity } from './session.js'
 import { graphqlRequest } from './graphqlClient.js';
 import { loadSettings } from './settings.js';
 import { loadUserAccounts } from './userAccounts.js';
+import { loadServiceRequests } from './serviceRequests.js';
+import { loadCategories } from './categories.js';
 import { showLoginView, showDashboardView } from './view.js';
 import { initNav, showSection } from './nav.js';
 import { initialsFor } from './login.js';
@@ -30,6 +32,12 @@ initNav({
   // shown" pattern as Configuración above, now that Usuarios is a real,
   // backend-connected grid instead of static mock markup.
   'usuarios-section': loadUserAccounts,
+  // GOS-38 follow-up (2026-08-18) — same "fetch fresh data every time this
+  // section is shown" pattern.
+  'service-requests-section': loadServiceRequests,
+  // Category-tree follow-up (2026-08-18) — same "fetch fresh data every
+  // time this section is shown" pattern.
+  'categories-section': loadCategories,
 });
 
 if (isLoggedIn()) {

@@ -187,6 +187,21 @@ export async function cleanProfilesData(prisma: PrismaService): Promise<void> {
 }
 
 /**
+ * Deletes all service-requests-module rows — child tables first (FK order).
+ * Call BEFORE `cleanProfilesData`/`cleanUsersData`, whose
+ * `customerProfile.deleteMany()`/`user.deleteMany()` would otherwise fail
+ * on the `ServiceRequest.customerProfileId`/
+ * `ServiceRequestAttachmentUploadRef.userId` FKs.
+ */
+export async function cleanServiceRequestsData(
+  prisma: PrismaService,
+): Promise<void> {
+  await prisma.serviceRequestAttachment.deleteMany();
+  await prisma.serviceRequestAttachmentUploadRef.deleteMany();
+  await prisma.serviceRequest.deleteMany();
+}
+
+/**
  * Deletes every `IdentityVerification` row — call before `cleanUsersData`
  * (whose `user.deleteMany()` would otherwise cascade-delete these anyway
  * via `onDelete: Cascade`, but an explicit, ordered cleanup here matches

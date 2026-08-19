@@ -57,6 +57,16 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // round for the full rationale, including the explicit human
       // authorization for this irreversible operation.
       Permission.USER_ACCOUNTS_DELETE,
+      // GOS-38 follow-up (2026-08-18) — serviceRequests/serviceRequestDetail,
+      // read-only admin grid. SUPER_ADMIN gets every permission.
+      Permission.SERVICE_REQUESTS_READ,
+      // GOS-38 follow-up (2026-08-18, same day) — "create ServiceRequest
+      // for a customer". SUPER_ADMIN gets every permission.
+      Permission.SERVICE_REQUESTS_WRITE,
+      // Category-tree follow-up (2026-08-18) — full Category catalog CRUD
+      // + hierarchy management. SUPER_ADMIN gets every permission.
+      Permission.CATEGORIES_READ,
+      Permission.CATEGORIES_WRITE,
     ],
   },
   {
@@ -73,6 +83,20 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       Permission.USER_ACCOUNTS_WRITE,
       // Deliberately NOT Permission.USER_ACCOUNTS_DELETE — see the
       // SUPER_ADMIN role seed's own comment above.
+      // GOS-38 follow-up (2026-08-18) — read-only, mirrors
+      // USER_ACCOUNTS_READ's own presence on this role.
+      Permission.SERVICE_REQUESTS_READ,
+      // GOS-38 follow-up (2026-08-18, same day) — explicit human decision:
+      // CONFIG_MANAGER-and-above can create a ServiceRequest on behalf of
+      // an approved customer, mirroring USER_ACCOUNTS_WRITE's own presence
+      // on this role.
+      Permission.SERVICE_REQUESTS_WRITE,
+      // Category-tree follow-up (2026-08-18) — explicit human decision:
+      // CONFIG_MANAGER-and-above can manage the Category catalog
+      // (create/rename/reorder/re-parent/delete), mirroring
+      // SERVICE_REQUESTS_READ/WRITE's own presence on this role.
+      Permission.CATEGORIES_READ,
+      Permission.CATEGORIES_WRITE,
     ],
   },
   {
@@ -84,6 +108,12 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // GOS-3x follow-up (2026-08-10) — read-only, matching this role's
       // existing *_READ-only semantics.
       Permission.USER_ACCOUNTS_READ,
+      // GOS-38 follow-up (2026-08-18) — same read-only semantics.
+      Permission.SERVICE_REQUESTS_READ,
+      // Category-tree follow-up (2026-08-18) — same read-only semantics;
+      // this role can view the catalog/tree but never create/rename/
+      // reorder/re-parent/delete.
+      Permission.CATEGORIES_READ,
     ],
   },
 ];

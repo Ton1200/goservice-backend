@@ -84,17 +84,21 @@ model User {
   createdAt               DateTime          @default(now())
   updatedAt               DateTime          @updatedAt
 
-  emailVerificationCodes EmailVerificationCode[]
-  sessions               Session[]
-  passwordResetCodes     PasswordResetCode[]
+  emailVerificationCodes             EmailVerificationCode[]
+  sessions                           Session[]
+  passwordResetCodes                 PasswordResetCode[]
   // GOS-14/GOS-28 — first business-domain entities. A User may hold both at
   // once (no exclusivity rule): see profiles.repository.ts.
-  customerProfile        CustomerProfile?
-  professionalProfile    ProfessionalProfile?
+  customerProfile                    CustomerProfile?
+  professionalProfile                ProfessionalProfile?
   // Identity Verification (Didit) — 1:N, a User may have more than one
   // attempt (e.g. an earlier session was Abandoned). See
   // `src/identity-verification/`.
-  identityVerifications  IdentityVerification[]
+  identityVerifications              IdentityVerification[]
+  // GOS-38 — pre-reserved attachment upload slots (see
+  // ServiceRequestAttachmentUploadRef below). Purely additive, no new
+  // column on this table.
+  serviceRequestAttachmentUploadRefs ServiceRequestAttachmentUploadRef[]
 
   // Non-unique: real uniqueness is enforced by the `email` unique
   // constraint above. This index only speeds up the socialLogin fast-path
@@ -201,12 +205,42 @@ enum ProfessionalVerificationStatus {
 // prisma/seed.ts (`npm run prisma:seed`). Referenced by ProfessionalProfile
 // via the explicit ProfessionalSpecialization join below.
 model Category {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String   @unique
+  id           String @id @default(uuid()) @db.Uuid
+  name         String @unique
+  // Admin-managed catalog ordering (2026-08-18 follow-up) — every place
+  // that lists categories (public `categories`, admin `serviceRequestCategories`/
+  // `adminCategories`) sorts `[{ displayOrder: 'asc' }, { name: 'asc' }]`, so
+  // the name is only ever the tiebreaker, never the primary sort. Plain
+  // `Int`, not `@unique` — ties are allowed and resolved alphabetically;
+  // there is no renumbering transaction needed when an admin moves one
+  // category, only when they explicitly want to.
+  displayOrder Int    @default(0)
+
+  // Category tree (2026-08-18 follow-up) — nullable self-relation, `null`
+  // means "root-level category" (every pre-existing row, and the common
+  // case). Unlimited depth — nothing in this schema caps it, the admin UI
+  // is what keeps real-world usage shallow. `onDelete: Restrict`: Postgres
+  // itself refuses to delete a Category that still has children, on top of
+  // (not instead of) the application-level `CATEGORY_IN_USE` pre-check
+  // `DeleteCategoryService` already does for a clean error message — same
+  // "defense in depth, not just a UI filter" instinct as this codebase's
+  // other FK `Restrict`s.
+  parentId String?    @db.Uuid
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children Category[] @relation("CategoryHierarchy")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   professionalProfiles ProfessionalSpecialization[]
+  // GOS-38 — purely additive back-reference, no new column here.
+  serviceRequests      ServiceRequest[]
+
+  // Postgres does not index FKs automatically (only unique constraints) —
+  // declared explicit, same lesson as every other FK column in this schema.
+  // Supports both tree-traversal reads (children of a given parent) and the
+  // `onDelete: Restrict` check itself.
+  @@index([parentId])
 }
 
 model CustomerProfile {
@@ -232,6 +266,9 @@ model CustomerProfile {
   photoUrl    String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
+
+  // GOS-38 — purely additive back-reference, no new column here.
+  serviceRequests ServiceRequest[]
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -317,6 +354,128 @@ model ProfessionalSpecialization {
   @@id([professionalProfileId, categoryId])
   // Anticipates Professional Discovery's "find professionals in category X".
   @@index([categoryId])
+}
+
+// GOS-38 — first ServiceRequest-side domain entities. A ServiceRequest
+// belongs to exactly one CustomerProfile (Confirmed rule —
+// goservice-docs/product/business-rules.md) and references exactly one
+// Category. Quote/Engagement (goservice-docs/architecture/domain-model.md)
+// remain hypotheses, not modeled here — see the GOS-38 plan's "Future Quote
+// compatibility" section for what does/doesn't need to change later.
+
+// DELIBERATELY MINIMAL for this ticket's actual scope (publish + cancel
+// only — no Quote/Engagement flow exists yet in this backend). OPEN is the
+// only "live" state; CANCELLED is the only Customer-initiated terminal
+// state. Adding a value later (e.g. once Quote exists) is a pure additive
+// `ALTER TYPE "ServiceRequestStatus" ADD VALUE '...'` migration — same
+// "reserved for later, added when the trigger exists" posture as
+// ProfessionalVerificationStatus's PENDING_REVIEW/VERIFIED/REJECTED.
+enum ServiceRequestStatus {
+  OPEN
+  CANCELLED
+}
+
+// Proposed by the GOS-38 ticket itself. NOT confirmed against
+// goservice-docs/architecture/ubiquitous-language.md or
+// product/business-rules.md — no urgency taxonomy is documented anywhere in
+// this project. Used as given, without adding extra values, pending
+// explicit product sign-off (see the GOS-38 plan's "Decisiones pendientes").
+enum ServiceRequestUrgency {
+  FLEXIBLE
+  THIS_WEEK
+  URGENT
+}
+
+model ServiceRequest {
+  id                  String                @id @default(uuid()) @db.Uuid
+  customerProfileId   String                @db.Uuid
+  customerProfile     CustomerProfile       @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  categoryId          String                @db.Uuid
+  // Restrict, same reasoning as ProfessionalSpecialization.category:
+  // Category is a read-only seeded catalog, nothing should ever be able to
+  // delete a Category still referenced by a live ServiceRequest.
+  category            Category              @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  description         String
+  urgency             ServiceRequestUrgency
+  // "Indicative" only (domain-model.md calls it an "indicative budget
+  // range") — both optional, no currency column: currency is implied by
+  // CustomerProfile.country (AR->ARS, CO->COP), the same way this schema
+  // never models a separate currency column anywhere else.
+  indicativeBudgetMin Int?
+  indicativeBudgetMax Int?
+  status              ServiceRequestStatus  @default(OPEN)
+  cancelledAt         DateTime?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  attachments          ServiceRequestAttachment[]
+  attachmentUploadRefs ServiceRequestAttachmentUploadRef[]
+
+  // Supports `myPublishedServiceRequests` (WHERE customerProfileId = ?
+  // ORDER BY createdAt DESC) without a sort spill. Postgres does NOT
+  // auto-index FK columns (only unique constraints get one for free) — same
+  // lesson ProfessionalSpecialization's own @@index([categoryId]) already
+  // documents.
+  @@index([customerProfileId, createdAt])
+  // The index `compatibleServiceRequests` needs — see
+  // ServiceRequestsRepository.findManyCompatible.
+  @@index([status, categoryId])
+}
+
+model ServiceRequestAttachment {
+  id               String         @id @default(uuid()) @db.Uuid
+  serviceRequestId String         @db.Uuid
+  serviceRequest   ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  // The final, publicly-fetchable URL this backend itself issued via
+  // StoragePort.createUploadUrl() (see ServiceRequestAttachmentUploadRef
+  // below) — same "just a URL string" posture as CustomerProfile.photoUrl,
+  // except this one is always one this backend generated, never an
+  // arbitrary client-supplied URL.
+  url              String
+  // Not exposed in GraphQL (the GOS-38 contract only exposes id/url/
+  // createdAt) — only used to keep the output array's order stable and
+  // independent of createdAt (which can tie within the same millisecond for
+  // attachments created in the same batch). Internal ordering detail, not a
+  // product field.
+  order            Int            @default(0)
+  createdAt        DateTime       @default(now())
+
+  @@index([serviceRequestId])
+}
+
+// Pre-reserved upload slot — the "ref" a client receives from
+// requestServiceRequestAttachmentUploadUrl and later resubmits in
+// PublishServiceRequestInput.attachmentUploadRefs. No prior "GOS-16"
+// pre-signed-upload pattern exists anywhere in this codebase to reuse (see
+// the GOS-38 plan's "Hallazgo crítico" section) — this table is the
+// mechanism that gives ownership/expiration/single-use guarantees to that
+// flow, designed from scratch, following only this codebase's general
+// Port/Adapter convention (see src/service-requests/ports/storage.port.ts).
+enum ServiceRequestAttachmentUploadRefStatus {
+  PENDING
+  CONSUMED
+}
+
+model ServiceRequestAttachmentUploadRef {
+  id               String                                  @id @default(uuid()) @db.Uuid
+  userId           String                                  @db.Uuid
+  user             User                                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storageKey       String
+  fileUrl          String
+  status           ServiceRequestAttachmentUploadRefStatus @default(PENDING)
+  expiresAt        DateTime
+  consumedAt       DateTime?
+  // Set only once this ref is actually consumed by publishServiceRequest.
+  // SetNull (not Cascade/Restrict): if a ServiceRequest were ever hard-deleted
+  // in the future, this historical upload-ref row should survive with its
+  // link cleared, not disappear or block the delete.
+  serviceRequestId String?                                 @db.Uuid
+  serviceRequest   ServiceRequest?                         @relation(fields: [serviceRequestId], references: [id], onDelete: SetNull)
+  createdAt        DateTime                                @default(now())
+
+  // Supports the ownership+status check publishServiceRequest does for
+  // every submitted ref, and a future cleanup job for stale PENDING refs.
+  @@index([userId, status])
 }
 
 // Identity Verification (Didit integration) — DEC-006's own "open question"
@@ -436,6 +595,37 @@ enum Permission {
   // development/testing convenience tool, not a production data-retention
   // mechanism; see ADR 0005).
   USER_ACCOUNTS_DELETE
+  // GOS-38 follow-up (2026-08-18) — gates the read-only admin surface over
+  // ServiceRequest (`serviceRequests`/`serviceRequestDetail`, see
+  // `src/platform-admin/service-requests/`). Read-only, mirroring
+  // USER_ACCOUNTS_READ's own semantics.
+  SERVICE_REQUESTS_READ
+  // GOS-38 follow-up (2026-08-18, same day) — gates
+  // `eligibleServiceRequestCustomers`/`createServiceRequestForCustomer`: an
+  // admin can create a ServiceRequest on behalf of a Customer, but ONLY one
+  // whose account is already APPROVED (identity-validated) and who has a
+  // CustomerProfile — enforced server-side by
+  // `CreateServiceRequestForCustomerService`, not just by what the picker
+  // shows. Separate from SERVICE_REQUESTS_READ, mirroring
+  // USER_ACCOUNTS_READ/USER_ACCOUNTS_WRITE's own split — still no
+  // "edit"/"cancel" capability exists from the admin panel; this is
+  // create-only.
+  SERVICE_REQUESTS_WRITE
+  // Category-catalog-management follow-up (2026-08-18) — gates the
+  // read-only `adminCategories` query (`src/platform-admin/categories/`).
+  // Separate from SERVICE_REQUESTS_READ: reading the category catalog for
+  // management purposes is a distinct capability from reading
+  // ServiceRequests, even though `serviceRequestCategories` (a different,
+  // narrower query gated by SERVICE_REQUESTS_WRITE) also happens to read
+  // this same table for an unrelated purpose (the create-ServiceRequest
+  // picker).
+  CATEGORIES_READ
+  // Category-catalog-management follow-up (2026-08-18, same day) — gates
+  // `createCategory`/`updateCategory`/`deleteCategory`. The catalog is no
+  // longer purely seed-only (`prisma/seed.ts` remains how it's FIRST
+  // populated, but an admin can now create/rename/reorder/delete entries
+  // from the panel).
+  CATEGORIES_WRITE
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see
