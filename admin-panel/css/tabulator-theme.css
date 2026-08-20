@@ -131,9 +131,63 @@
 /* #service-requests-grid (GOS-38 follow-up, 2026-08-18) — the second
    Tabulator grid in this panel, same container styling/reasoning as
    #usuarios-grid above. */
+/* #admin-users-grid / #admin-roles-grid (Administrators-tab follow-up,
+   2026-08-20; #admin-roles-grid added same-day grid-parity follow-up, when
+   the Roles sub-tab was converted from a plain <table> to a real Tabulator
+   grid) — same container styling/reasoning as #usuarios-grid above. */
 #usuarios-grid,
-#service-requests-grid {
+#service-requests-grid,
+#admin-users-grid,
+#admin-roles-grid,
+#quotes-grid {
   border-radius: 4px;
   overflow-x: auto;
   overflow-y: hidden;
+}
+
+/* Standing convention (2026-08-20, follow-up) for ANY long-text/joined-list
+   column, in EVERY grid, going forward: single-line ellipsis truncation via
+   this class + the column's own `tooltip` (Tabulator's built-in per-cell
+   hover popup, either `tooltip: true` or a `tooltip` function for a
+   richer/formatted version) revealing the FULL, untruncated content on
+   hover/focus. Before this, a long value (e.g. a Role's full permission
+   list, a ServiceRequest's free-text description) just grew that column as
+   wide as the content needed under `layout: 'fitDataStretch'`, pushing
+   every column to its right off-screen. Apply `cssClass:
+   'gs-truncate-cell'` + a `tooltip` (+ the same `minWidth` every other
+   column already sets) to any NEW long-text column.
+
+   Deliberately NO `maxWidth` on any of these columns, even though that
+   sounds like the obvious way to also cap GROWTH, not just handle
+   overflow: tried it first, and it fights Tabulator's own drag-to-resize —
+   a column with `maxWidth` set kept snapping back to the cap instead of
+   staying wherever the user dragged it to, unlike every other column in
+   every grid here, which only ever sets `minWidth` and resizes freely. The
+   humanized/grouped formatters this convention is usually paired with
+   (e.g. `adminRoles.js`'s resource-grouped Permissions text) already keep
+   typical content short enough that unbounded initial growth is rarely an
+   issue in practice — truncation + tooltip remain the safety net for the
+   rare long value, without breaking resize for everyone else. Deliberately
+   NOT applied to short, fixed-vocabulary columns (status enums, dates,
+   ids, counts) — truncation/tooltip machinery adds nothing there. */
+.gs-truncate-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Same-day follow-up: the "Permissions" column on #admin-roles-grid opens
+   the edit dialog on a single click (js/adminRoles.js's own `cellClick`
+   handler) — previously an admin had to scroll all the way to the far-right
+   "Actions" column and open its kebab menu, tedious once a role holds many
+   permissions and the column has scrolled out of view. `cursor: pointer` +
+   a subtle hover background give a visual affordance that the cell itself
+   is clickable, mirroring `.tabulator-editing`'s own "this cell behaves
+   differently" visual convention just above. */
+#admin-roles-grid .tabulator-cell[tabulator-field='permissions'] {
+  cursor: pointer;
+}
+
+#admin-roles-grid .tabulator-cell[tabulator-field='permissions']:hover {
+  background-color: var(--gs-background-secondary);
 }

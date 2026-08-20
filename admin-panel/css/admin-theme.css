@@ -538,6 +538,23 @@ h6.gs-settings-group-heading {
   background-color: rgba(28, 36, 48, 0.5);
 }
 
+/* The role-edit dialog's resource x action permission matrix
+   (js/adminRoles.js's `buildPermissionCheckboxes`) — six columns (Resource,
+   All, Read, Write, Delete, Manage) inside a `.gs-detail-dialog` whose own
+   `max-width` is 40rem, so a slightly tighter cell padding than Tabler's
+   default table keeps every column readable without needing the
+   `.table-responsive` wrapper's horizontal scroll on a typical desktop
+   viewport (it still applies as a fallback on anything narrower). */
+.gs-permission-matrix th,
+.gs-permission-matrix td {
+  padding: 0.5rem 0.75rem;
+  white-space: nowrap;
+}
+
+.gs-permission-matrix td.text-secondary {
+  font-size: 0.875rem;
+}
+
 .gs-detail-tablist {
   margin-bottom: 1rem;
 }
