@@ -277,29 +277,32 @@ const KNOWN_SETTING_SLOTS = [
     valueType: 'STRING',
     isEncrypted: true,
   },
+  {
+    key: 'maps.google.enabled',
+    description: 'Gates the Google Geocoding provider.',
+    valueType: 'BOOLEAN',
+    isEncrypted: false,
+  },
+  {
+    key: 'maps.google.geocoding.api-key',
+    description: 'Google Geocoding API key (server-side address -> coordinates).',
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
 ];
 
-// Short, static, one-line descriptions shown under a leaf block's title
-// (e.g. "Google", "Apple"), keyed by the block's humanized label (see
-// `humanizeSegment`). Deliberately a flat lookup rather than derived prose
-// from data — simpler, and every future provider/leaf just needs one more
-// entry here. A label with no entry simply renders no description
-// (`describeLeafBlock` returns '') rather than throwing or showing a
-// placeholder.
-// "Sandbox"/"Production" no longer appear here (2026-08-17,
-// human-requested simplification): `mergeActiveModeCredentials` collapses
-// those two sub-groups into `identity.didit`'s own fields before this tree
-// ever renders, so "Sandbox"/"Production" are never a leaf block's label
-// anymore — see that function's own comment.
 const LEAF_BLOCK_DESCRIPTIONS = {
   Google: 'Google sign-in configuration.',
   Apple: 'Apple sign-in configuration.',
   Resend: 'Resend transactional email provider configuration.',
   Didit: 'Didit identity-verification provider configuration — credentials shown/edited below always match whichever Mode is currently selected.',
+  'maps.google': 'Google Geocoding provider configuration (server-side address -> coordinates).',
 };
 
-function describeLeafBlock(label) {
-  return LEAF_BLOCK_DESCRIPTIONS[label] ?? '';
+/** Looks up `node`'s description, preferring its full dot-path over the bare humanized label (disambiguates same-label nodes). */
+function describeLeafBlock(node) {
+  const pathKey = node.path.join('.');
+  return LEAF_BLOCK_DESCRIPTIONS[pathKey] ?? LEAF_BLOCK_DESCRIPTIONS[node.label] ?? '';
 }
 
 // A leaf node's fields (each a full `PlatformSettingModel`-shaped object)
@@ -359,7 +362,7 @@ function humanizeSegment(segment) {
  * itself are enough for `renderSettingField` to pick the right control).
  */
 function buildSettingsTree(settings) {
-  const root = { label: null, children: {}, fields: {} };
+  const root = { label: null, path: [], children: {}, fields: {} };
 
   function insert(key, setting) {
     const segments = key.split('.');
@@ -367,10 +370,13 @@ function buildSettingsTree(settings) {
     const groupSegments = segments.slice(0, -1);
 
     let node = root;
+    const path = [];
     for (const segment of groupSegments) {
+      path.push(segment);
       if (!node.children[segment]) {
         node.children[segment] = {
           label: humanizeSegment(segment),
+          path: [...path],
           children: {},
           fields: {},
         };
@@ -1105,7 +1111,7 @@ function renderLeafBlock(node, headingLevel) {
   title.textContent = node.label;
   left.appendChild(title);
 
-  const description = describeLeafBlock(node.label);
+  const description = describeLeafBlock(node);
   if (description !== '') {
     const descriptionEl = document.createElement('p');
     descriptionEl.className = 'gs-settings-block-description text-secondary';

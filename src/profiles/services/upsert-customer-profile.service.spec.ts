@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { GeocodingPort } from '../../geo/ports/geocoding.port';
 import { UpsertCustomerProfileInput } from '../models/upsert-customer-profile-input.model';
 import { ProfilesRepository } from '../profiles.repository';
 import { UpsertCustomerProfileService } from './upsert-customer-profile.service';
@@ -7,6 +8,8 @@ describe('UpsertCustomerProfileService', () => {
   function makeService(overrides?: {
     wasCreated?: boolean;
     accountStatusTransitioned?: boolean;
+    geocodeResult?: { latitude: number; longitude: number } | null;
+    geocodeError?: Error;
   }) {
     const profile = {
       id: 'profile-1',
@@ -27,9 +30,17 @@ describe('UpsertCustomerProfileService', () => {
       upsertCustomerProfile,
     } as unknown as ProfilesRepository;
 
-    const service = new UpsertCustomerProfileService(profilesRepository);
+    const geocode = overrides?.geocodeError
+      ? jest.fn().mockRejectedValue(overrides.geocodeError)
+      : jest.fn().mockResolvedValue(overrides?.geocodeResult ?? null);
+    const geocodingPort = { geocode } as unknown as GeocodingPort;
 
-    return { service, profile, upsertCustomerProfile };
+    const service = new UpsertCustomerProfileService(
+      profilesRepository,
+      geocodingPort,
+    );
+
+    return { service, profile, upsertCustomerProfile, geocode };
   }
 
   function validInput(
@@ -66,6 +77,8 @@ describe('UpsertCustomerProfileService', () => {
       city: 'CABA',
       province: 'Buenos Aires',
       country: 'AR',
+      addressLatitude: null,
+      addressLongitude: null,
     });
   });
 
@@ -204,5 +217,115 @@ describe('UpsertCustomerProfileService', () => {
       expect(payload).not.toContain('CABA');
       expect(payload).not.toContain('cdn.example.com');
     }
+  });
+
+  describe('geocoding (ADR 0006 / DEC-005)', () => {
+    it('persists the geocoded coordinates when GeocodingPort resolves them', async () => {
+      const { service, upsertCustomerProfile } = makeService({
+        geocodeResult: { latitude: -34.6037, longitude: -58.3816 },
+      });
+
+      await service.upsertCustomerProfile('user-1', validInput());
+
+      expect(upsertCustomerProfile).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({
+          addressLatitude: -34.6037,
+          addressLongitude: -58.3816,
+        }),
+      );
+    });
+
+    it('geocodes the full address (line + city + province + country), not just addressLine', async () => {
+      const { service, geocode } = makeService({
+        geocodeResult: { latitude: -34.6037, longitude: -58.3816 },
+      });
+
+      await service.upsertCustomerProfile('user-1', validInput());
+
+      const [calledAddress] = geocode.mock.calls[0] as [string];
+      expect(calledAddress).toContain('Av. Siempreviva 742');
+      expect(calledAddress).toContain('CABA');
+      expect(calledAddress).toContain('Buenos Aires');
+      expect(calledAddress).toContain('AR');
+    });
+
+    it(
+      'THE MANDATORY soft-fail case: when GeocodingPort.geocode returns null, ' +
+        'the profile is still created with both coordinates null — never blocked',
+      async () => {
+        const { service, profile, upsertCustomerProfile } = makeService({
+          geocodeResult: null,
+        });
+
+        const result = await service.upsertCustomerProfile(
+          'user-1',
+          validInput(),
+        );
+
+        expect(result).toBe(profile);
+        expect(upsertCustomerProfile).toHaveBeenCalledWith(
+          'user-1',
+          expect.objectContaining({
+            addressLatitude: null,
+            addressLongitude: null,
+          }),
+        );
+      },
+    );
+
+    it(
+      'THE MANDATORY soft-fail case: when GeocodingPort.geocode THROWS, ' +
+        'the profile is still created with both coordinates null — never blocked, never rethrown',
+      async () => {
+        const { service, profile, upsertCustomerProfile } = makeService({
+          geocodeError: new Error('ECONNRESET'),
+        });
+
+        const result = await service.upsertCustomerProfile(
+          'user-1',
+          validInput(),
+        );
+
+        expect(result).toBe(profile);
+        expect(upsertCustomerProfile).toHaveBeenCalledWith(
+          'user-1',
+          expect.objectContaining({
+            addressLatitude: null,
+            addressLongitude: null,
+          }),
+        );
+      },
+    );
+
+    it('logs geocoded: true/false, but never the coordinates themselves', async () => {
+      const { service } = makeService({
+        geocodeResult: { latitude: -34.6037, longitude: -58.3816 },
+      });
+
+      await service.upsertCustomerProfile('user-1', validInput());
+
+      const profileUpsertedLog = (logSpy.mock.calls as unknown[][])
+        .map((call) => call[0] as { event: string; geocoded?: boolean })
+        .find((entry) => entry.event === 'profile_upserted');
+      expect(profileUpsertedLog?.geocoded).toBe(true);
+
+      for (const call of logSpy.mock.calls as unknown[][]) {
+        const payload = JSON.stringify(call[0]);
+        expect(payload).not.toContain('-34.6037');
+        expect(payload).not.toContain('-58.3816');
+      }
+    });
+
+    it('logs geocoded: false on a geocoding failure', async () => {
+      const { service } = makeService({ geocodeError: new Error('boom') });
+
+      await service.upsertCustomerProfile('user-1', validInput());
+
+      const profileUpsertedLog = (logSpy.mock.calls as unknown[][])
+        .map((call) => call[0] as { event: string; geocoded?: boolean })
+        .find((entry) => entry.event === 'profile_upserted');
+      expect(profileUpsertedLog?.geocoded).toBe(false);
+    });
   });
 });

@@ -375,4 +375,89 @@ describe('UpsertProfessionalProfileService', () => {
       upsertProfessionalProfile.mock.invocationCallOrder[0],
     );
   });
+
+  describe('Service Area (ADR 0006 / DEC-005)', () => {
+    it('passes serviceArea as undefined to the repository when omitted from the input (leaves the 5 columns untouched)', async () => {
+      const { service, upsertProfessionalProfile } = makeService();
+
+      await service.upsertProfessionalProfile('user-1', validInput());
+
+      const callArg = (
+        upsertProfessionalProfile.mock.calls as unknown[][]
+      )[0][1] as { serviceArea?: unknown };
+      expect(callArg.serviceArea).toBeUndefined();
+    });
+
+    it('derives the approximate (snapped) pair from the submitted exact centre and passes all 5 columns through', async () => {
+      const { service, upsertProfessionalProfile } = makeService();
+
+      await service.upsertProfessionalProfile(
+        'user-1',
+        validInput({
+          serviceArea: {
+            latitude: -34.6037,
+            longitude: -58.3816,
+            radiusKm: 15,
+          },
+        }),
+      );
+
+      const callArg = (
+        upsertProfessionalProfile.mock.calls as unknown[][]
+      )[0][1] as {
+        serviceArea?: {
+          serviceAreaLatitude: number;
+          serviceAreaLongitude: number;
+          serviceAreaRadiusKm: number;
+          approximateLatitude: number;
+          approximateLongitude: number;
+        };
+      };
+
+      expect(callArg.serviceArea).toBeDefined();
+      expect(callArg.serviceArea).toMatchObject({
+        serviceAreaLatitude: -34.6037,
+        serviceAreaLongitude: -58.3816,
+        serviceAreaRadiusKm: 15,
+      });
+      expect(callArg.serviceArea!.approximateLatitude).not.toBe(-34.6037);
+      expect(callArg.serviceArea!.approximateLongitude).not.toBe(-58.3816);
+    });
+
+    it('never logs the exact/approximate coordinates or radius, only serviceAreaSet', async () => {
+      const { service } = makeService();
+
+      await service.upsertProfessionalProfile(
+        'user-1',
+        validInput({
+          serviceArea: {
+            latitude: -34.6037,
+            longitude: -58.3816,
+            radiusKm: 15,
+          },
+        }),
+      );
+
+      for (const call of logSpy.mock.calls as unknown[][]) {
+        const payload = JSON.stringify(call[0]);
+        expect(payload).not.toContain('-34.6037');
+        expect(payload).not.toContain('-58.3816');
+      }
+      const createdLog = (logSpy.mock.calls as unknown[][])
+        .map((call) => call[0] as { event: string; serviceAreaSet?: boolean })
+        .find((entry) => entry.event === 'professional_profile_created');
+      expect(createdLog?.serviceAreaSet).toBe(true);
+    });
+
+    it('logs serviceAreaSet: false when serviceArea is omitted', async () => {
+      const { service } = makeService();
+
+      await service.upsertProfessionalProfile('user-1', validInput());
+
+      const createdLog = (logSpy.mock.calls as unknown[][])
+        .map((call) => call[0] as { event: string; serviceAreaSet?: boolean })
+        .find((entry) => entry.event === 'professional_profile_created');
+      expect(createdLog?.serviceAreaSet).toBe(false);
+    });
+  });
 });

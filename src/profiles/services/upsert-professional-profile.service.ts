@@ -1,10 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DomainException } from '../../common/errors/domain-exception';
+import { snapToGrid } from '../../geo/utils/snap-to-grid.util';
 import { CountryCode } from '../models/country-code.enum';
 import { ProfessionalProfile } from '../models/professional-profile.model';
+import { ServiceAreaInput } from '../models/service-area-input.model';
 import { SpecializationRole } from '../models/specialization-role.enum';
 import { UpsertProfessionalProfileInput } from '../models/upsert-professional-profile-input.model';
 import { ProfilesRepository } from '../profiles.repository';
+
+type ServiceAreaColumns = {
+  serviceAreaLatitude: number;
+  serviceAreaLongitude: number;
+  serviceAreaRadiusKm: number;
+  approximateLatitude: number;
+  approximateLongitude: number;
+};
 
 const DEFAULT_COUNTRY = CountryCode.AR;
 
@@ -32,6 +42,8 @@ const DEFAULT_COUNTRY = CountryCode.AR;
  * Never logs `displayName`/`city`/`country`/`serviceAreaDescription`/`bio`/
  * `photoUrl`/`languages`/any specialization `description` — only IDs,
  * booleans, counts, and status/role values.
+ *
+ * Also derives the public approximate Service Area pair via `snapToGrid` before persisting (ADR 0006).
  */
 @Injectable()
 export class UpsertProfessionalProfileService {
@@ -58,6 +70,7 @@ export class UpsertProfessionalProfileService {
         photoUrl: input.photoUrl,
         languages: input.languages,
         specializations: input.specializations,
+        serviceArea: this.deriveServiceAreaColumns(input.serviceArea),
       });
 
     this.logger.log({
@@ -70,6 +83,7 @@ export class UpsertProfessionalProfileService {
         ? 'professional_profile_created'
         : 'professional_profile_updated',
       specializationCount: profile.specializations.length,
+      serviceAreaSet: input.serviceArea !== undefined,
     });
     if (accountStatusTransitioned) {
       this.logger.log({
@@ -95,6 +109,28 @@ export class UpsertProfessionalProfileService {
         'Exactly one specialization must have role PRIMARY.',
       );
     }
+  }
+
+  /** `undefined` in, `undefined` out — an omitted `serviceArea` never reaches a snap computation. */
+  private deriveServiceAreaColumns(
+    serviceArea: ServiceAreaInput | undefined,
+  ): ServiceAreaColumns | undefined {
+    if (!serviceArea) {
+      return undefined;
+    }
+
+    const approximate = snapToGrid({
+      latitude: serviceArea.latitude,
+      longitude: serviceArea.longitude,
+    });
+
+    return {
+      serviceAreaLatitude: serviceArea.latitude,
+      serviceAreaLongitude: serviceArea.longitude,
+      serviceAreaRadiusKm: serviceArea.radiusKm,
+      approximateLatitude: approximate.latitude,
+      approximateLongitude: approximate.longitude,
+    };
   }
 
   private async assertCategoriesExist(categoryIds: string[]): Promise<void> {

@@ -25,7 +25,7 @@ interface SpecializationWithCategory {
   order: number;
 }
 
-type ProfessionalProfileWithSpecializations = ProfessionalProfile & {
+export type ProfessionalProfileWithSpecializations = ProfessionalProfile & {
   specializations: SpecializationWithCategory[];
 };
 
@@ -111,6 +111,35 @@ export class ProfilesRepository {
     return this.flattenSpecializations(profile);
   }
 
+  /** Exact Service Area (`serviceAreaLatitude`/`Longitude`/`RadiusKm`) for `Query.myServiceArea`. Returns `null` when unset. */
+  async findServiceAreaByUserId(userId: string): Promise<{
+    latitude: number;
+    longitude: number;
+    radiusKm: number;
+  } | null> {
+    const profile = await this.prisma.professionalProfile.findUnique({
+      where: { userId },
+      select: {
+        serviceAreaLatitude: true,
+        serviceAreaLongitude: true,
+        serviceAreaRadiusKm: true,
+      },
+    });
+    if (
+      !profile ||
+      profile.serviceAreaLatitude === null ||
+      profile.serviceAreaLongitude === null ||
+      profile.serviceAreaRadiusKm === null
+    ) {
+      return null;
+    }
+    return {
+      latitude: profile.serviceAreaLatitude,
+      longitude: profile.serviceAreaLongitude,
+      radiusKm: profile.serviceAreaRadiusKm,
+    };
+  }
+
   /**
    * Tree pre-order, not a bare alphabetical/DB-order list — see
    * `sortCategoriesInTreeOrder`'s own header comment. Every FLAT consumer of
@@ -190,6 +219,30 @@ export class ProfilesRepository {
     }
 
     return [...visited];
+  }
+
+  /** Candidate `ProfessionalProfile`s for `nearbyProfessionals` — those inside `box`, filtered by `categoryIds`, with a declared travel radius. */
+  async findApproximateProfessionalProfilesInBoundingBox(
+    box: { minLat: number; maxLat: number; minLng: number; maxLng: number },
+    categoryIds?: string[],
+  ): Promise<ProfessionalProfileWithSpecializations[]> {
+    const profiles = await this.prisma.professionalProfile.findMany({
+      where: {
+        approximateLatitude: { gte: box.minLat, lte: box.maxLat },
+        approximateLongitude: { gte: box.minLng, lte: box.maxLng },
+        serviceAreaRadiusKm: { not: null },
+        ...(categoryIds && categoryIds.length > 0
+          ? { specializations: { some: { categoryId: { in: categoryIds } } } }
+          : {}),
+      },
+      include: {
+        specializations: {
+          include: { category: true },
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+    return profiles.map((profile) => this.flattenSpecializations(profile));
   }
 
   // ---- platform-admin Category management (category-tree follow-up,
@@ -349,6 +402,8 @@ export class ProfilesRepository {
       province: string;
       country: CountryCode;
       photoUrl?: string;
+      addressLatitude: number | null;
+      addressLongitude: number | null;
     },
   ): Promise<{
     profile: CustomerProfile;
@@ -414,13 +469,21 @@ export class ProfilesRepository {
         description: string;
         yearsOfExperience?: number;
       }[];
+      serviceArea?: {
+        serviceAreaLatitude: number;
+        serviceAreaLongitude: number;
+        serviceAreaRadiusKm: number;
+        approximateLatitude: number;
+        approximateLongitude: number;
+      };
     },
   ): Promise<{
     profile: ProfessionalProfileWithSpecializations;
     wasCreated: boolean;
     accountStatusTransitioned: boolean;
   }> {
-    const { specializations, ...profileData } = data;
+    const { specializations, serviceArea, ...profileData } = data;
+    const serviceAreaColumns = serviceArea ?? {};
 
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.professionalProfile.findUnique({
@@ -432,9 +495,10 @@ export class ProfilesRepository {
         create: {
           userId,
           ...profileData,
+          ...serviceAreaColumns,
           verificationStatus: ProfessionalVerificationStatus.UNVERIFIED,
         },
-        update: profileData,
+        update: { ...profileData, ...serviceAreaColumns },
       });
 
       await tx.professionalSpecialization.deleteMany({

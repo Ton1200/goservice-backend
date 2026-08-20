@@ -205,6 +205,14 @@ const PLATFORM_SETTINGS: {
   // URL) was REMOVED entirely (2026-08-17, human-requested simplification)
   // — GOS-33 is backend-only, no mobile deep-link/screen exists yet to
   // point it at, and `createSession` never depended on it for correctness.
+
+  {
+    key: 'maps.google.enabled',
+    description:
+      'Gates the Google Geocoding provider (server-side address -> coordinates for CustomerProfile).',
+    value: 'false',
+    isPublic: false,
+  },
 ];
 
 async function main(): Promise<void> {

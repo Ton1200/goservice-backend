@@ -264,6 +264,10 @@ model CustomerProfile {
   // decided yet — see infrastructure.md's open hosting-provider question —
   // so this is just a URL string today, not backed by any real upload flow).
   photoUrl    String?
+  // Proximity Discovery (ADR 0006 / DEC-005) — geocoded server-side from the address above.
+  // Owner-only; never exposed on the GraphQL type.
+  addressLatitude  Float?
+  addressLongitude Float?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
@@ -306,6 +310,15 @@ model ProfessionalProfile {
   // some plumbing can report different experience for each.)
   languages              String[]                       @default([])
   verificationStatus     ProfessionalVerificationStatus @default(UNVERIFIED)
+  // Proximity Discovery (ADR 0006 / DEC-005) — declared Service Area centre + radius.
+  // EXACT pair, owner-only (Query.myServiceArea); never on the public GraphQL type.
+  serviceAreaLatitude  Float?
+  serviceAreaLongitude Float?
+  // How far (km) this Professional will travel from the Service Area centre. Public.
+  serviceAreaRadiusKm  Int?
+  // APPROXIMATE pair — snapped to a ~500m grid, the only coordinates ever exposed pre-Engagement.
+  approximateLatitude  Float?
+  approximateLongitude Float?
   createdAt              DateTime                       @default(now())
   updatedAt              DateTime                       @updatedAt
 
@@ -322,6 +335,8 @@ model ProfessionalProfile {
   // future Identity Verification queue (verificationStatus).
   @@index([country, city])
   @@index([verificationStatus])
+  // Proximity Discovery's bounding-box prefilter (ADR 0006 decision 10).
+  @@index([approximateLatitude, approximateLongitude])
 }
 
 // Which trade a professional's specialization is: their main one, or an

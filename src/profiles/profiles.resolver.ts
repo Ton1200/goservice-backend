@@ -6,11 +6,13 @@ import { Category } from './models/category.model';
 import { CustomerProfile } from './models/customer-profile.model';
 import { MyAccount } from './models/my-account.model';
 import { ProfessionalProfile } from './models/professional-profile.model';
+import { ServiceArea } from './models/service-area.model';
 import { UpsertCustomerProfileInput } from './models/upsert-customer-profile-input.model';
 import { UpsertProfessionalProfileInput } from './models/upsert-professional-profile-input.model';
 import { GetMyAccountService } from './services/get-my-account.service';
 import { GetMyCustomerProfileService } from './services/get-my-customer-profile.service';
 import { GetMyProfessionalProfileService } from './services/get-my-professional-profile.service';
+import { GetMyServiceAreaService } from './services/get-my-service-area.service';
 import { ListCategoriesService } from './services/list-categories.service';
 import { UpsertCustomerProfileService } from './services/upsert-customer-profile.service';
 import { UpsertProfessionalProfileService } from './services/upsert-professional-profile.service';
@@ -29,6 +31,7 @@ export class ProfilesResolver {
     private readonly getMyAccountService: GetMyAccountService,
     private readonly getMyCustomerProfileService: GetMyCustomerProfileService,
     private readonly getMyProfessionalProfileService: GetMyProfessionalProfileService,
+    private readonly getMyServiceAreaService: GetMyServiceAreaService,
     private readonly listCategoriesService: ListCategoriesService,
     private readonly upsertCustomerProfileService: UpsertCustomerProfileService,
     private readonly upsertProfessionalProfileService: UpsertProfessionalProfileService,
@@ -67,6 +70,16 @@ export class ProfilesResolver {
     return this.getMyProfessionalProfileService.getMyProfessionalProfile(
       userId,
     );
+  }
+
+  @UseGuards(SessionGuard)
+  @Query(() => ServiceArea, {
+    nullable: true,
+    description:
+      "The authenticated Professional's own EXACT Service Area centre + radius (owner-only — see ServiceArea's own doc comment for why this is a separate query from myProfessionalProfile's approximate fields). Null if they have no ProfessionalProfile yet, or one exists but no Service Area has ever been submitted.",
+  })
+  myServiceArea(@CurrentUser() userId: string): Promise<ServiceArea | null> {
+    return this.getMyServiceAreaService.getMyServiceArea(userId);
   }
 
   @UseGuards(SessionGuard)

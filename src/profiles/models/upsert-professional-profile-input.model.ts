@@ -13,6 +13,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { CountryCode } from './country-code.enum';
+import { ServiceAreaInput } from './service-area-input.model';
 import { UpsertProfessionalSpecializationInput } from './upsert-professional-specialization-input.model';
 
 /**
@@ -96,4 +97,10 @@ export class UpsertProfessionalProfileInput {
   @ArrayUnique()
   @IsString({ each: true })
   languages?: string[];
+
+  @Field(() => ServiceAreaInput, { nullable: true })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ServiceAreaInput)
+  serviceArea?: ServiceAreaInput;
 }
