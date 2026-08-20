@@ -68,7 +68,41 @@
       </div>
     </div>
   </section>
-  
+
+  <!-- Administrators-tab follow-up (2026-08-20) — accept-invite view. Shown
+       (see js/bootstrap.js) whenever the URL carries a `?invite=<token>`
+       query param, regardless of any existing logged-in session. -->
+  <section id="accept-invite-view" class="d-flex flex-column" aria-labelledby="accept-invite-heading" hidden>
+    <div class="page page-center">
+      <div class="container container-tight py-4">
+        <div class="text-center mb-4">
+          <span class="navbar-brand">GoService Admin</span>
+        </div>
+        <div class="card card-md">
+          <div class="card-body">
+            <h1 id="accept-invite-heading" class="h2 text-center mb-4">Set your password</h1>
+            <p class="text-secondary text-center mb-4">You've been invited as an administrator on the GoService admin panel. Set a password to activate your account.</p>
+            <form id="accept-invite-form" class="login-form" novalidate autocomplete="off">
+              <div class="mb-2">
+                <label for="accept-invite-password" class="form-label">New password</label>
+                <input id="accept-invite-password" name="password" type="password" class="form-control" autocomplete="new-password" minlength="8" required />
+              </div>
+
+              <p id="accept-invite-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="accept-invite-success" class="alert alert-success" role="status" hidden></p>
+
+              <div class="form-footer">
+                <button id="accept-invite-submit" type="submit" class="btn btn-primary w-100">Set password</button>
+              </div>
+            </form>
+            <p class="text-center mt-3">
+              <a href="#" id="accept-invite-back-to-login">Back to sign in</a>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <div id="dashboard-view" hidden>
     <!-- Sidebar (Tabler's standard vertical-navbar layout — verified
@@ -144,19 +178,6 @@
                   </svg>
                 </span>
                 <span class="nav-link-title">Categories</span>
-              </a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="#credenciales" data-nav-target="credenciales-section">
-                <span class="nav-link-icon d-md-none d-lg-inline-block">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="8" cy="15" r="4" />
-                    <path d="M11 12l9-9" />
-                    <path d="M17 6l3 3" />
-                    <path d="M14 9l2.5 2.5" />
-                  </svg>
-                </span>
-                <span class="nav-link-title">Credentials</span>
               </a>
             </li>
             <li class="nav-item">
@@ -623,60 +644,161 @@
             </dialog>
           </section>
 
-          <!-- Credenciales — still a placeholder tab. Slice 2 actually
-               DELIVERED encrypted third-party credential management, but
-               per the confirmed design it lives grouped together with its
-               related feature flags under "Configuración" (see
-               #settings-section / js/settings.js), not as its own separate
-               CRUD-style section here. This nav item/section is left as a
-               placeholder in case a future slice wants a dedicated
-               credentials-only view (e.g. a flat, ungrouped audit-style
-               list) — not renamed/repurposed without an explicit design
-               decision to do so. -->
-          <section id="credenciales-section" class="gs-section" hidden aria-labelledby="credenciales-heading">
-            <div class="page-header d-print-none">
-              <h2 id="credenciales-heading" class="page-title">Credentials</h2>
-            </div>
-
-            <nav class="nav nav-tabs gs-subtabs" aria-label="Credentials subsections" hidden></nav>
-
-            <div class="card">
-              <div class="empty">
-                <div class="empty-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 7v5l3 3" />
-                  </svg>
-                </div>
-                <p class="empty-title">Manage credentials from Settings</p>
-                <p class="empty-subtitle text-secondary">
-                  Third-party credential management is already implemented (Slice 2), grouped together with its related feature flags under the "Settings" tab.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          <!-- Administradores — placeholder, Slice 3 (not built). -->
+          <!-- Administradores (Administrators-tab follow-up, 2026-08-20) —
+               role/permission management + admin-user invite/manage. Two
+               sub-tabs (Roles / Admin Users), built with the SAME hand-rolled
+               JS tablist pattern `settings.js`'s `renderRootTabs`/
+               `userAccounts.js`'s `renderDetailTabs` already establish —
+               NOT the static `<nav class="gs-subtabs">` markup (confirmed
+               dead, unconnected to any JS anywhere in this panel). See
+               js/administrators.js. -->
           <section id="administradores-section" class="gs-section" hidden aria-labelledby="administradores-heading">
             <div class="page-header d-print-none">
               <h2 id="administradores-heading" class="page-title">Administrators</h2>
             </div>
 
-            <nav class="nav nav-tabs gs-subtabs" aria-label="Administrators subsections" hidden></nav>
+            <div id="administradores-tablist" class="nav nav-underline mb-3" role="tablist" aria-label="Administrators subsections"></div>
 
-            <div class="card">
-              <div class="empty">
-                <div class="empty-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 7v5l3 3" />
+            <!-- Roles panel -->
+            <div id="administradores-roles-panel" role="tabpanel" aria-labelledby="administradores-tab-roles">
+              <p id="admin-roles-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="admin-roles-success" class="alert alert-success" role="status" hidden></p>
+
+              <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+                <button id="admin-roles-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                  Columns
+                </button>
+                <button id="admin-roles-create-button" type="button" class="btn btn-primary">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="me-1">
+                    <path d="M12 5v14" />
+                    <path d="M5 12h14" />
                   </svg>
-                </div>
-                <p class="empty-title">Coming soon</p>
-                <p class="empty-subtitle text-secondary">
-                  Admin account management — planned for Slice 3. Not implemented yet.
-                </p>
+                  Create role
+                </button>
               </div>
+
+              <div class="card">
+                <!-- Tabulator mounts into this container (js/adminRoles.js).
+                     No mock rows here — the grid is empty until the first
+                     fetch resolves. -->
+                <div id="admin-roles-grid"></div>
+              </div>
+
+              <!-- Shared create/edit dialog — js/adminRoles.js decides
+                   create-vs-edit via its own in-memory state. Creating
+                   allows editing `name`; editing an EXISTING role (any of
+                   them, including the 3 seeded ones) locks `name` and only
+                   allows editing the permission checkbox matrix. -->
+              <dialog id="admin-role-form-dialog" class="gs-detail-dialog" aria-labelledby="admin-role-form-heading">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                  <h3 id="admin-role-form-heading" class="mb-0">Create role</h3>
+                  <button type="button" id="admin-role-form-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <p id="admin-role-form-error" class="alert alert-danger" role="alert" hidden></p>
+                <form id="admin-role-form">
+                  <div class="mb-3">
+                    <label for="admin-role-form-name" class="form-label">Name</label>
+                    <input id="admin-role-form-name" type="text" class="form-control" required maxlength="100" />
+                    <div id="admin-role-form-name-hint" class="form-hint" hidden>Seeded system roles cannot be renamed.</div>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Permissions</label>
+                    <!-- Grid-parity/UX follow-up (2026-08-20, same day) —
+                         js/adminRoles.js renders a resource x action
+                         permission matrix (<table>) into this container,
+                         replacing the earlier flat list of raw Permission
+                         enum-string checkboxes. -->
+                    <div id="admin-role-form-permissions"></div>
+                  </div>
+                  <div class="d-flex justify-content-end gap-2 mt-3">
+                    <button type="button" id="admin-role-form-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button type="submit" id="admin-role-form-submit" class="btn btn-primary">Save</button>
+                  </div>
+                </form>
+              </dialog>
+            </div>
+
+            <!-- Admin Users panel -->
+            <div id="administradores-users-panel" role="tabpanel" aria-labelledby="administradores-tab-users" hidden>
+              <p id="admin-users-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="admin-users-success" class="alert alert-success" role="status" hidden></p>
+
+              <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+                <button id="admin-users-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                  Columns
+                </button>
+                <button id="admin-users-invite-button" type="button" class="btn btn-primary">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="me-1">
+                    <path d="M12 5v14" />
+                    <path d="M5 12h14" />
+                  </svg>
+                  Invite admin
+                </button>
+              </div>
+
+              <div class="card">
+                <div id="admin-users-grid"></div>
+              </div>
+
+              <!-- Invite dialog — email/displayName/role only (no status —
+                   a fresh invite is always INVITED). -->
+              <dialog id="admin-user-invite-dialog" class="gs-detail-dialog" aria-labelledby="admin-user-invite-heading">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                  <h3 id="admin-user-invite-heading" class="mb-0">Invite admin</h3>
+                  <button type="button" id="admin-user-invite-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <p id="admin-user-invite-error" class="alert alert-danger" role="alert" hidden></p>
+                <form id="admin-user-invite-form">
+                  <div class="mb-3">
+                    <label for="admin-user-invite-email" class="form-label">Email</label>
+                    <input id="admin-user-invite-email" type="email" class="form-control" required />
+                  </div>
+                  <div class="mb-3">
+                    <label for="admin-user-invite-display-name" class="form-label">Display name</label>
+                    <input id="admin-user-invite-display-name" type="text" class="form-control" required />
+                  </div>
+                  <div class="mb-3">
+                    <label for="admin-user-invite-role" class="form-label">Role</label>
+                    <select id="admin-user-invite-role" class="form-select" required></select>
+                  </div>
+                  <div class="d-flex justify-content-end gap-2 mt-3">
+                    <button type="button" id="admin-user-invite-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button type="submit" id="admin-user-invite-submit" class="btn btn-primary">Send invite</button>
+                  </div>
+                </form>
+              </dialog>
+
+              <!-- Edit dialog — displayName/role/status only (email is fixed
+                   at invite time). -->
+              <dialog id="admin-user-edit-dialog" class="gs-detail-dialog" aria-labelledby="admin-user-edit-heading">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                  <h3 id="admin-user-edit-heading" class="mb-0">Edit admin</h3>
+                  <button type="button" id="admin-user-edit-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <p id="admin-user-edit-error" class="alert alert-danger" role="alert" hidden></p>
+                <form id="admin-user-edit-form">
+                  <div class="mb-3">
+                    <label for="admin-user-edit-display-name" class="form-label">Display name</label>
+                    <input id="admin-user-edit-display-name" type="text" class="form-control" required />
+                  </div>
+                  <div class="mb-3">
+                    <label for="admin-user-edit-role" class="form-label">Role</label>
+                    <select id="admin-user-edit-role" class="form-select" required></select>
+                  </div>
+                  <div class="mb-3">
+                    <label for="admin-user-edit-status" class="form-label">Status</label>
+                    <select id="admin-user-edit-status" class="form-select" required>
+                      <option value="ACTIVE">ACTIVE</option>
+                      <option value="REVOKED">REVOKED</option>
+                    </select>
+                    <div class="form-hint">INVITED admins get this status automatically once they accept their invite — it cannot be set manually here.</div>
+                  </div>
+                  <div class="d-flex justify-content-end gap-2 mt-3">
+                    <button type="button" id="admin-user-edit-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button type="submit" id="admin-user-edit-submit" class="btn btn-primary">Save</button>
+                  </div>
+                </form>
+              </dialog>
             </div>
           </section>
 

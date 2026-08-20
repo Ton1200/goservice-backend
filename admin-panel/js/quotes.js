@@ -196,7 +196,20 @@ const COLUMNS = [
     field: 'serviceRequestSummary',
     formatter: serviceRequestSummaryFormatter,
     headerFilter: 'input',
-    minWidth: 260,
+    // Standing long-text-column convention (see `css/tabulator-theme.css`'s
+    // own `.gs-truncate-cell` comment). `serviceRequestSummaryFormatter`
+    // itself already hard-truncates the description to 60 chars — this
+    // `tooltip` still reveals the FULL, untruncated description (category +
+    // complete text). Deliberately NO `maxWidth` — see `Message` column
+    // below (and `serviceRequests.js`'s Description column) for why: it
+    // fought Tabulator's own drag-to-resize, inconsistent with every other
+    // column in every grid, which only ever set `minWidth`.
+    minWidth: 200,
+    cssClass: 'gs-truncate-cell',
+    tooltip: (event, cell) => {
+      const serviceRequest = cell.getRow().getData().serviceRequest;
+      return `${serviceRequest.category.name} — ${serviceRequest.description}`;
+    },
   },
   {
     title: 'Customer',
@@ -237,8 +250,15 @@ const COLUMNS = [
     title: 'Message',
     field: 'message',
     headerFilter: 'input',
-    minWidth: 220,
-    formatter: 'textarea',
+    // Standing long-text-column convention (see `css/tabulator-theme.css`'s
+    // own `.gs-truncate-cell` comment) — was `formatter: 'textarea'`.
+    // Deliberately NO `maxWidth` — fights Tabulator's own drag-to-resize
+    // (the column snaps back to the cap instead of staying where dragged),
+    // inconsistent with every other column in every grid here, which only
+    // ever sets `minWidth`.
+    minWidth: 200,
+    cssClass: 'gs-truncate-cell',
+    tooltip: true,
   },
   {
     title: 'Status',

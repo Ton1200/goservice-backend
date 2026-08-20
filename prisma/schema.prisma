@@ -819,8 +819,35 @@ model AdminUser {
   // `updatedPlatformCredentials` (now merged into one `PlatformSetting`
   // table — see that model's own header comment).
   updatedPlatformSettings PlatformSetting[]
+  // Roles/admin-user management follow-up (2026-08-19) — every AdminInvite
+  // ever issued for this AdminUser (a fresh one on `inviteAdminUser`,
+  // possibly more via `resendAdminInvite`). See AdminInvite's own header
+  // comment below.
+  invites                 AdminInvite[]
 
   @@index([status])
+}
+
+// Roles/admin-user management follow-up (2026-08-19) — the invite/accept
+// mechanism backing `inviteAdminUser`/`resendAdminInvite`/`acceptAdminInvite`.
+// Structurally close to `EmailVerificationCode`/`PasswordResetCode`
+// (single-use, expiresAt/consumedAt/invalidatedAt), but deliberately an
+// OPAQUE TOKEN + hash (mirrors `AdminSession.tokenHash`'s hash-at-rest
+// pattern), NOT a 6-digit code: this is delivered by LINK to someone not yet
+// authenticated in any client, so a typed code makes no sense here — see
+// `AcceptAdminInviteService`'s own header comment for the full anti-
+// enumeration design this backs.
+model AdminInvite {
+  id            String    @id @default(uuid()) @db.Uuid
+  adminUserId   String    @db.Uuid
+  adminUser     AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  tokenHash     String    @unique
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  invalidatedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([adminUserId, consumedAt, invalidatedAt])
 }
 
 model AdminSession {

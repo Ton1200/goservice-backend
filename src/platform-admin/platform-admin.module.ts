@@ -14,6 +14,7 @@ import '../service-requests/models/service-request-status.enum'; // GraphQL enum
 import '../service-requests/models/service-request-urgency.enum'; // GraphQL enum registration side effect
 import '../quotes/models/quote-status.enum'; // GraphQL enum registration side effect
 import '../engagements/models/engagement-status.enum'; // GraphQL enum registration side effect
+import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
 import { AdminPermissionsGuard } from './admin-rbac/guards/admin-permissions.guard';
@@ -56,6 +57,25 @@ import { QuotesRepository } from '../quotes/quotes.repository';
 import { AdminQuotesResolver } from './quotes/admin-quotes.resolver';
 import { ListAdminQuotesService } from './quotes/services/list-admin-quotes.service';
 import { GetAdminQuoteDetailService } from './quotes/services/get-admin-quote-detail.service';
+import { AdminLockoutGuardService } from './admin-rbac/services/admin-lockout-guard.service';
+import { AdminRolesResolver } from './admin-roles/admin-roles.resolver';
+import { ListAdminRolesService } from './admin-roles/services/list-admin-roles.service';
+import { CreateAdminRoleService } from './admin-roles/services/create-admin-role.service';
+import { UpdateAdminRolePermissionsService } from './admin-roles/services/update-admin-role-permissions.service';
+import { DeleteAdminRoleService } from './admin-roles/services/delete-admin-role.service';
+import { AdminUsersResolver } from './admin-users/admin-users.resolver';
+import { ListAdminUsersService } from './admin-users/services/list-admin-users.service';
+import { UpdateAdminUserService } from './admin-users/services/update-admin-user.service';
+import { DeleteAdminUserService } from './admin-users/services/delete-admin-user.service';
+import { AdminInvitesRepository } from './admin-invites/admin-invites.repository';
+import { IssueAdminInviteService } from './admin-invites/services/issue-admin-invite.service';
+import { InviteAdminUserService } from './admin-invites/services/invite-admin-user.service';
+import { ResendAdminInviteService } from './admin-invites/services/resend-admin-invite.service';
+import { AcceptAdminInviteService } from './admin-invites/services/accept-admin-invite.service';
+import { AdminInvitesResolver } from './admin-invites/admin-invites.resolver';
+import { AcceptAdminInviteResolver } from './admin-invites/accept-admin-invite.resolver';
+import { AdminInviteEmailSenderPort } from './admin-invites/ports/admin-invite-email-sender.port';
+import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapters/email-queue-admin-invite-email-sender.adapter';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -329,6 +349,44 @@ import { GetAdminQuoteDetailService } from './quotes/services/get-admin-quote-de
     AdminQuotesResolver,
     ListAdminQuotesService,
     GetAdminQuoteDetailService,
+
+    // admin-rbac / admin-roles / admin-users / admin-invites (Administrators
+    // tab follow-up, 2026-08-20) — role/permission management + admin-user
+    // invite/manage capability. `AdminRolesRepository`/`AdminUsersRepository`
+    // are already providers above (reused, not duplicated).
+    // `AdminLockoutGuardService` is this feature's safety-critical
+    // self-lockout guard (see its own header comment) — a plain injectable,
+    // no resolver of its own, shared by `UpdateAdminRolePermissionsService`
+    // and `UpdateAdminUserService`. `PasswordHasherPort` is already provided
+    // above (`Argon2PasswordHasherAdapter`) — reused directly by
+    // `AcceptAdminInviteService`, same pattern as every other reuse of that
+    // provider in this file. `EnsureEmailDeliveryAvailableService` comes from
+    // the already-imported `EmailModule`.
+    AdminLockoutGuardService,
+    AdminRolesResolver,
+    ListAdminRolesService,
+    CreateAdminRoleService,
+    UpdateAdminRolePermissionsService,
+    DeleteAdminRoleService,
+    AdminUsersResolver,
+    ListAdminUsersService,
+    UpdateAdminUserService,
+    DeleteAdminUserService,
+    AdminInvitesRepository,
+    {
+      provide: AdminInviteEmailSenderPort,
+      useClass: EmailQueueAdminInviteEmailSenderAdapter,
+    },
+    IssueAdminInviteService,
+    InviteAdminUserService,
+    ResendAdminInviteService,
+    AdminInvitesResolver,
+    // `AcceptAdminInviteService`/`AcceptAdminInviteResolver` back the ONE
+    // unguarded mutation in this whole feature (`acceptAdminInvite`) — see
+    // that resolver's own header comment for why it is a SEPARATE resolver
+    // class from `AdminInvitesResolver` above, never merged into it.
+    AcceptAdminInviteService,
+    AcceptAdminInviteResolver,
   ],
 })
 export class PlatformAdminModule {}

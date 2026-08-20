@@ -1,8 +1,12 @@
 // GOS-30/31/32 — sidebar section switcher, inside the dashboard view.
 // Same plain `hidden`-attribute pattern as `js/view.js` (login<->dashboard),
 // applied one level deeper: switching between the sidebar's sections
-// (Configuración, Usuarios, Credenciales, Administradores, Auditoría)
-// within the single `#dashboard-view` element. Still no router library,
+// (Configuración, Usuarios, Service Requests, Quotes, Categories,
+// Administradores, Auditoría) within the single `#dashboard-view` element —
+// the former "Credenciales" placeholder tab was removed (2026-08-20):
+// encrypted third-party credential management already lives grouped under
+// "Configuración" (js/settings.js), and no dedicated view for it was ever
+// built. Still no router library,
 // still no navigation — every `[data-nav-target]` link's default click
 // behavior is prevented and the target `.gs-section` is shown/hidden via
 // its `hidden` attribute, exactly like the login/dashboard toggle.

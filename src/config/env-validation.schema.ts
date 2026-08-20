@@ -169,4 +169,18 @@ export const envValidationSchema = Joi.object({
   // defaults/fallbacks — no environment is required to set either.
   STORAGE_LOCAL_BASE_URL: Joi.string().uri().optional(),
   STORAGE_LOCAL_SIGNING_SECRET: Joi.string().min(1).optional(),
+
+  // Roles/admin-user management follow-up (2026-08-20) — `AdminInvite`
+  // issuance policy. Same shape/defaults precedent as the
+  // EMAIL_VERIFICATION_*/PASSWORD_RESET_* vars above.
+  ADMIN_INVITE_TTL_HOURS: Joi.number().integer().positive().default(72),
+  ADMIN_INVITE_RESEND_COOLDOWN_SECONDS: Joi.number()
+    .integer()
+    .positive()
+    .default(60),
+
+  // See `configuration.ts`'s `adminPanelPublicUrl` doc comment: optional,
+  // with a local-dev-only default composed from `PORT`/`ADMIN_PANEL_PATH` —
+  // a real deployment MUST set this explicitly.
+  ADMIN_PANEL_PUBLIC_URL: Joi.string().uri().optional(),
 }).unknown(true); // allow other, unrelated env vars (PATH, etc.) through untouched

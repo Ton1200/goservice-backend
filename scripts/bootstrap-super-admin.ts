@@ -19,9 +19,31 @@
 //      already holds the SUPER_ADMIN role, this script is a no-op for that
 //      part, regardless of the email/password currently in the
 //      environment — re-running never creates a second super-admin.
+//
+// PERMISSIONS GUARANTEE — NARROWED (Administrators-tab follow-up,
+// 2026-08-20): `seedRoles()`'s `upsert` used to reset `permissions` on
+// EVERY run (`update: { permissions: seed.permissions }`) — safe only
+// because no other mechanism could ever change a role's permissions after
+// seeding. That stopped being true the moment `updateAdminRolePermissions`
+// (a real, live-editable Roles UI) shipped: re-running this script would
+// have silently clobbered any customization made through that UI, including
+// on `SUPER_ADMIN` itself. `update: {}` below means this script now only
+// ever CREATES a role's permissions the first time that role is seeded —
+// it never again resets them once the row exists. Explicit consequence: a
+// brand-new `Permission` enum value added in a future code change is still
+// correctly granted on a FRESH environment's first bootstrap run (via
+// `create`), but on an ALREADY-BOOTSTRAPPED environment (like a running
+// deployment, or this developer machine) it must now be granted by hand
+// through the Roles UI (`updateAdminRolePermissions`) — `npm run
+// admin:bootstrap` is NO LONGER the recovery mechanism for that gap. This is
+// exactly the class of real incident that motivated this change: this
+// script was re-run minutes before this comment was written to work around
+// that very gap for `QUOTES_READ` — that workaround is no longer available
+// (nor necessary) once the Roles UI exists.
 import path from 'node:path';
 import { PrismaClient, Permission } from '@prisma/client';
 import { Argon2PasswordHasherAdapter } from '../src/users/adapters/argon2-password-hasher.adapter';
+import { SEEDED_ADMIN_ROLE_NAMES } from '../src/platform-admin/admin-rbac/seeded-admin-role-names.constant';
 
 process.loadEnvFile(path.join(__dirname, '..', '.env'));
 
@@ -139,12 +161,35 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/**
+ * Cheap drift safety net: `ROLE_SEEDS` (above) and `SEEDED_ADMIN_ROLE_NAMES`
+ * (the shared constant `DeleteAdminRoleService`/`create-admin-user.ts` also
+ * depend on) must always name the exact same 3 roles. Throws loudly at
+ * startup rather than silently seeding a role `SEEDED_ADMIN_ROLE_NAMES`
+ * doesn't know about (which would make it renamable/deletable through the
+ * Roles UI despite being meant as a fixed system role) or vice versa.
+ */
+function assertRoleSeedsMatchSharedConstant(): void {
+  const seedNames = new Set(ROLE_SEEDS.map((seed) => seed.name));
+  const constantNames = new Set<string>(SEEDED_ADMIN_ROLE_NAMES);
+  const sameSize = seedNames.size === constantNames.size;
+  const sameMembers = [...seedNames].every((name) => constantNames.has(name));
+  if (!sameSize || !sameMembers) {
+    throw new Error(
+      `bootstrap-super-admin: ROLE_SEEDS (${[...seedNames].join(', ')}) has drifted from SEEDED_ADMIN_ROLE_NAMES (${[...constantNames].join(', ')}) — keep both in sync.`,
+    );
+  }
+}
+
 async function seedRoles(): Promise<Map<string, string>> {
   const roleIdByName = new Map<string, string>();
   for (const seed of ROLE_SEEDS) {
     const role = await prisma.adminRole.upsert({
       where: { name: seed.name },
-      update: { permissions: seed.permissions },
+      // create-only for permissions — never resets an already-seeded role's
+      // permissions again. See this file's own header comment ("PERMISSIONS
+      // GUARANTEE — NARROWED").
+      update: {},
       create: { name: seed.name, permissions: seed.permissions },
     });
     roleIdByName.set(role.name, role.id);
@@ -184,6 +229,7 @@ async function ensureSuperAdmin(superAdminRoleId: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  assertRoleSeedsMatchSharedConstant();
   const roleIdByName = await seedRoles();
   const superAdminRoleId = roleIdByName.get('SUPER_ADMIN');
   if (!superAdminRoleId) {

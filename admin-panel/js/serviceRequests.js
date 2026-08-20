@@ -274,8 +274,17 @@ const COLUMNS = [
     title: 'Description',
     field: 'description',
     headerFilter: 'input',
-    minWidth: 260,
-    formatter: 'textarea',
+    // Standing long-text-column convention (see `css/tabulator-theme.css`'s
+    // own `.gs-truncate-cell` comment) — was `formatter: 'textarea'`
+    // (multi-line wrap). `gs-truncate-cell` single-line-ellipsis-truncates,
+    // `tooltip: true` reveals the full description on hover/focus.
+    // Deliberately NO `maxWidth` — this codebase's own convention is
+    // `minWidth` only on every column in every grid; a hard `maxWidth` here
+    // fought Tabulator's own drag-to-resize (the column kept snapping back
+    // to the cap instead of staying where the user dragged it to).
+    minWidth: 200,
+    cssClass: 'gs-truncate-cell',
+    tooltip: true,
   },
   {
     title: 'Urgency',

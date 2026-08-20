@@ -18,13 +18,29 @@
 // dashboard within the one document.
 const loginView = document.getElementById('login-view');
 const dashboardView = document.getElementById('dashboard-view');
+// Administrators-tab follow-up (2026-08-20) — a THIRD top-level view,
+// `#accept-invite-view`, same `hidden`-toggle mechanism as the two above.
+// `session.js` is `localStorage`-backed now (2026-08-11 follow-up), so this
+// is no longer a hard technical necessity to avoid discarding in-memory
+// state — kept anyway for consistency with this panel's router-free
+// architecture (see `js/bootstrap.js`'s own `?invite=` pre-check, which
+// shows this view regardless of any existing logged-in session).
+const acceptInviteView = document.getElementById('accept-invite-view');
 
 export function showLoginView() {
   dashboardView.hidden = true;
+  acceptInviteView.hidden = true;
   loginView.hidden = false;
 }
 
 export function showDashboardView() {
   loginView.hidden = true;
+  acceptInviteView.hidden = true;
   dashboardView.hidden = false;
+}
+
+export function showAcceptInviteView() {
+  loginView.hidden = true;
+  dashboardView.hidden = true;
+  acceptInviteView.hidden = false;
 }
