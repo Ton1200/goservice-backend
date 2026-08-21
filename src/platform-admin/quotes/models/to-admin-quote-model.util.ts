@@ -68,10 +68,13 @@ export function toAdminQuoteModel(row: AdminQuoteRow): AdminQuoteModel {
   const model = new AdminQuoteModel();
   model.id = row.id;
   model.price = row.price;
+  model.negotiatedPrice = row.negotiatedPrice;
+  model.finalPrice = row.negotiatedPrice ?? row.price;
   model.message = row.message;
   model.status = row.status;
   model.serviceRequest = toServiceRequestModel(row.serviceRequest);
   model.professional = toProfessionalModel(row.professionalProfile);
+  model.negotiationMessageCount = row._count.negotiationMessages;
   model.createdAt = row.createdAt;
   model.updatedAt = row.updatedAt;
   return model;
@@ -87,10 +90,13 @@ export function toAdminQuoteDetailModel(
   const model = new AdminQuoteDetailModel();
   model.id = row.id;
   model.price = row.price;
+  model.negotiatedPrice = row.negotiatedPrice;
+  model.finalPrice = row.negotiatedPrice ?? row.price;
   model.message = row.message;
   model.status = row.status;
   model.serviceRequest = toServiceRequestModel(row.serviceRequest);
   model.professional = toProfessionalModel(row.professionalProfile);
+  model.negotiationMessageCount = row._count.negotiationMessages;
   model.engagement = toEngagementModel(row.engagement);
   model.createdAt = row.createdAt;
   model.updatedAt = row.updatedAt;

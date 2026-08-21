@@ -24,6 +24,7 @@ import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { PlatformPublicSettingsModule } from './platform-admin/platform-settings/public/platform-public-settings.module';
 import { EngagementsModule } from './engagements/engagements.module';
 import { QuotesModule } from './quotes/quotes.module';
+import { QuoteNegotiationModule } from './quote-negotiation/quote-negotiation.module';
 import { ServiceRequestsModule } from './service-requests/service-requests.module';
 import type { AppConfig } from './config/configuration';
 
@@ -71,6 +72,7 @@ import type { AppConfig } from './config/configuration';
           IdentityVerificationModule,
           ServiceRequestsModule,
           QuotesModule,
+          QuoteNegotiationModule,
           EngagementsModule,
         ],
         sortSchema: true,
@@ -240,6 +242,7 @@ import type { AppConfig } from './config/configuration';
     IdentityVerificationModule,
     ServiceRequestsModule,
     QuotesModule,
+    QuoteNegotiationModule,
     EngagementsModule,
   ],
   providers: [

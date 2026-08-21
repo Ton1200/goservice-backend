@@ -205,6 +205,50 @@ const PLATFORM_SETTINGS: {
   // URL) was REMOVED entirely (2026-08-17, human-requested simplification)
   // — GOS-33 is backend-only, no mobile deep-link/screen exists yet to
   // point it at, and `createSession` never depended on it for correctness.
+
+  // GOS-53 — Quote Negotiation feature flags. The ticket's own "hardcoded
+  // fallback" values are seeded here as REAL, admin-toggleable
+  // `PlatformSetting` rows instead — see
+  // `src/quote-negotiation/quote-negotiation.module.ts`'s own header
+  // comment for the full "no FeatureFlagPort/FeatureFlagGroup exists, the
+  // real successor is PlatformSettingPort" investigation this decision is
+  // based on. All three read via `PlatformSettingPort.isEnabled(key)` —
+  // never a hardcoded TS constant.
+  //
+  // `quote-negotiation.general.enabled` — the GLOBAL kill switch for the
+  // whole capability (comments + price proposals). `isPublic: false`: this
+  // is a backend/admin-only gate, not something `goservice-mobile` needs to
+  // branch on ahead of time the way `identity.enabled` above does — the
+  // mobile client just calls the mutations/query and handles
+  // `QUOTE_NEGOTIATION_MODULE_DISABLED` like any other domain error.
+  {
+    key: 'quote-negotiation.general.enabled',
+    description:
+      'Global kill switch for the Quote Negotiation capability (postQuoteNegotiationMessage/acceptQuotePriceProposal/rejectQuotePriceProposal/quoteNegotiationMessages).',
+    value: 'true',
+    isPublic: false,
+  },
+  // `quote-negotiation.price-edit.customer-can-propose` /
+  // `.professional-can-propose` — independent, role-specific gates on
+  // whether that role may attach a `proposedPrice` to a negotiation
+  // message. Defaults match the ticket's own specified fallback: a
+  // Customer proposing a price is OFF by default, a Professional
+  // countering is ON by default. `isPublic: false` — same reasoning as
+  // `general.enabled` above.
+  {
+    key: 'quote-negotiation.price-edit.customer-can-propose',
+    description:
+      'Whether a Customer may attach a price proposal to a Quote Negotiation message.',
+    value: 'false',
+    isPublic: false,
+  },
+  {
+    key: 'quote-negotiation.price-edit.professional-can-propose',
+    description:
+      'Whether a Professional may attach a price proposal to a Quote Negotiation message.',
+    value: 'true',
+    isPublic: false,
+  },
 ];
 
 async function main(): Promise<void> {
