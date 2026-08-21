@@ -1023,15 +1023,21 @@ function buildProfessionalProfileTabContent(profile) {
   return wrapper;
 }
 
-/** "Activity" tab — always present, an explicit placeholder. NO fabricated
- * data: ServiceRequest/Quote/Engagement don't exist in this backend yet —
- * this only reserves the layout for a future capability. */
+/** "Activity" tab — still a placeholder, but no longer a false one:
+ * ServiceRequest now exists (GOS-38, 2026-08-18) and is browsable/filterable
+ * by this same user's email from the dedicated "Service Requests" grid
+ * (Customer/Email columns) — this tab does not yet embed that list inline,
+ * which remains a real, scoped-out follow-up (would need a
+ * customerProfileId/userId filter argument `serviceRequests` doesn't have
+ * yet — see that query's own phase-1-scope description). Quote/Engagement
+ * still genuinely don't exist in this backend. NO fabricated data either
+ * way. */
 function buildActivityTabContent() {
   const wrapper = document.createElement('div');
   const placeholder = document.createElement('p');
   placeholder.className = 'text-secondary mb-0';
   placeholder.textContent =
-    'No activity data yet — service requests, quotes, and engagements will appear here once that capability exists.';
+    'Not shown here yet — see this user\'s service requests in the "Service Requests" grid (filter by their email). Quotes and engagements will appear here once those capabilities exist.';
   wrapper.appendChild(placeholder);
   return wrapper;
 }

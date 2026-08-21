@@ -69,6 +69,41 @@
     </div>
   </section>
 
+  <!-- Administrators-tab follow-up (2026-08-20) — accept-invite view. Shown
+       (see js/bootstrap.js) whenever the URL carries a `?invite=<token>`
+       query param, regardless of any existing logged-in session. -->
+  <section id="accept-invite-view" class="d-flex flex-column" aria-labelledby="accept-invite-heading" hidden>
+    <div class="page page-center">
+      <div class="container container-tight py-4">
+        <div class="text-center mb-4">
+          <span class="navbar-brand">GoService Admin</span>
+        </div>
+        <div class="card card-md">
+          <div class="card-body">
+            <h1 id="accept-invite-heading" class="h2 text-center mb-4">Set your password</h1>
+            <p class="text-secondary text-center mb-4">You've been invited as an administrator on the GoService admin panel. Set a password to activate your account.</p>
+            <form id="accept-invite-form" class="login-form" novalidate autocomplete="off">
+              <div class="mb-2">
+                <label for="accept-invite-password" class="form-label">New password</label>
+                <input id="accept-invite-password" name="password" type="password" class="form-control" autocomplete="new-password" minlength="8" required />
+              </div>
+
+              <p id="accept-invite-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="accept-invite-success" class="alert alert-success" role="status" hidden></p>
+
+              <div class="form-footer">
+                <button id="accept-invite-submit" type="submit" class="btn btn-primary w-100">Set password</button>
+              </div>
+            </form>
+            <p class="text-center mt-3">
+              <a href="#" id="accept-invite-back-to-login">Back to sign in</a>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <div id="dashboard-view" hidden>
     <!-- Sidebar (Tabler's standard vertical-navbar layout — verified
          markup/classes against the vendored tabler.min.css:
@@ -112,16 +147,37 @@
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" href="#credenciales" data-nav-target="credenciales-section">
+              <a class="nav-link" href="#service-requests" data-nav-target="service-requests-section">
                 <span class="nav-link-icon d-md-none d-lg-inline-block">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="8" cy="15" r="4" />
-                    <path d="M11 12l9-9" />
-                    <path d="M17 6l3 3" />
-                    <path d="M14 9l2.5 2.5" />
+                    <rect x="5" y="3" width="14" height="18" rx="2" />
+                    <path d="M9 7h6" />
+                    <path d="M9 11h6" />
+                    <path d="M9 15h4" />
                   </svg>
                 </span>
-                <span class="nav-link-title">Credentials</span>
+                <span class="nav-link-title">Service Requests</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#quotes" data-nav-target="quotes-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M16.7 8a3 3 0 0 0 -2.7 -2h-4a3 3 0 0 0 0 6h4a3 3 0 0 1 0 6h-4a3 3 0 0 1 -2.7 -2" />
+                    <path d="M12 3v3m0 12v3" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Quotes</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#categories" data-nav-target="categories-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 5a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5z" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Categories</span>
               </a>
             </li>
             <li class="nav-item">
@@ -344,60 +400,405 @@
             </dialog>
           </section>
 
-          <!-- Credenciales — still a placeholder tab. Slice 2 actually
-               DELIVERED encrypted third-party credential management, but
-               per the confirmed design it lives grouped together with its
-               related feature flags under "Configuración" (see
-               #settings-section / js/settings.js), not as its own separate
-               CRUD-style section here. This nav item/section is left as a
-               placeholder in case a future slice wants a dedicated
-               credentials-only view (e.g. a flat, ungrouped audit-style
-               list) — not renamed/repurposed without an explicit design
-               decision to do so. -->
-          <section id="credenciales-section" class="gs-section" hidden aria-labelledby="credenciales-heading">
+          <!-- Service Requests — GOS-38 follow-up (2026-08-18). A real,
+               READ-ONLY data grid over ServiceRequest (serviceRequests/
+               serviceRequestDetail), mirroring the Users grid's
+               structure/conventions. No bulk actions/edit — a
+               ServiceRequest's lifecycle stays customer-owned; the only
+               row action is "View", opening a detail dialog. Every row
+               shows the owning Customer's name/email (js/serviceRequests.js). -->
+          <section id="service-requests-section" class="gs-section" hidden aria-labelledby="service-requests-heading">
             <div class="page-header d-print-none">
-              <h2 id="credenciales-heading" class="page-title">Credentials</h2>
+              <h2 id="service-requests-heading" class="page-title">Service Requests</h2>
             </div>
 
-            <nav class="nav nav-tabs gs-subtabs" aria-label="Credentials subsections" hidden></nav>
+            <nav class="nav nav-tabs gs-subtabs" aria-label="Service Requests subsections" hidden></nav>
+
+            <p id="service-requests-error" class="alert alert-danger" role="alert" hidden></p>
+            <p id="service-requests-success" class="alert alert-success" role="status" hidden></p>
+
+            <!-- "Columns" (column-visibility follow-up, same convention as
+                 the Users grid's own toolbar — js/dropdownMenu.js's generic
+                 popup, content built by js/serviceRequests.js's own
+                 `columnVisibilityMenu`) + "Create Service Request" (GOS-38
+                 follow-up, 2026-08-18) — top-right toolbar, same placement
+                 convention as the Users grid's own toolbar. The create
+                 button opens #service-requests-create-dialog below; only
+                 creatable for a Customer whose account is already APPROVED
+                 (identity validated) — enforced server-side by
+                 createServiceRequestForCustomer, not just by the picker. -->
+            <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+              <button id="service-requests-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                Columns
+              </button>
+              <button id="service-requests-create-button" type="button" class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="me-1">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                Create Service Request
+              </button>
+            </div>
 
             <div class="card">
-              <div class="empty">
-                <div class="empty-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 7v5l3 3" />
-                  </svg>
-                </div>
-                <p class="empty-title">Manage credentials from Settings</p>
-                <p class="empty-subtitle text-secondary">
-                  Third-party credential management is already implemented (Slice 2), grouped together with its related feature flags under the "Settings" tab.
-                </p>
-              </div>
+              <!-- Tabulator mounts into this container (js/serviceRequests.js).
+                   No mock rows here — the grid is empty until the first
+                   fetch resolves. -->
+              <div id="service-requests-grid"></div>
             </div>
+
+            <!-- "Create Service Request" form dialog (GOS-38 follow-up,
+                 2026-08-18). Customer picker only ever lists APPROVED
+                 accounts (eligibleServiceRequestCustomers) — but the
+                 mutation itself re-validates that server-side too, this is
+                 a UI convenience, not the actual enforcement. Category
+                 options are fetched once per dialog open (js/serviceRequests.js). -->
+            <dialog id="service-requests-create-dialog" class="gs-detail-dialog" aria-labelledby="service-requests-create-heading">
+              <div class="d-flex justify-content-between align-items-start mb-3">
+                <h3 id="service-requests-create-heading" class="mb-0">Create Service Request</h3>
+                <button type="button" id="service-requests-create-close" class="btn-close" aria-label="Close"></button>
+              </div>
+              <p id="service-requests-create-error" class="alert alert-danger" role="alert" hidden></p>
+              <form id="service-requests-create-form">
+                <div class="mb-3">
+                  <label for="service-requests-create-customer-search" class="form-label">Customer</label>
+                  <input id="service-requests-create-customer-search" type="text" class="form-control mb-2" placeholder="Search by name or email…" autocomplete="off" />
+                  <select id="service-requests-create-customer-select" class="form-select" required size="5"></select>
+                  <div class="form-hint">Only APPROVED (identity-validated) customers are eligible.</div>
+                </div>
+                <div class="mb-3">
+                  <label for="service-requests-create-category" class="form-label">Category</label>
+                  <select id="service-requests-create-category" class="form-select" required></select>
+                </div>
+                <div class="mb-3">
+                  <label for="service-requests-create-description" class="form-label">Description</label>
+                  <textarea id="service-requests-create-description" class="form-control" rows="3" required></textarea>
+                </div>
+                <div class="mb-3">
+                  <label for="service-requests-create-urgency" class="form-label">Urgency</label>
+                  <select id="service-requests-create-urgency" class="form-select" required>
+                    <option value="FLEXIBLE">Flexible</option>
+                    <option value="THIS_WEEK">This week</option>
+                    <option value="URGENT">Urgent</option>
+                  </select>
+                </div>
+                <div class="row">
+                  <div class="col mb-3">
+                    <label for="service-requests-create-budget-min" class="form-label">Indicative budget — min</label>
+                    <input id="service-requests-create-budget-min" type="number" min="1" class="form-control" />
+                  </div>
+                  <div class="col mb-3">
+                    <label for="service-requests-create-budget-max" class="form-label">Indicative budget — max</label>
+                    <input id="service-requests-create-budget-max" type="number" min="1" class="form-control" />
+                  </div>
+                </div>
+                <div class="d-flex justify-content-end gap-2 mt-3">
+                  <button type="button" id="service-requests-create-cancel" class="btn btn-outline-secondary">Cancel</button>
+                  <button type="submit" id="service-requests-create-submit" class="btn btn-primary">Create</button>
+                </div>
+              </form>
+            </dialog>
+
+            <!-- "View" row-detail modal. Fetches `serviceRequestDetail(id)`
+                 on demand (never pre-loaded alongside the grid) when opened
+                 from a row's "View" button. Content is built entirely in
+                 js/serviceRequests.js via document.createElement, never
+                 innerHTML — only this dialog's own static chrome (heading,
+                 close button, loading/error placeholders) lives here, same
+                 convention as the Users grid's detail dialog. -->
+            <dialog id="service-requests-detail-dialog" class="gs-detail-dialog" aria-labelledby="service-requests-detail-heading">
+              <div class="d-flex justify-content-between align-items-start mb-3">
+                <h3 id="service-requests-detail-heading" class="mb-0">Service request details</h3>
+                <button type="button" id="service-requests-detail-close" class="btn-close" aria-label="Close"></button>
+              </div>
+              <p id="service-requests-detail-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="service-requests-detail-loading" class="text-secondary" hidden>Loading…</p>
+              <div id="service-requests-detail-content"></div>
+            </dialog>
           </section>
 
-          <!-- Administradores — placeholder, Slice 3 (not built). -->
+          <!-- Quotes admin grid follow-up (2026-08-19) — a real,
+               functional, READ-ONLY data grid over `Quote`
+               (quotes/quoteDetail, js/quotes.js), mirroring the Service
+               Requests section above exactly (same "Columns" toolbar
+               button, no create dialog — unlike Service Requests, there is
+               no sensible admin-initiated "create a Quote" action, see
+               AdminQuotesResolver's own header comment). -->
+          <section id="quotes-section" class="gs-section" hidden aria-labelledby="quotes-heading">
+            <div class="page-header d-print-none">
+              <h2 id="quotes-heading" class="page-title">Quotes</h2>
+            </div>
+
+            <p id="quotes-error" class="alert alert-danger" role="alert" hidden></p>
+            <p id="quotes-success" class="alert alert-success" role="status" hidden></p>
+
+            <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+              <button id="quotes-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                Columns
+              </button>
+            </div>
+
+            <div class="card">
+              <!-- Tabulator mounts into this container (js/quotes.js).
+                   No mock rows here — the grid is empty until the first
+                   fetch resolves. -->
+              <div id="quotes-grid"></div>
+            </div>
+
+            <!-- "View" row-detail modal. Fetches `quoteDetail(id)` on
+                 demand (never pre-loaded alongside the grid) when opened
+                 from a row's "View" button. Content is built entirely in
+                 js/quotes.js via document.createElement, never innerHTML —
+                 only this dialog's own static chrome (heading, close
+                 button, loading/error placeholders) lives here, same
+                 convention as the Service Requests detail dialog. -->
+            <dialog id="quotes-detail-dialog" class="gs-detail-dialog" aria-labelledby="quotes-detail-heading">
+              <div class="d-flex justify-content-between align-items-start mb-3">
+                <h3 id="quotes-detail-heading" class="mb-0">Quote details</h3>
+                <button type="button" id="quotes-detail-close" class="btn-close" aria-label="Close"></button>
+              </div>
+              <p id="quotes-detail-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="quotes-detail-loading" class="text-secondary" hidden>Loading…</p>
+              <div id="quotes-detail-content"></div>
+            </dialog>
+          </section>
+
+          <!-- Categories (category-tree follow-up, 2026-08-18) — full CRUD
+               (create/rename/reorder/re-parent/delete) over the Category
+               catalog, rendered as an actual tree by js/categories.js
+               (document.createElement only — this section's own markup is
+               just static chrome: heading, banners, toolbar button, the
+               tree's mount point, and the one shared create/edit dialog). -->
+          <section id="categories-section" class="gs-section" hidden aria-labelledby="categories-heading">
+            <div class="page-header d-print-none">
+              <h2 id="categories-heading" class="page-title">Categories</h2>
+            </div>
+
+            <nav class="nav nav-tabs gs-subtabs" aria-label="Categories subsections" hidden></nav>
+
+            <p id="categories-error" class="alert alert-danger" role="alert" hidden></p>
+            <p id="categories-success" class="alert alert-success" role="status" hidden></p>
+
+            <!-- "Create Category" — top-right toolbar button, same
+                 placement convention as the Service Requests grid's own
+                 toolbar. Creates a ROOT category; a subcategory is created
+                 via a node's own inline "+" button instead (both open the
+                 same #categories-form-dialog below). -->
+            <div class="d-flex align-items-center justify-content-end mb-3">
+              <button id="categories-create-root-button" type="button" class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="me-1">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                Create Category
+              </button>
+            </div>
+
+            <div class="card">
+              <div class="card-body">
+                <!-- Tree mounts here (js/categories.js). No mock rows —
+                     empty until the first fetch resolves. -->
+                <div id="categories-tree" class="gs-category-tree"></div>
+                <div id="categories-empty" class="empty" hidden>
+                  <div class="empty-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 5a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5z" />
+                    </svg>
+                  </div>
+                  <p class="empty-title">No categories yet</p>
+                  <p class="empty-subtitle text-secondary">Create the first one with the button above.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Shared create/edit form dialog — js/categories.js decides
+                 create-vs-edit (and pre-fills a locked parent when opened
+                 via a node's "+ Add subcategory" action) via its own
+                 in-memory state, never two separate dialogs. -->
+            <dialog id="categories-form-dialog" class="gs-detail-dialog" aria-labelledby="categories-form-heading">
+              <div class="d-flex justify-content-between align-items-start mb-3">
+                <h3 id="categories-form-heading" class="mb-0">Create category</h3>
+                <button type="button" id="categories-form-close" class="btn-close" aria-label="Close"></button>
+              </div>
+              <p id="categories-form-error" class="alert alert-danger" role="alert" hidden></p>
+              <form id="categories-form">
+                <div class="mb-3">
+                  <label for="categories-form-name" class="form-label">Name</label>
+                  <input id="categories-form-name" type="text" class="form-control" required maxlength="100" />
+                </div>
+                <div class="mb-3">
+                  <label for="categories-form-parent" class="form-label">Parent category</label>
+                  <select id="categories-form-parent" class="form-select"></select>
+                  <div class="form-hint">Leave as "No parent" for a root-level category.</div>
+                </div>
+                <div class="mb-3">
+                  <label for="categories-form-display-order" class="form-label">Display order</label>
+                  <input id="categories-form-display-order" type="number" class="form-control" value="0" />
+                  <div class="form-hint">Lower numbers show first among sibling categories. Ties are broken alphabetically — or just use the ↑/↓ buttons instead.</div>
+                </div>
+                <div class="d-flex justify-content-end gap-2 mt-3">
+                  <button type="button" id="categories-form-cancel" class="btn btn-outline-secondary">Cancel</button>
+                  <button type="submit" id="categories-form-submit" class="btn btn-primary">Save</button>
+                </div>
+              </form>
+            </dialog>
+          </section>
+
+          <!-- Administradores (Administrators-tab follow-up, 2026-08-20) —
+               role/permission management + admin-user invite/manage. Two
+               sub-tabs (Roles / Admin Users), built with the SAME hand-rolled
+               JS tablist pattern `settings.js`'s `renderRootTabs`/
+               `userAccounts.js`'s `renderDetailTabs` already establish —
+               NOT the static `<nav class="gs-subtabs">` markup (confirmed
+               dead, unconnected to any JS anywhere in this panel). See
+               js/administrators.js. -->
           <section id="administradores-section" class="gs-section" hidden aria-labelledby="administradores-heading">
             <div class="page-header d-print-none">
               <h2 id="administradores-heading" class="page-title">Administrators</h2>
             </div>
 
-            <nav class="nav nav-tabs gs-subtabs" aria-label="Administrators subsections" hidden></nav>
+            <div id="administradores-tablist" class="nav nav-underline mb-3" role="tablist" aria-label="Administrators subsections"></div>
 
-            <div class="card">
-              <div class="empty">
-                <div class="empty-icon">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 7v5l3 3" />
+            <!-- Roles panel -->
+            <div id="administradores-roles-panel" role="tabpanel" aria-labelledby="administradores-tab-roles">
+              <p id="admin-roles-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="admin-roles-success" class="alert alert-success" role="status" hidden></p>
+
+              <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+                <button id="admin-roles-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                  Columns
+                </button>
+                <button id="admin-roles-create-button" type="button" class="btn btn-primary">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="me-1">
+                    <path d="M12 5v14" />
+                    <path d="M5 12h14" />
                   </svg>
-                </div>
-                <p class="empty-title">Coming soon</p>
-                <p class="empty-subtitle text-secondary">
-                  Admin account management — planned for Slice 3. Not implemented yet.
-                </p>
+                  Create role
+                </button>
               </div>
+
+              <div class="card">
+                <!-- Tabulator mounts into this container (js/adminRoles.js).
+                     No mock rows here — the grid is empty until the first
+                     fetch resolves. -->
+                <div id="admin-roles-grid"></div>
+              </div>
+
+              <!-- Shared create/edit dialog — js/adminRoles.js decides
+                   create-vs-edit via its own in-memory state. Creating
+                   allows editing `name`; editing an EXISTING role (any of
+                   them, including the 3 seeded ones) locks `name` and only
+                   allows editing the permission checkbox matrix. -->
+              <dialog id="admin-role-form-dialog" class="gs-detail-dialog" aria-labelledby="admin-role-form-heading">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                  <h3 id="admin-role-form-heading" class="mb-0">Create role</h3>
+                  <button type="button" id="admin-role-form-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <p id="admin-role-form-error" class="alert alert-danger" role="alert" hidden></p>
+                <form id="admin-role-form">
+                  <div class="mb-3">
+                    <label for="admin-role-form-name" class="form-label">Name</label>
+                    <input id="admin-role-form-name" type="text" class="form-control" required maxlength="100" />
+                    <div id="admin-role-form-name-hint" class="form-hint" hidden>Seeded system roles cannot be renamed.</div>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Permissions</label>
+                    <!-- Grid-parity/UX follow-up (2026-08-20, same day) —
+                         js/adminRoles.js renders a resource x action
+                         permission matrix (<table>) into this container,
+                         replacing the earlier flat list of raw Permission
+                         enum-string checkboxes. -->
+                    <div id="admin-role-form-permissions"></div>
+                  </div>
+                  <div class="d-flex justify-content-end gap-2 mt-3">
+                    <button type="button" id="admin-role-form-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button type="submit" id="admin-role-form-submit" class="btn btn-primary">Save</button>
+                  </div>
+                </form>
+              </dialog>
+            </div>
+
+            <!-- Admin Users panel -->
+            <div id="administradores-users-panel" role="tabpanel" aria-labelledby="administradores-tab-users" hidden>
+              <p id="admin-users-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="admin-users-success" class="alert alert-success" role="status" hidden></p>
+
+              <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+                <button id="admin-users-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                  Columns
+                </button>
+                <button id="admin-users-invite-button" type="button" class="btn btn-primary">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="me-1">
+                    <path d="M12 5v14" />
+                    <path d="M5 12h14" />
+                  </svg>
+                  Invite admin
+                </button>
+              </div>
+
+              <div class="card">
+                <div id="admin-users-grid"></div>
+              </div>
+
+              <!-- Invite dialog — email/displayName/role only (no status —
+                   a fresh invite is always INVITED). -->
+              <dialog id="admin-user-invite-dialog" class="gs-detail-dialog" aria-labelledby="admin-user-invite-heading">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                  <h3 id="admin-user-invite-heading" class="mb-0">Invite admin</h3>
+                  <button type="button" id="admin-user-invite-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <p id="admin-user-invite-error" class="alert alert-danger" role="alert" hidden></p>
+                <form id="admin-user-invite-form">
+                  <div class="mb-3">
+                    <label for="admin-user-invite-email" class="form-label">Email</label>
+                    <input id="admin-user-invite-email" type="email" class="form-control" required />
+                  </div>
+                  <div class="mb-3">
+                    <label for="admin-user-invite-display-name" class="form-label">Display name</label>
+                    <input id="admin-user-invite-display-name" type="text" class="form-control" required />
+                  </div>
+                  <div class="mb-3">
+                    <label for="admin-user-invite-role" class="form-label">Role</label>
+                    <select id="admin-user-invite-role" class="form-select" required></select>
+                  </div>
+                  <div class="d-flex justify-content-end gap-2 mt-3">
+                    <button type="button" id="admin-user-invite-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button type="submit" id="admin-user-invite-submit" class="btn btn-primary">Send invite</button>
+                  </div>
+                </form>
+              </dialog>
+
+              <!-- Edit dialog — displayName/role/status only (email is fixed
+                   at invite time). -->
+              <dialog id="admin-user-edit-dialog" class="gs-detail-dialog" aria-labelledby="admin-user-edit-heading">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                  <h3 id="admin-user-edit-heading" class="mb-0">Edit admin</h3>
+                  <button type="button" id="admin-user-edit-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <p id="admin-user-edit-error" class="alert alert-danger" role="alert" hidden></p>
+                <form id="admin-user-edit-form">
+                  <div class="mb-3">
+                    <label for="admin-user-edit-display-name" class="form-label">Display name</label>
+                    <input id="admin-user-edit-display-name" type="text" class="form-control" required />
+                  </div>
+                  <div class="mb-3">
+                    <label for="admin-user-edit-role" class="form-label">Role</label>
+                    <select id="admin-user-edit-role" class="form-select" required></select>
+                  </div>
+                  <div class="mb-3">
+                    <label for="admin-user-edit-status" class="form-label">Status</label>
+                    <select id="admin-user-edit-status" class="form-select" required>
+                      <option value="ACTIVE">ACTIVE</option>
+                      <option value="REVOKED">REVOKED</option>
+                    </select>
+                    <div class="form-hint">INVITED admins get this status automatically once they accept their invite — it cannot be set manually here.</div>
+                  </div>
+                  <div class="d-flex justify-content-end gap-2 mt-3">
+                    <button type="button" id="admin-user-edit-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button type="submit" id="admin-user-edit-submit" class="btn btn-primary">Save</button>
+                  </div>
+                </form>
+              </dialog>
             </div>
           </section>
 

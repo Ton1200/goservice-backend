@@ -10,6 +10,11 @@ import { IssuePasswordResetCodeService } from '../password-reset/services/issue-
 import './admin-rbac/admin-permission.enum'; // GraphQL enum registration side effect
 import '../users/models/user-account-status.enum'; // GraphQL enum registration side effect
 import './user-accounts/models/auth-provider.enum'; // GraphQL enum registration side effect
+import '../service-requests/models/service-request-status.enum'; // GraphQL enum registration side effect
+import '../service-requests/models/service-request-urgency.enum'; // GraphQL enum registration side effect
+import '../quotes/models/quote-status.enum'; // GraphQL enum registration side effect
+import '../engagements/models/engagement-status.enum'; // GraphQL enum registration side effect
+import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
 import { AdminPermissionsGuard } from './admin-rbac/guards/admin-permissions.guard';
@@ -34,6 +39,43 @@ import { ForceUserAccountPasswordResetService } from './user-accounts/services/f
 import { DeleteUserAccountService } from './user-accounts/services/delete-user-account.service';
 import { BulkDeleteUserAccountsService } from './user-accounts/services/bulk-delete-user-accounts.service';
 import { GetUserAccountDetailService } from './user-accounts/services/get-user-account-detail.service';
+import { ServiceRequestsRepository } from '../service-requests/service-requests.repository';
+import { ProfilesRepository } from '../profiles/profiles.repository';
+import { ListCategoriesService } from '../profiles/services/list-categories.service';
+import { AdminServiceRequestsResolver } from './service-requests/admin-service-requests.resolver';
+import { ListAdminServiceRequestsService } from './service-requests/services/list-admin-service-requests.service';
+import { GetAdminServiceRequestDetailService } from './service-requests/services/get-admin-service-request-detail.service';
+import { ListEligibleServiceRequestCustomersService } from './service-requests/services/list-eligible-service-request-customers.service';
+import { CreateServiceRequestForCustomerService } from './service-requests/services/create-service-request-for-customer.service';
+import { AdminCategoriesResolver } from './categories/admin-categories.resolver';
+import { ListAdminCategoriesService } from './categories/services/list-admin-categories.service';
+import { ListAdminCategoryTreeService } from './categories/services/list-admin-category-tree.service';
+import { CreateCategoryService } from './categories/services/create-category.service';
+import { UpdateCategoryService } from './categories/services/update-category.service';
+import { DeleteCategoryService } from './categories/services/delete-category.service';
+import { QuotesRepository } from '../quotes/quotes.repository';
+import { AdminQuotesResolver } from './quotes/admin-quotes.resolver';
+import { ListAdminQuotesService } from './quotes/services/list-admin-quotes.service';
+import { GetAdminQuoteDetailService } from './quotes/services/get-admin-quote-detail.service';
+import { AdminLockoutGuardService } from './admin-rbac/services/admin-lockout-guard.service';
+import { AdminRolesResolver } from './admin-roles/admin-roles.resolver';
+import { ListAdminRolesService } from './admin-roles/services/list-admin-roles.service';
+import { CreateAdminRoleService } from './admin-roles/services/create-admin-role.service';
+import { UpdateAdminRolePermissionsService } from './admin-roles/services/update-admin-role-permissions.service';
+import { DeleteAdminRoleService } from './admin-roles/services/delete-admin-role.service';
+import { AdminUsersResolver } from './admin-users/admin-users.resolver';
+import { ListAdminUsersService } from './admin-users/services/list-admin-users.service';
+import { UpdateAdminUserService } from './admin-users/services/update-admin-user.service';
+import { DeleteAdminUserService } from './admin-users/services/delete-admin-user.service';
+import { AdminInvitesRepository } from './admin-invites/admin-invites.repository';
+import { IssueAdminInviteService } from './admin-invites/services/issue-admin-invite.service';
+import { InviteAdminUserService } from './admin-invites/services/invite-admin-user.service';
+import { ResendAdminInviteService } from './admin-invites/services/resend-admin-invite.service';
+import { AcceptAdminInviteService } from './admin-invites/services/accept-admin-invite.service';
+import { AdminInvitesResolver } from './admin-invites/admin-invites.resolver';
+import { AcceptAdminInviteResolver } from './admin-invites/accept-admin-invite.resolver';
+import { AdminInviteEmailSenderPort } from './admin-invites/ports/admin-invite-email-sender.port';
+import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapters/email-queue-admin-invite-email-sender.adapter';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -234,6 +276,117 @@ import { GetUserAccountDetailService } from './user-accounts/services/get-user-a
     // leak class documented above), since only the TYPE, never a service
     // from it, is needed here.
     GetUserAccountDetailService,
+
+    // service-requests (GOS-38 follow-up, 2026-08-18) — `serviceRequests`/
+    // `serviceRequestDetail`, read-only. `ServiceRequestsRepository` is
+    // reused CONCRETE CLASS from `src/service-requests/` — same
+    // "never import the resolver-bearing module" pattern as
+    // `UsersRepository` above; `ServiceRequestsModule` itself is never
+    // imported here (it has its own `ServiceRequestsResolver`, the same
+    // leak class documented above). `Category`/`ServiceRequestStatus`/
+    // `ServiceRequestUrgency`/`ServiceRequestAttachmentModel` are reused
+    // directly as field types on `AdminServiceRequestModel`/
+    // `AdminServiceRequestDetailModel`, the same "orphaned type made
+    // reachable from an admin field" pattern `userAccountDetail` already
+    // established for `CustomerProfile`/`ProfessionalProfile` — only the
+    // enum registrations need an explicit side-effect import (see above);
+    // the `@ObjectType()` classes need no DI registration at all.
+    ServiceRequestsRepository,
+    AdminServiceRequestsResolver,
+    ListAdminServiceRequestsService,
+    GetAdminServiceRequestDetailService,
+
+    // service-requests "create for a customer" (GOS-38 follow-up, same day)
+    // — `categories`/`eligibleServiceRequestCustomers`/
+    // `createServiceRequestForCustomer`. UPDATES the claim the
+    // `userAccountDetail` comment above makes ("only the TYPE, never a
+    // service, from ProfilesModule is needed here"): `ProfilesRepository`
+    // IS now a real provider here, for a NEW, different reason — this flow
+    // genuinely needs to read/query `CustomerProfile`/`Category` data
+    // (find an approved customer, validate a category id), not just reuse
+    // a type shape. Still the same "reuse the concrete repository/service
+    // CLASS directly, never import the resolver-bearing `ProfilesModule`"
+    // pattern as every other cross-feature reuse in this module — that
+    // module has its own `ProfilesResolver`, the same leak class documented
+    // throughout this file. `ListCategoriesService` is reused directly too
+    // (a plain injectable, no resolver of its own).
+    ProfilesRepository,
+    ListCategoriesService,
+    ListEligibleServiceRequestCustomersService,
+    CreateServiceRequestForCustomerService,
+
+    // categories (category-tree follow-up, 2026-08-18) — full CRUD +
+    // hierarchy management (`adminCategories`/`adminCategoryTree`/
+    // `createCategory`/`updateCategory`/`deleteCategory`). `ProfilesRepository`
+    // is already a provider above (reused, not duplicated) — it owns every
+    // `Category` Prisma query, reads AND writes, per its own header comment.
+    // `ServiceRequestsRepository` is likewise already a provider above,
+    // reused for `DeleteCategoryService`'s "in use" pre-check (the
+    // ServiceRequest half of it — the ProfessionalSpecialization half stays
+    // on ProfilesRepository, per-table ownership either way).
+    AdminCategoriesResolver,
+    ListAdminCategoriesService,
+    ListAdminCategoryTreeService,
+    CreateCategoryService,
+    UpdateCategoryService,
+    DeleteCategoryService,
+
+    // quotes (Quotes admin grid follow-up, 2026-08-19) — `quotes`/
+    // `quoteDetail`, READ-ONLY (no `QUOTES_WRITE`/write mutation — see
+    // `AdminQuotesResolver`'s own header comment for why no admin-initiated
+    // "create" analog exists here, unlike service-requests above).
+    // `QuotesRepository` is reused CONCRETE CLASS from `src/quotes/` — same
+    // "never import the resolver-bearing module" pattern as
+    // `ServiceRequestsRepository` above; `QuotesModule` itself is never
+    // imported here (it has its own `QuotesResolver`, the same leak class
+    // documented throughout this file). `AdminQuoteServiceRequestModel`
+    // reuses `AdminServiceRequestCustomerModel` (already declared above)
+    // directly for its nested customer, and `Category`/`ServiceRequestStatus`
+    // are reused the same "orphaned type made reachable" way — no new DI
+    // registration needed for any of those, only the `QuoteStatus`/
+    // `EngagementStatus` enum side-effect imports at the top of this file.
+    QuotesRepository,
+    AdminQuotesResolver,
+    ListAdminQuotesService,
+    GetAdminQuoteDetailService,
+
+    // admin-rbac / admin-roles / admin-users / admin-invites (Administrators
+    // tab follow-up, 2026-08-20) — role/permission management + admin-user
+    // invite/manage capability. `AdminRolesRepository`/`AdminUsersRepository`
+    // are already providers above (reused, not duplicated).
+    // `AdminLockoutGuardService` is this feature's safety-critical
+    // self-lockout guard (see its own header comment) — a plain injectable,
+    // no resolver of its own, shared by `UpdateAdminRolePermissionsService`
+    // and `UpdateAdminUserService`. `PasswordHasherPort` is already provided
+    // above (`Argon2PasswordHasherAdapter`) — reused directly by
+    // `AcceptAdminInviteService`, same pattern as every other reuse of that
+    // provider in this file. `EnsureEmailDeliveryAvailableService` comes from
+    // the already-imported `EmailModule`.
+    AdminLockoutGuardService,
+    AdminRolesResolver,
+    ListAdminRolesService,
+    CreateAdminRoleService,
+    UpdateAdminRolePermissionsService,
+    DeleteAdminRoleService,
+    AdminUsersResolver,
+    ListAdminUsersService,
+    UpdateAdminUserService,
+    DeleteAdminUserService,
+    AdminInvitesRepository,
+    {
+      provide: AdminInviteEmailSenderPort,
+      useClass: EmailQueueAdminInviteEmailSenderAdapter,
+    },
+    IssueAdminInviteService,
+    InviteAdminUserService,
+    ResendAdminInviteService,
+    AdminInvitesResolver,
+    // `AcceptAdminInviteService`/`AcceptAdminInviteResolver` back the ONE
+    // unguarded mutation in this whole feature (`acceptAdminInvite`) — see
+    // that resolver's own header comment for why it is a SEPARATE resolver
+    // class from `AdminInvitesResolver` above, never merged into it.
+    AcceptAdminInviteService,
+    AcceptAdminInviteResolver,
   ],
 })
 export class PlatformAdminModule {}

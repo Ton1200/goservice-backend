@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { CountryCode } from '../models/country-code.enum';
 import { CustomerProfile } from '../models/customer-profile.model';
 import { UpsertCustomerProfileInput } from '../models/upsert-customer-profile-input.model';
 import { ProfilesRepository } from '../profiles.repository';
 
-const DEFAULT_COUNTRY = 'AR';
+const DEFAULT_COUNTRY = CountryCode.AR;
 
 /**
  * Orchestrates `upsertCustomerProfile` (GOS-14/GOS-28) — always idempotent

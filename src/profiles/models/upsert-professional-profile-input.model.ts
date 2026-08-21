@@ -4,14 +4,15 @@ import {
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
+  IsEnum,
   IsOptional,
   IsString,
   IsUrl,
-  Length,
   MaxLength,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { CountryCode } from './country-code.enum';
 import { UpsertProfessionalSpecializationInput } from './upsert-professional-specialization-input.model';
 
 /**
@@ -63,13 +64,13 @@ export class UpsertProfessionalProfileInput {
   @MinLength(1)
   city!: string;
 
-  // Optional — defaults server-side to "AR" (Argentina) when omitted, same
-  // convention as `UpsertCustomerProfileInput.country`.
-  @Field({ nullable: true })
+  // Optional — defaults server-side to AR (Argentina) when omitted, same
+  // convention as `UpsertCustomerProfileInput.country`. `@IsEnum` (not
+  // `@IsString() @Length(2, 2)`) — see that field's own comment for why.
+  @Field(() => CountryCode, { nullable: true })
   @IsOptional()
-  @IsString()
-  @Length(2, 2)
-  country?: string;
+  @IsEnum(CountryCode)
+  country?: CountryCode;
 
   @Field()
   @IsString()

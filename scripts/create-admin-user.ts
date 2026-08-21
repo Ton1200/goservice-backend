@@ -47,17 +47,22 @@
 import path from 'node:path';
 import { PrismaClient, AdminUserStatus } from '@prisma/client';
 import { Argon2PasswordHasherAdapter } from '../src/users/adapters/argon2-password-hasher.adapter';
+import {
+  SEEDED_ADMIN_ROLE_NAMES,
+  type SeededAdminRoleName,
+} from '../src/platform-admin/admin-rbac/seeded-admin-role-names.constant';
 
-// The 3 role names actually seeded by `bootstrap-super-admin.ts`'s
-// `ROLE_SEEDS` — kept in sync manually since that script is off-limits to
-// import from (it runs `main()` unconditionally at module load, so
-// importing it would trigger a live bootstrap run as a side effect).
-export const VALID_ADMIN_ROLE_NAMES = [
-  'SUPER_ADMIN',
-  'CONFIG_MANAGER',
-  'SUPPORT_VIEWER',
-] as const;
-export type AdminRoleName = (typeof VALID_ADMIN_ROLE_NAMES)[number];
+// Administrators-tab follow-up (2026-08-20): this used to keep its OWN,
+// separate, manually-synced copy of the 3 seeded role names (with a comment
+// explicitly admitting the duplication, since `bootstrap-super-admin.ts`
+// itself was off-limits to import from — it runs `main()` unconditionally
+// at module load, so importing it would trigger a live bootstrap run as a
+// side effect). Now re-exported from the new shared, Nest/Prisma-import-free
+// `seeded-admin-role-names.constant.ts`, which both this script and
+// `bootstrap-super-admin.ts` import identically without that side-effect
+// risk — see that constant's own header comment.
+export const VALID_ADMIN_ROLE_NAMES = SEEDED_ADMIN_ROLE_NAMES;
+export type AdminRoleName = SeededAdminRoleName;
 
 export class CliArgumentError extends Error {}
 

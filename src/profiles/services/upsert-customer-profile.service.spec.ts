@@ -110,14 +110,18 @@ describe('UpsertCustomerProfileService', () => {
   it('passes through a non-default country when provided', async () => {
     const { service, upsertCustomerProfile } = makeService();
 
+    // 'UY' is no longer a valid value now that `country` is a real
+    // `CountryCode` enum (AR/CO only, see `country-code.enum.ts`) — 'CO'
+    // exercises the exact same "non-default country passes through
+    // unchanged" behavior this test is actually about.
     await service.upsertCustomerProfile(
       'user-1',
-      validInput({ country: 'UY' }),
+      validInput({ country: 'CO' }),
     );
 
     expect(upsertCustomerProfile).toHaveBeenCalledWith(
       'user-1',
-      expect.objectContaining({ country: 'UY' }),
+      expect.objectContaining({ country: 'CO' }),
     );
   });
 

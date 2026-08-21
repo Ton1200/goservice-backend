@@ -1,4 +1,5 @@
 import { Field, GraphQLISODateTime, ID, ObjectType } from '@nestjs/graphql';
+import { CountryCode } from './country-code.enum';
 import { ProfessionalSpecialization } from './professional-specialization.model';
 import { ProfessionalVerificationStatus } from './professional-verification-status.enum';
 
@@ -32,8 +33,8 @@ export class ProfessionalProfile {
   @Field()
   city!: string;
 
-  @Field()
-  country!: string;
+  @Field(() => CountryCode)
+  country!: CountryCode;
 
   @Field()
   serviceAreaDescription!: string;

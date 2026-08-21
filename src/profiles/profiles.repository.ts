@@ -1,13 +1,21 @@
 import { Injectable } from '@nestjs/common';
 import {
   Category,
+  CountryCode,
   CustomerProfile,
+  Prisma,
   ProfessionalProfile,
   ProfessionalVerificationStatus,
   SpecializationRole,
+  UserAccountStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersRepository } from '../users/users.repository';
+import {
+  buildCategoryTree,
+  CategoryTreeNodeData,
+  sortCategoriesInTreeOrder,
+} from './utils/sort-categories-tree-order.util';
 
 interface SpecializationWithCategory {
   category: Category;
@@ -51,6 +59,40 @@ export class ProfilesRepository {
     return this.prisma.customerProfile.findUnique({ where: { userId } });
   }
 
+  /**
+   * Identity Verification's ONE server-side source of truth for "which
+   * country is this user in" — `StartIdentityVerificationService` calls
+   * this instead of ever accepting a `country` argument from a GraphQL
+   * input (see that service's own comment for why). Narrow
+   * `select: { country: true }` reads on both tables, never the full
+   * profile row.
+   *
+   * A user may hold both a `CustomerProfile` and a `ProfessionalProfile`
+   * (no exclusivity rule — see this class's own header comment) with, in
+   * theory, two different `country` values. `CustomerProfile` wins when
+   * both exist — an arbitrary but deterministic, documented tie-break (not
+   * a confirmed product rule; the plan left this open) since GoService's
+   * KYC concern is about verifying the PERSON, not any one specific
+   * profile's declared service area. Returns `null` only if the user has
+   * created neither profile yet, which should never happen for an account
+   * already in `PENDING_APPROVAL` (see `UsersRepository`'s own comment on
+   * `transitionToPendingApprovalIfEmailVerified`) — callers still treat
+   * `null` defensively rather than assuming it can't happen.
+   */
+  async findCountryForUser(userId: string): Promise<CountryCode | null> {
+    const [customerProfile, professionalProfile] = await Promise.all([
+      this.prisma.customerProfile.findUnique({
+        where: { userId },
+        select: { country: true },
+      }),
+      this.prisma.professionalProfile.findUnique({
+        where: { userId },
+        select: { country: true },
+      }),
+    ]);
+    return customerProfile?.country ?? professionalProfile?.country ?? null;
+  }
+
   async findProfessionalProfileByUserId(
     userId: string,
   ): Promise<ProfessionalProfileWithSpecializations | null> {
@@ -69,8 +111,31 @@ export class ProfilesRepository {
     return this.flattenSpecializations(profile);
   }
 
-  findAllCategories(): Promise<Category[]> {
-    return this.prisma.category.findMany({ orderBy: { name: 'asc' } });
+  /**
+   * Tree pre-order, not a bare alphabetical/DB-order list — see
+   * `sortCategoriesInTreeOrder`'s own header comment. Every FLAT consumer of
+   * the catalog (public `categories`, admin `serviceRequestCategories`/
+   * `adminCategories`) goes through this one method, so all three always
+   * agree on ordering.
+   */
+  async findAllCategories(): Promise<Category[]> {
+    const categories = await this.prisma.category.findMany({
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+    });
+    return sortCategoriesInTreeOrder(categories);
+  }
+
+  /**
+   * The admin panel's actual nested-tree shape (`adminCategoryTree` query,
+   * `CategoryTreeNode`) — same underlying rows/sibling order as
+   * `findAllCategories`, reshaped into real `children: []` nesting instead
+   * of a flat pre-order list. See `buildCategoryTree`'s own header comment.
+   */
+  async findCategoryTree(): Promise<CategoryTreeNodeData[]> {
+    const categories = await this.prisma.category.findMany({
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+    });
+    return buildCategoryTree(categories);
   }
 
   /**
@@ -84,6 +149,187 @@ export class ProfilesRepository {
       select: { id: true },
     });
     return rows.map((row) => row.id);
+  }
+
+  /**
+   * `categoryIds` themselves UNION every one of their descendants,
+   * transitively — the hierarchical-matching primitive both
+   * `ListCompatibleServiceRequestsService` (a Professional specialized in a
+   * PARENT Category is compatible with every ServiceRequest nested under
+   * it, not only the exact id they specialized in) and
+   * `UpdateCategoryService` (cycle prevention: a Category can never become
+   * its own descendant's descendant) build on. Computed in memory via a
+   * plain BFS over a `{ id, parentId }` projection of the WHOLE table —
+   * deliberately not a recursive SQL CTE (Prisma's query builder has no
+   * native support for one, and this catalog is small by design, same
+   * "no need for that machinery yet" reasoning as `sortCategoriesInTreeOrder`).
+   */
+  async findDescendantCategoryIds(categoryIds: string[]): Promise<string[]> {
+    const rows = await this.prisma.category.findMany({
+      select: { id: true, parentId: true },
+    });
+    const childIdsByParentId = new Map<string, string[]>();
+    for (const row of rows) {
+      if (row.parentId === null) {
+        continue;
+      }
+      const siblings = childIdsByParentId.get(row.parentId) ?? [];
+      siblings.push(row.id);
+      childIdsByParentId.set(row.parentId, siblings);
+    }
+
+    const visited = new Set<string>();
+    const queue = [...categoryIds];
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      if (currentId === undefined || visited.has(currentId)) {
+        continue;
+      }
+      visited.add(currentId);
+      queue.push(...(childIdsByParentId.get(currentId) ?? []));
+    }
+
+    return [...visited];
+  }
+
+  // ---- platform-admin Category management (category-tree follow-up,
+  // 2026-08-18) — the catalog is no longer purely seed-only; an admin can
+  // create/rename/reorder/re-parent/delete entries from the panel. Writes
+  // still live here exclusively per this class's own "ONLY place that
+  // issues Prisma queries for ... Category" rule (see this class's own
+  // header comment) — `CreateCategoryService`/`UpdateCategoryService`/
+  // `DeleteCategoryService` (`src/platform-admin/categories/`) call these
+  // directly, never Prisma themselves.
+
+  findCategoryByIdForAdmin(id: string): Promise<Category | null> {
+    return this.prisma.category.findUnique({ where: { id } });
+  }
+
+  /**
+   * Case-insensitive exact-name lookup, powering the friendlier
+   * `CATEGORY_NAME_TAKEN` pre-check both `CreateCategoryService` and
+   * `UpdateCategoryService` do BEFORE writing — same instinct as
+   * `UsersRepository.findByEmail`'s own pre-check role in
+   * `UpdateUserAccountService`, rather than relying on the raw `@unique`
+   * constraint's Prisma `P2002` error.
+   */
+  findCategoryByNameForAdmin(name: string): Promise<Category | null> {
+    return this.prisma.category.findFirst({
+      where: { name: { equals: name, mode: 'insensitive' } },
+    });
+  }
+
+  countChildCategories(id: string): Promise<number> {
+    return this.prisma.category.count({ where: { parentId: id } });
+  }
+
+  /**
+   * The `ProfessionalSpecialization` half of `DeleteCategoryService`'s
+   * "in use" pre-check — the `ServiceRequest` half
+   * (`ServiceRequestsRepository.countByCategoryId`) lives in the OTHER
+   * repository that actually owns that table, per this codebase's
+   * per-table ownership rule (see this class's own header comment).
+   */
+  countSpecializationsByCategoryId(categoryId: string): Promise<number> {
+    return this.prisma.professionalSpecialization.count({
+      where: { categoryId },
+    });
+  }
+
+  createCategoryForAdmin(
+    tx: Prisma.TransactionClient,
+    data: { name: string; displayOrder: number; parentId: string | null },
+  ): Promise<Category> {
+    return tx.category.create({ data });
+  }
+
+  /**
+   * Runs inside the caller's own `$transaction`
+   * (`UpdateCategoryService`/`DeleteCategoryService`) — same pattern as
+   * `UsersRepository.updateForAdmin`: the `Category` write and the
+   * `AdminAuditLog` write commit atomically or not at all.
+   * `Prisma.CategoryUncheckedUpdateInput` (not the "checked" variant) is
+   * used deliberately so `parentId` can be set directly as a plain
+   * `string | null` rather than through `parent: { connect/disconnect }` —
+   * the caller has already validated the target id's existence and
+   * cycle-safety before calling this.
+   */
+  updateCategoryForAdmin(
+    tx: Prisma.TransactionClient,
+    id: string,
+    data: Prisma.CategoryUncheckedUpdateInput,
+  ): Promise<Category> {
+    return tx.category.update({ where: { id }, data });
+  }
+
+  deleteCategoryForAdmin(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<Category> {
+    return tx.category.delete({ where: { id } });
+  }
+
+  // ---- platform-admin "create ServiceRequest for a customer" picker
+  // (GOS-38 follow-up, 2026-08-18) — the one deliberate exception to this
+  // class's own "never queries `user` directly" instinct: filtering by
+  // `user.accountStatus`/searching `user.email` is a RELATION filter/select
+  // on THIS class's own `customerProfile` table, not a second, competing
+  // query against `User` itself — same reasoning `UsersRepository`'s own
+  // `ADMIN_USER_ACCOUNT_SELECT` already established for the opposite
+  // direction (reading `customerProfile`/`professionalProfile` presence off
+  // of `User`).
+
+  /**
+   * `CustomerProfile`s whose owning `User` is `APPROVED` (this project's
+   * "identity validated" state — see `UserAccountStatus`'s own schema
+   * comment), optionally narrowed by a case-insensitive substring match on
+   * `displayName` or the owner's `email`. Powers
+   * `eligibleServiceRequestCustomers` — an admin can only create a
+   * `ServiceRequest` on behalf of a customer this method actually returns;
+   * `CreateServiceRequestForCustomerService` re-checks both conditions
+   * server-side regardless of what this picker showed (defense in depth,
+   * not just a UI filter). Capped at 20 rows — a typeahead picker, not a
+   * full listing.
+   */
+  findApprovedCustomerProfilesForAdmin(search?: string): Promise<
+    (Pick<CustomerProfile, 'id' | 'displayName'> & {
+      user: {
+        id: string;
+        email: string;
+        firstName: string | null;
+        lastName: string | null;
+      };
+    })[]
+  > {
+    const trimmedSearch = search?.trim();
+    const searchFilter: Prisma.CustomerProfileWhereInput = trimmedSearch
+      ? {
+          OR: [
+            { displayName: { contains: trimmedSearch, mode: 'insensitive' } },
+            {
+              user: {
+                email: { contains: trimmedSearch, mode: 'insensitive' },
+              },
+            },
+          ],
+        }
+      : {};
+
+    return this.prisma.customerProfile.findMany({
+      where: {
+        user: { accountStatus: UserAccountStatus.APPROVED },
+        ...searchFilter,
+      },
+      select: {
+        id: true,
+        displayName: true,
+        user: {
+          select: { id: true, email: true, firstName: true, lastName: true },
+        },
+      },
+      orderBy: { displayName: 'asc' },
+      take: 20,
+    });
   }
 
   /**
@@ -101,7 +347,7 @@ export class ProfilesRepository {
       addressLine: string;
       city: string;
       province: string;
-      country: string;
+      country: CountryCode;
       photoUrl?: string;
     },
   ): Promise<{
@@ -157,7 +403,7 @@ export class ProfilesRepository {
     data: {
       displayName: string;
       city: string;
-      country: string;
+      country: CountryCode;
       serviceAreaDescription: string;
       bio: string;
       photoUrl?: string;
