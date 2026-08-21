@@ -268,12 +268,18 @@ model CustomerProfile {
   updatedAt   DateTime    @updatedAt
 
   // GOS-38 — purely additive back-reference, no new column here.
-  serviceRequests ServiceRequest[]
+  serviceRequests             ServiceRequest[]
   // GOS-41 — purely additive back-reference, no new column here.
   // Deliberately denormalized on Engagement itself (also derivable via
   // serviceRequest.customerProfileId) — see Engagement's own header
   // comment for why.
-  engagements     Engagement[]
+  engagements                 Engagement[]
+  // GOS-53 — purely additive back-references, no new column here. A
+  // CustomerProfile may author negotiation messages/proposals, and may be
+  // the resolving party on a proposal a Professional made.
+  authoredNegotiationMessages QuoteNegotiationMessage[]
+  proposedPriceProposals      QuotePriceProposal[]      @relation("QuotePriceProposalProposedByCustomer")
+  resolvedPriceProposals      QuotePriceProposal[]      @relation("QuotePriceProposalResolvedByCustomer")
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -309,13 +315,19 @@ model ProfessionalProfile {
   createdAt              DateTime                       @default(now())
   updatedAt              DateTime                       @updatedAt
 
-  specializations ProfessionalSpecialization[]
+  specializations             ProfessionalSpecialization[]
   // GOS-41 — purely additive back-references, no new column here.
-  quotes          Quote[]
+  quotes                      Quote[]
   // Deliberately denormalized on Engagement itself (also derivable via
   // quote.professionalProfileId) — see Engagement's own header comment for
   // why.
-  engagements     Engagement[]
+  engagements                 Engagement[]
+  // GOS-53 — purely additive back-references, no new column here. A
+  // ProfessionalProfile may author negotiation messages/proposals, and may
+  // be the resolving party on a proposal a Customer made.
+  authoredNegotiationMessages QuoteNegotiationMessage[]
+  proposedPriceProposals      QuotePriceProposal[]         @relation("QuotePriceProposalProposedByProfessional")
+  resolvedPriceProposals      QuotePriceProposal[]         @relation("QuotePriceProposalResolvedByProfessional")
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
   // User" constraint. Indexes anticipate Discovery (country+city) and a
@@ -443,7 +455,7 @@ model ServiceRequest {
   // (SENT/WITHDRAWN/REJECTED/ACCEPTED alike), NOT just the accepted one —
   // see Quote.serviceRequest below and acceptedQuote above for that
   // separate, single-row relation.
-  quotes               Quote[]                            @relation("ServiceRequestQuotes")
+  quotes               Quote[]                             @relation("ServiceRequestQuotes")
   // GOS-41 — the one Engagement created once a Quote is accepted for this
   // ServiceRequest, if any. Engagement (not ServiceRequest) holds the FK
   // (`Engagement.serviceRequestId @unique`) — see that model below.
@@ -480,8 +492,8 @@ enum QuoteStatus {
 }
 
 model Quote {
-  id                     String              @id @default(uuid()) @db.Uuid
-  serviceRequestId       String              @db.Uuid
+  id                    String              @id @default(uuid()) @db.Uuid
+  serviceRequestId      String              @db.Uuid
   // Named relation — see ServiceRequest.quotes/acceptedQuote's own comments
   // for why Quote<->ServiceRequest needs two distinct, explicitly-named
   // relations. Cascade: see this schema's own "GOS-41 onDelete" note on
@@ -489,26 +501,42 @@ model Quote {
   // — Quote must never block a User/CustomerProfile/ProfessionalProfile/
   // ServiceRequest hard-delete (`deleteUserAccount`/
   // `bulkDeleteUserAccounts`, already implemented and e2e-tested).
-  serviceRequest         ServiceRequest      @relation("ServiceRequestQuotes", fields: [serviceRequestId], references: [id], onDelete: Cascade)
-  professionalProfileId  String              @db.Uuid
-  professionalProfile    ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
-  price                  Int
-  message                String
-  status                 QuoteStatus         @default(SENT)
-  withdrawnAt            DateTime?
-  rejectedAt             DateTime?
-  acceptedAt             DateTime?
-  createdAt              DateTime            @default(now())
-  updatedAt              DateTime            @updatedAt
+  serviceRequest        ServiceRequest      @relation("ServiceRequestQuotes", fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  professionalProfileId String              @db.Uuid
+  professionalProfile   ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  price                 Int
+  // GOS-53 — the negotiated price agreed via the Quote Negotiation thread
+  // (`QuoteNegotiationMessage`/`QuotePriceProposal`, below), set ONLY by
+  // `AcceptQuotePriceProposalService` inside the same transaction as the
+  // `QuotePriceProposal` PENDING -> ACCEPTED CAS write. `price` (the
+  // ORIGINAL quoted price) is NEVER written to again once set at
+  // `submitQuote` time — `negotiatedPrice` is a separate, additive field,
+  // not an overwrite, so the original offer stays visible/auditable
+  // alongside whatever was actually agreed.
+  negotiatedPrice       Int?
+  message               String
+  status                QuoteStatus         @default(SENT)
+  withdrawnAt           DateTime?
+  rejectedAt            DateTime?
+  acceptedAt            DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
   // Inverse of ServiceRequest.acceptedQuote (named "ServiceRequestAcceptedQuote")
   // — at most one ServiceRequest can ever point at a given Quote as its
   // accepted one. Quote does not hold this FK; ServiceRequest does
   // (`ServiceRequest.acceptedQuoteId`).
-  acceptedByServiceRequest ServiceRequest?   @relation("ServiceRequestAcceptedQuote")
+  acceptedByServiceRequest ServiceRequest?           @relation("ServiceRequestAcceptedQuote")
   // The Engagement created if/when this Quote is accepted. Engagement holds
   // the FK (`Engagement.quoteId @unique`) — see that model below.
   engagement               Engagement?
+  // GOS-53 — every negotiation message/price proposal ever posted against
+  // this Quote. Cascade-deleted with the Quote (see
+  // QuoteNegotiationMessage/QuotePriceProposal's own onDelete comments) —
+  // Quote must never block a hard delete, same rule as every other Quote
+  // relation above.
+  negotiationMessages      QuoteNegotiationMessage[]
+  priceProposals           QuotePriceProposal[]
 
   // Supports quotesForServiceRequest (WHERE serviceRequestId = ?) and the
   // SENT-only lookups AcceptQuoteService/WithdrawQuoteService/
@@ -517,6 +545,99 @@ model Quote {
   // Supports myQuotes (WHERE professionalProfileId = ? ORDER BY createdAt
   // DESC).
   @@index([professionalProfileId, createdAt])
+}
+
+// GOS-53 — Quote Negotiation. Who authored a message / made a price
+// proposal / resolved one, relative to a specific Quote — ties identity to
+// the ROLE the caller is acting in ON THIS QUOTE, not to the User row
+// (a User can hold both a CustomerProfile and a ProfessionalProfile at
+// once — see User's own header comment — so "which profile acted here"
+// must be recorded explicitly, not inferred from the User alone).
+enum QuoteNegotiationParty {
+  CUSTOMER
+  PROFESSIONAL
+}
+
+// GOS-53 — one comment (optionally carrying a price proposal) in the
+// negotiation thread attached to a Quote. `authorCustomerProfileId`/
+// `authorProfessionalProfileId` are a nullable pair — exactly one non-null,
+// matching `authorRole` — enforced by a raw-SQL CHECK constraint in the
+// migration (`quote_negotiation_message_author_shape_check`), same
+// "structural guardrail, not just application-code discipline" precedent as
+// `PlatformSetting`'s own `platform_setting_encrypted_shape_check`.
+model QuoteNegotiationMessage {
+  id         String                @id @default(uuid()) @db.Uuid
+  quoteId    String                @db.Uuid
+  // Cascade: same "must never block a Quote/ServiceRequest/User hard
+  // delete" rule as every other Quote-owned relation in this schema.
+  quote      Quote                 @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  authorRole QuoteNegotiationParty
+
+  authorCustomerProfileId     String?              @db.Uuid
+  authorCustomerProfile       CustomerProfile?     @relation(fields: [authorCustomerProfileId], references: [id], onDelete: Cascade)
+  authorProfessionalProfileId String?              @db.Uuid
+  authorProfessionalProfile   ProfessionalProfile? @relation(fields: [authorProfessionalProfileId], references: [id], onDelete: Cascade)
+
+  message   String
+  createdAt DateTime @default(now())
+
+  // The QuotePriceProposal this message created, if the author attached a
+  // proposedPrice — 1:1, `negotiationMessageId @unique` lives on
+  // QuotePriceProposal (see that model below).
+  priceProposal QuotePriceProposal?
+
+  // Supports quoteNegotiationMessages (WHERE quoteId = ? ORDER BY createdAt
+  // ASC) — the one lookup this whole capability's read path does.
+  @@index([quoteId, createdAt])
+}
+
+// GOS-53 — a price counter-offer, always created alongside exactly one
+// QuoteNegotiationMessage (the comment that proposed it).
+enum QuotePriceProposalStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+}
+
+// GOS-53 — `resolvedByCustomerProfileId`/`resolvedByProfessionalProfileId`
+// are set ONLY on accept/reject (both null while PENDING/SUPERSEDED) —
+// always the COUNTERPARTY of `proposedByRole` (self-resolve is forbidden,
+// see QuoteNegotiationAccessService), so no separate `resolvedByRole`
+// column is needed: which pair is non-null already says who resolved it.
+model QuotePriceProposal {
+  id      String @id @default(uuid()) @db.Uuid
+  quoteId String @db.Uuid
+  // Cascade — same rule as QuoteNegotiationMessage.quote above.
+  quote   Quote  @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  // 1:1 with the message that created this proposal. Cascade: a proposal
+  // can never outlive the message that created it.
+  negotiationMessageId String                  @unique @db.Uuid
+  negotiationMessage   QuoteNegotiationMessage @relation(fields: [negotiationMessageId], references: [id], onDelete: Cascade)
+
+  proposedByRole                  QuoteNegotiationParty
+  proposedByCustomerProfileId     String?               @db.Uuid
+  proposedByCustomerProfile       CustomerProfile?      @relation("QuotePriceProposalProposedByCustomer", fields: [proposedByCustomerProfileId], references: [id], onDelete: Cascade)
+  proposedByProfessionalProfileId String?               @db.Uuid
+  proposedByProfessionalProfile   ProfessionalProfile?  @relation("QuotePriceProposalProposedByProfessional", fields: [proposedByProfessionalProfileId], references: [id], onDelete: Cascade)
+
+  proposedPrice Int
+  status        QuotePriceProposalStatus @default(PENDING)
+
+  resolvedByCustomerProfileId     String?              @db.Uuid
+  resolvedByCustomerProfile       CustomerProfile?     @relation("QuotePriceProposalResolvedByCustomer", fields: [resolvedByCustomerProfileId], references: [id], onDelete: Cascade)
+  resolvedByProfessionalProfileId String?              @db.Uuid
+  resolvedByProfessionalProfile   ProfessionalProfile? @relation("QuotePriceProposalResolvedByProfessional", fields: [resolvedByProfessionalProfileId], references: [id], onDelete: Cascade)
+  resolvedAt                      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Supports the "find the current PENDING proposal for this Quote"
+  // CAS-supersede lookup PostQuoteNegotiationMessageService does on every
+  // new price proposal.
+  @@index([quoteId, status])
 }
 
 // GOS-41 — deliberately a single value for now (`ACCEPTED`). No
@@ -544,18 +665,18 @@ enum EngagementStatus {
 // either party without a join through ServiceRequest+Quote. A documented
 // trade-off (see the GOS-41 plan's decision #6), not silent duplication.
 model Engagement {
-  id                     String           @id @default(uuid()) @db.Uuid
-  serviceRequestId       String           @unique @db.Uuid
-  serviceRequest         ServiceRequest   @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
-  quoteId                String           @unique @db.Uuid
-  quote                  Quote            @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  customerProfileId      String           @db.Uuid
-  customerProfile        CustomerProfile  @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
-  professionalProfileId  String           @db.Uuid
-  professionalProfile    ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
-  status                 EngagementStatus @default(ACCEPTED)
-  createdAt              DateTime         @default(now())
-  updatedAt              DateTime         @updatedAt
+  id                    String              @id @default(uuid()) @db.Uuid
+  serviceRequestId      String              @unique @db.Uuid
+  serviceRequest        ServiceRequest      @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  quoteId               String              @unique @db.Uuid
+  quote                 Quote               @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  customerProfileId     String              @db.Uuid
+  customerProfile       CustomerProfile     @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  professionalProfileId String              @db.Uuid
+  professionalProfile   ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+  status                EngagementStatus    @default(ACCEPTED)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
 
   // Supports myEngagementsAsCustomer/myEngagementsAsProfessional (WHERE
   // <profile>Id = ? ORDER BY createdAt DESC). serviceRequestId/quoteId
@@ -777,6 +898,16 @@ enum Permission {
   // grid never grew a "create on behalf of" mutation the way
   // createServiceRequestForCustomer did.
   QUOTES_READ
+  // Quote Negotiation admin audit surface follow-up (GOS-53, 2026-08-21) —
+  // gates the read-only `adminQuoteNegotiationThread` query
+  // (`src/platform-admin/quote-negotiation/`). A genuinely NEW, dedicated
+  // permission — NOT a reuse of `SERVICE_REQUESTS_READ` (the first-round
+  // ticket-literal choice) nor `QUOTES_READ` (the sibling admin Quote-read
+  // surface's own permission): auditing a Quote's negotiation thread,
+  // including its unredacted price proposals, is its own distinct
+  // capability, deserving its own grant/withhold decision independent of
+  // either.
+  QUOTE_NEGOTIATION_READ
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see

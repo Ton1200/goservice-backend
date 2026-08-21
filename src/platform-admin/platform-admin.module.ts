@@ -14,6 +14,8 @@ import '../service-requests/models/service-request-status.enum'; // GraphQL enum
 import '../service-requests/models/service-request-urgency.enum'; // GraphQL enum registration side effect
 import '../quotes/models/quote-status.enum'; // GraphQL enum registration side effect
 import '../engagements/models/engagement-status.enum'; // GraphQL enum registration side effect
+import '../quote-negotiation/models/quote-negotiation-party.enum'; // GraphQL enum registration side effect
+import '../quote-negotiation/models/quote-price-proposal-status.enum'; // GraphQL enum registration side effect
 import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
@@ -57,6 +59,10 @@ import { QuotesRepository } from '../quotes/quotes.repository';
 import { AdminQuotesResolver } from './quotes/admin-quotes.resolver';
 import { ListAdminQuotesService } from './quotes/services/list-admin-quotes.service';
 import { GetAdminQuoteDetailService } from './quotes/services/get-admin-quote-detail.service';
+import { QuoteNegotiationRepository } from '../quote-negotiation/quote-negotiation.repository';
+import { QuoteNegotiationModuleEnabledGuard } from '../quote-negotiation/guards/quote-negotiation-module-enabled.guard';
+import { AdminQuoteNegotiationResolver } from './quote-negotiation/admin-quote-negotiation.resolver';
+import { GetAdminQuoteNegotiationThreadService } from './quote-negotiation/services/get-admin-quote-negotiation-thread.service';
 import { AdminLockoutGuardService } from './admin-rbac/services/admin-lockout-guard.service';
 import { AdminRolesResolver } from './admin-roles/admin-roles.resolver';
 import { ListAdminRolesService } from './admin-roles/services/list-admin-roles.service';
@@ -349,6 +355,32 @@ import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapter
     AdminQuotesResolver,
     ListAdminQuotesService,
     GetAdminQuoteDetailService,
+
+    // quote-negotiation (GOS-53, 2026-08-21; permission/flag follow-up same
+    // day) — `adminQuoteNegotiationThread`, READ-ONLY, gated by its own
+    // dedicated `Permission.QUOTE_NEGOTIATION_READ` (REPLACES the first
+    // round's `Permission.SERVICE_REQUESTS_READ` — see
+    // `AdminQuoteNegotiationResolver`'s own header comment) AND by
+    // `quote-negotiation.general.enabled` via `QuoteNegotiationModuleEnabledGuard`
+    // (REVERSES the first round's "not gated by the flag" choice, same
+    // guard INSTANCE the consumer `QuoteNegotiationResolver` already
+    // applies — its constructor dependency, `PlatformSettingPort`, resolves
+    // fine here since `PlatformSettingsModule` is already imported above
+    // for other purposes, so no new module import was needed).
+    // `QuoteNegotiationRepository` is reused CONCRETE CLASS from
+    // `src/quote-negotiation/` — same "never import the resolver-bearing
+    // module" pattern as `QuotesRepository` above;
+    // `QuoteNegotiationModule` itself is never imported here (it has its
+    // own `QuoteNegotiationResolver`, the same leak class documented
+    // throughout this file). Reuses `QuoteNegotiationMessageModel`/
+    // `QuotePriceProposalModel` directly as this query's return type — see
+    // `GetAdminQuoteNegotiationThreadService`'s own header comment for why
+    // no separate `AdminQuoteNegotiationMessage`-named duplicate type was
+    // created.
+    QuoteNegotiationRepository,
+    QuoteNegotiationModuleEnabledGuard,
+    AdminQuoteNegotiationResolver,
+    GetAdminQuoteNegotiationThreadService,
 
     // admin-rbac / admin-roles / admin-users / admin-invites (Administrators
     // tab follow-up, 2026-08-20) — role/permission management + admin-user

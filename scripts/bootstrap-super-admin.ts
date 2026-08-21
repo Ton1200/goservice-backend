@@ -92,6 +92,11 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // Quotes admin grid follow-up (2026-08-19) — quotes/quoteDetail,
       // read-only admin grid. SUPER_ADMIN gets every permission.
       Permission.QUOTES_READ,
+      // Quote Negotiation admin audit surface follow-up (GOS-53, 2026-08-21)
+      // — adminQuoteNegotiationThread, its own dedicated permission (NOT
+      // SERVICE_REQUESTS_READ/QUOTES_READ — see the Permission enum's own
+      // comment in schema.prisma). SUPER_ADMIN gets every permission.
+      Permission.QUOTE_NEGOTIATION_READ,
     ],
   },
   {
@@ -126,6 +131,11 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // CONFIG_MANAGER-and-above can view Quotes, mirroring
       // SERVICE_REQUESTS_READ/CATEGORIES_READ's own presence on this role.
       Permission.QUOTES_READ,
+      // Quote Negotiation admin audit surface follow-up (GOS-53, 2026-08-21)
+      // — explicit human decision: CONFIG_MANAGER-and-above can audit a
+      // Quote's negotiation thread, mirroring QUOTES_READ's own presence on
+      // this role.
+      Permission.QUOTE_NEGOTIATION_READ,
     ],
   },
   {
@@ -147,6 +157,10 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // semantics; this role can view Quotes but there is no write
       // capability to withhold anyway (no QUOTES_WRITE exists).
       Permission.QUOTES_READ,
+      // Quote Negotiation admin audit surface follow-up (GOS-53, 2026-08-21)
+      // — same read-only semantics; mirrors QUOTES_READ's own presence on
+      // this role.
+      Permission.QUOTE_NEGOTIATION_READ,
     ],
   },
 ];

@@ -31,6 +31,20 @@ describe('GetAdminServiceRequestDetailService', () => {
     attachments: [
       { id: 'attachment-1', url: 'http://x/a', createdAt: new Date() },
     ],
+    quotes: [
+      {
+        id: 'quote-1',
+        price: 15000,
+        negotiatedPrice: 14000,
+        status: 'SENT',
+        createdAt: new Date(),
+        professionalProfile: {
+          displayName: 'Carlos Gomez',
+          user: { email: 'carlos@example.com' },
+        },
+        _count: { negotiationMessages: 3 },
+      },
+    ],
   };
 
   function makeService(overrides?: { row?: typeof row | null }) {
@@ -57,6 +71,37 @@ describe('GetAdminServiceRequestDetailService', () => {
       id: 'service-request-1',
       attachments: [expect.objectContaining({ id: 'attachment-1' })],
       customer: { userId: 'user-1', email: 'juan@example.com' },
+      quotes: [
+        {
+          id: 'quote-1',
+          price: 15000,
+          negotiatedPrice: 14000,
+          finalPrice: 14000,
+          status: 'SENT',
+          negotiationMessageCount: 3,
+          professional: {
+            displayName: 'Carlos Gomez',
+            email: 'carlos@example.com',
+          },
+        },
+      ],
+    });
+  });
+
+  it("a nested quote's finalPrice falls back to price when there is no negotiatedPrice", async () => {
+    const { service } = makeService({
+      row: {
+        ...row,
+        quotes: [{ ...row.quotes[0], negotiatedPrice: null }],
+      },
+    });
+
+    const detail = await service.getServiceRequestDetail('service-request-1');
+
+    expect(detail.quotes[0]).toMatchObject({
+      price: 15000,
+      negotiatedPrice: null,
+      finalPrice: 15000,
     });
   });
 
