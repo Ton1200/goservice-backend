@@ -103,6 +103,19 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // the Permission enum's own comment in schema.prisma). SUPER_ADMIN
       // gets every permission.
       Permission.ENGAGEMENT_CHAT_READ,
+      // Appointment (Coordinación de Visita) admin audit surface follow-up
+      // (GOS-59, 2026-08-24) — adminAppointmentsByEngagement, its own
+      // dedicated permission (NOT SERVICE_REQUESTS_READ/
+      // QUOTE_NEGOTIATION_READ/ENGAGEMENT_CHAT_READ — see the Permission
+      // enum's own comment in schema.prisma). SUPER_ADMIN gets every
+      // permission. FLAGGED FOR HUMAN REVIEW — same judgment-call posture
+      // already documented for ENGAGEMENT_CHAT_READ's own addition here:
+      // per this file's own "PERMISSIONS GUARANTEE — NARROWED" header
+      // comment, this bootstrap script only grants a brand-new Permission
+      // value automatically on a FRESH environment's first run; on an
+      // ALREADY-BOOTSTRAPPED environment it must be granted by hand through
+      // the Roles UI (`updateAdminRolePermissions`).
+      Permission.APPOINTMENTS_READ,
     ],
   },
   {

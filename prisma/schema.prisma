@@ -284,6 +284,9 @@ model CustomerProfile {
   // CustomerProfile may send Engagement Chat messages as one of the two
   // parties on an Engagement.
   sentEngagementChatMessages  EngagementChatMessage[]
+  // GOS-59 — purely additive back-reference, no new column here. A
+  // CustomerProfile may be the proposing party on an Appointment.
+  proposedAppointments        Appointment[]
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -336,6 +339,16 @@ model ProfessionalProfile {
   // ProfessionalProfile may send Engagement Chat messages as one of the two
   // parties on an Engagement.
   sentEngagementChatMessages  EngagementChatMessage[]
+  // GOS-59 — purely additive back-references, no new column here. Two
+  // distinct relations into Appointment (same "two distinct FKs into
+  // ProfessionalProfile require named relations" precedent as
+  // QuotePriceProposal.proposedByProfessionalProfile/
+  // resolvedByProfessionalProfile above): every Appointment on an
+  // Engagement this ProfessionalProfile is the party of (denormalized,
+  // regardless of who proposed it), and, separately, every Appointment this
+  // ProfessionalProfile itself proposed.
+  appointments                 Appointment[]                @relation("AppointmentProfessional")
+  proposedAppointments         Appointment[]                @relation("AppointmentProposedByProfessional")
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
   // User" constraint. Indexes anticipate Discovery (country+city) and a
@@ -694,6 +707,11 @@ model Engagement {
   // already establish above.
   chatConversation      EngagementChatConversation?
 
+  // GOS-59 — every Appointment ever proposed/confirmed/cancelled on this
+  // Engagement (deliberately NOT a single 1:1 field — see
+  // Appointment.engagementId's own comment for why it's not `@unique`).
+  appointments          Appointment[]
+
   // Supports myEngagementsAsCustomer/myEngagementsAsProfessional (WHERE
   // <profile>Id = ? ORDER BY createdAt DESC). serviceRequestId/quoteId
   // above already get a unique index for free from `@unique`.
@@ -776,6 +794,86 @@ model EngagementChatMessage {
   // same "index the one real query pattern" precedent as
   // QuoteNegotiationMessage's own @@index([quoteId, createdAt]).
   @@index([conversationId, createdAt])
+}
+
+// GOS-59 — Appointment (Coordinación de Visita): once an Engagement exists,
+// the Customer and Professional formally agree on a date/time for the work.
+// Who proposed/confirmed it, relative to a specific Appointment — same
+// "role acted in on this entity, not the User row itself" reasoning as
+// `QuoteNegotiationParty`/`EngagementChatParty`'s own header comments (a
+// User can hold both a `CustomerProfile` and a `ProfessionalProfile` at
+// once).
+enum AppointmentParty {
+  CUSTOMER
+  PROFESSIONAL
+}
+
+// PENDING (proposed, awaiting the other party) -> CONFIRMED (accepted by the
+// non-proposing party) or CANCELLED (either party, from PENDING or
+// CONFIRMED). CANCELLED is terminal — never reverts. An Engagement may
+// accumulate several Appointment rows over its life (e.g.
+// cancel-then-repropose) — see Appointment.engagementId's own comment for
+// why that column is deliberately NOT `@unique`.
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+// GOS-59 — one proposed/confirmed visit slot on an already-`ACCEPTED`
+// Engagement. `engagementId` is deliberately NOT `@unique` — an Engagement
+// may accumulate several Appointment rows over its life (cancel then
+// repropose a new slot), unlike `EngagementChatConversation.engagementId`
+// (1:1 by design).
+//
+// `proposedByCustomerProfileId`/`proposedByProfessionalProfileId` are the
+// same nullable pair (exactly one non-null, matching `proposedByRole`) as
+// `QuoteNegotiationMessage.authorCustomerProfileId`/
+// `authorProfessionalProfileId` — enforced by a raw-SQL CHECK constraint in
+// the migration (`appointment_proposed_by_shape_check`), same "structural
+// guardrail, not just application-code discipline" precedent.
+//
+// Concurrency: a `CONFIRMED` Appointment must truly block the Professional's
+// calendar. The guarded-CAS idiom this codebase already uses elsewhere
+// (`AppointmentsRepository.confirmIfPending`) only protects ONE row's own
+// PENDING->CONFIRMED transition — it cannot prevent TWO DIFFERENT
+// Appointment rows being confirmed concurrently for overlapping times on the
+// same professional. The real guarantee is the raw-SQL `EXCLUDE USING gist`
+// constraint added in the migration
+// (`appointment_no_overlapping_confirmed_per_professional`) — the first
+// EXCLUDE-constraint precedent in this codebase, scoped to `CONFIRMED` rows
+// only (two `PENDING` proposals for the same professional may overlap; only
+// a `CONFIRMED` slot is a real commitment).
+model Appointment {
+  id           String     @id @default(uuid()) @db.Uuid
+  engagementId String     @db.Uuid
+  engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  // Denormalized from engagement.professionalProfileId at create time —
+  // same rationale as Engagement's own denormalized profile ids: lets the
+  // raw-SQL EXCLUDE constraint filter per-professional without a join.
+  professionalProfileId String              @db.Uuid
+  professionalProfile   ProfessionalProfile @relation("AppointmentProfessional", fields: [professionalProfileId], references: [id], onDelete: Cascade)
+
+  startsAt DateTime
+  endsAt   DateTime
+  status   AppointmentStatus @default(PENDING)
+
+  proposedByRole                  AppointmentParty
+  proposedByCustomerProfileId     String?              @db.Uuid
+  proposedByCustomerProfile       CustomerProfile?     @relation(fields: [proposedByCustomerProfileId], references: [id], onDelete: Cascade)
+  proposedByProfessionalProfileId String?              @db.Uuid
+  proposedByProfessionalProfile   ProfessionalProfile? @relation("AppointmentProposedByProfessional", fields: [proposedByProfessionalProfileId], references: [id], onDelete: Cascade)
+
+  cancelReason String?
+  cancelledAt  DateTime?
+  confirmedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([engagementId, createdAt])
+  @@index([professionalProfileId, status])
 }
 
 model ServiceRequestAttachment {
@@ -1012,6 +1110,14 @@ enum Permission {
   // same "its own dedicated permission" reasoning QUOTE_NEGOTIATION_READ's
   // own comment above already establishes for its sibling surface.
   ENGAGEMENT_CHAT_READ
+  // Appointment (Coordinación de Visita) admin audit surface (GOS-59,
+  // 2026-08-24) — gates the read-only `adminAppointmentsByEngagement` query
+  // (`src/platform-admin/appointments/`). A genuinely NEW, dedicated
+  // permission — same "its own dedicated permission, not reused from a
+  // sibling read permission" reasoning already documented for
+  // `QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ` above: auditing
+  // Appointment scheduling data is its own distinct capability.
+  APPOINTMENTS_READ
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see
