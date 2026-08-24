@@ -286,6 +286,43 @@ const PLATFORM_SETTINGS: {
     value: 'false',
     isPublic: false,
   },
+  // GOS-59 follow-up — Appointment ("Coordinación de Visita") admin
+  // enable/disable toggle. Placed under the same `customer.*` group AS A
+  // SIBLING of `customer.chat.enabled` above — NOT nested under it (`chat`
+  // and `appointments` are two independent capability sub-groups, both
+  // dot-namespaced under `customer.*`) — same convention, so this key
+  // automatically renders under Customer > "Appointments" in the admin
+  // panel's settings tree with zero frontend code changes
+  // (`admin-panel/js/settings.js`'s `buildSettingsTree`/`humanizeSegment`
+  // derive the tree purely from a key's dot-path — no per-key
+  // special-casing exists or is needed). Read via
+  // `PlatformSettingPort.isEnabled(key)` by the new
+  // `AppointmentsModuleEnabledGuard` (`src/appointments/guards/
+  // appointments-module-enabled.guard.ts`) — never a hardcoded TS constant,
+  // same mechanism as `customer.chat.enabled`/`quote-negotiation.general.
+  // enabled` above.
+  //
+  // `value: 'true'` (default ON) — UNLIKE `customer.chat.enabled`'s default
+  // OFF: Appointment is an already-shipped, working capability (GOS-59) as
+  // of this follow-up, not a new one being introduced gated-off; the point
+  // of this switch is letting an admin turn it OFF during an incident, not
+  // requiring an opt-in before it works at all (same "already-working
+  // feature" default-ON reasoning as `quote-negotiation.general.enabled`
+  // and the social-login flags above — `PlatformSettingPort.isEnabled`'s own
+  // doc comment on fail-open-when-missing documents the same trade-off for
+  // an unseeded/typo'd key).
+  // `isPublic: false`: this is a backend/admin-only gate — `goservice-mobile`
+  // doesn't need to know ahead of time whether Appointment is enabled via
+  // `platformConfig`; it just calls `proposeAppointment`/etc. and handles
+  // `APPOINTMENTS_MODULE_DISABLED` like any other domain error, same
+  // reasoning as the Engagement Chat/Quote Negotiation flags.
+  {
+    key: 'customer.appointments.enabled',
+    description:
+      'Global kill switch for the Appointment capability (proposeAppointment/acceptAppointment/cancelAppointment/appointmentsByEngagement).',
+    value: 'true',
+    isPublic: false,
+  },
 ];
 
 async function main(): Promise<void> {

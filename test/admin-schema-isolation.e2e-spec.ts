@@ -308,6 +308,9 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         'adminQuoteNegotiationThread',
         // Chat de Coordinación admin audit surface (GOS-46, 2026-08-21).
         'adminEngagementChatThread',
+        // Appointment (Coordinación de Visita) admin audit surface (GOS-59,
+        // 2026-08-24).
+        'adminAppointmentsByEngagement',
       ].sort(),
     );
     expect(

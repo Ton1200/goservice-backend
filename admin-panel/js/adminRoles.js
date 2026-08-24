@@ -106,6 +106,17 @@ const PERMISSION_GROUPS = [
   // `Quote Negotiation` above: `ENGAGEMENT_CHAT_READ` existed on the
   // `Permission` enum with no way to grant/revoke it from this panel.
   { label: 'Engagement Chat', read: 'ENGAGEMENT_CHAT_READ' },
+  // GOS-59 (2026-08-24) — same "row missing from the matrix" gap as
+  // `Quote Negotiation`/`Engagement Chat` above: `APPOINTMENTS_READ` existed
+  // on the `Permission` enum (gates `adminAppointmentsByEngagement`) with no
+  // way to grant/revoke it from this panel. Human-reported: a real
+  // already-bootstrapped SUPER_ADMIN saw "You don't have permission to view
+  // this engagement's appointments." with no checkbox anywhere to fix it —
+  // `bootstrap-super-admin.ts`'s `seedRoles()` deliberately never resets an
+  // EXISTING role's permissions (see that script's own header comment), so
+  // this panel's Roles screen is the only recovery path on a machine that
+  // was already bootstrapped before this permission existed.
+  { label: 'Appointments', read: 'APPOINTMENTS_READ' },
 ];
 
 const ACTION_COLUMNS = [

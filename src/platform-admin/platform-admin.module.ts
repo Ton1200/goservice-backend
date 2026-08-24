@@ -17,6 +17,8 @@ import '../engagements/models/engagement-status.enum'; // GraphQL enum registrat
 import '../quote-negotiation/models/quote-negotiation-party.enum'; // GraphQL enum registration side effect
 import '../quote-negotiation/models/quote-price-proposal-status.enum'; // GraphQL enum registration side effect
 import '../engagement-chat/models/engagement-chat-party.enum'; // GraphQL enum registration side effect
+import '../appointments/models/appointment-status.enum'; // GraphQL enum registration side effect
+import '../appointments/models/appointment-party.enum'; // GraphQL enum registration side effect
 import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
@@ -68,6 +70,9 @@ import { EngagementsRepository } from '../engagements/engagements.repository';
 import { EngagementChatRepository } from '../engagement-chat/engagement-chat.repository';
 import { AdminEngagementChatResolver } from './engagement-chat/admin-engagement-chat.resolver';
 import { GetAdminEngagementChatThreadService } from './engagement-chat/services/get-admin-engagement-chat-thread.service';
+import { AppointmentsRepository } from '../appointments/appointments.repository';
+import { AdminAppointmentsResolver } from './appointments/admin-appointments.resolver';
+import { GetAdminAppointmentsByEngagementService } from './appointments/services/get-admin-appointments-by-engagement.service';
 import { AdminLockoutGuardService } from './admin-rbac/services/admin-lockout-guard.service';
 import { AdminRolesResolver } from './admin-roles/admin-roles.resolver';
 import { ListAdminRolesService } from './admin-roles/services/list-admin-roles.service';
@@ -405,6 +410,28 @@ import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapter
     EngagementChatRepository,
     AdminEngagementChatResolver,
     GetAdminEngagementChatThreadService,
+
+    // Appointment (Coordinación de Visita) admin audit surface (GOS-59,
+    // 2026-08-24) — `adminAppointmentsByEngagement`, READ-ONLY, gated by
+    // its own dedicated `Permission.APPOINTMENTS_READ` (deliberately NOT
+    // `SERVICE_REQUESTS_READ`/`QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ`
+    // — see `AdminAppointmentsResolver`'s own header comment). No
+    // module-enabled kill switch — Appointment has no admin-configurable
+    // feature flag. `EngagementsRepository` is already a provider above
+    // (reused, not duplicated). `AppointmentsRepository` is reused CONCRETE
+    // class from `src/appointments/` — same "never import the
+    // resolver-bearing module" pattern as `EngagementChatRepository` above;
+    // `AppointmentsModule` itself is never imported here (it has its own
+    // `AppointmentsResolver`, the same leak class documented throughout
+    // this file). Reuses `AppointmentModel` directly as this query's return
+    // type — same "orphaned type made reachable" reasoning as the
+    // engagement-chat admin surface above. Also reuses the SAME
+    // `adminEngagementNotFound()` error `AdminEngagementChatResolver`'s own
+    // service already defines (see
+    // `GetAdminAppointmentsByEngagementService`'s own header comment).
+    AppointmentsRepository,
+    AdminAppointmentsResolver,
+    GetAdminAppointmentsByEngagementService,
 
     // admin-rbac / admin-roles / admin-users / admin-invites (Administrators
     // tab follow-up, 2026-08-20) — role/permission management + admin-user

@@ -130,6 +130,33 @@ const ADMIN_ENGAGEMENT_CHAT_THREAD_QUERY = `
   }
 `;
 
+// "Appointments" tab (GOS-59 follow-up, 2026-08-24) — fetched lazily, only
+// the first time that tab is actually activated, same convention as
+// `ADMIN_ENGAGEMENT_CHAT_THREAD_QUERY` above. Only meaningful once
+// `detail.engagement` exists (see `openQuoteDetailModal`'s tab-building
+// logic) — an Appointment only ever exists once a Quote's Engagement
+// exists. Gated server-side by `Permission.APPOINTMENTS_READ` only —
+// deliberately NOT gated by `customer.appointments.enabled`
+// (`AppointmentsModuleEnabledGuard`), same posture `adminEngagementChatThread`
+// already established (see `AdminAppointmentsResolver`'s own header
+// comment), so `APPOINTMENTS_MODULE_DISABLED` is never expected here and is
+// not special-cased in `loadAppointments` below.
+const ADMIN_APPOINTMENTS_BY_ENGAGEMENT_QUERY = `
+  query AdminAppointmentsByEngagement($engagementId: ID!) {
+    adminAppointmentsByEngagement(engagementId: $engagementId) {
+      id
+      status
+      startsAt
+      endsAt
+      proposedByRole
+      cancelReason
+      cancelledAt
+      confirmedAt
+      createdAt
+    }
+  }
+`;
+
 // Same phase-1 scope boundary as `js/serviceRequests.js`'s own FETCH_LIMIT —
 // one bounded page (the server-enforced max, see `ListAdminQuotesService`),
 // Tabulator's own header filters do client-side filtering/sorting on it.
@@ -477,6 +504,15 @@ const PRICE_PROPOSAL_STATUS_VARIANTS = {
   SUPERSEDED: 'neutral',
 };
 
+/** `Appointment.status` -> badge-variant lookup (GOS-59 follow-up,
+ * 2026-08-24), same "hardcoded, mirrors the Prisma enum" trade-off as
+ * `QUOTE_STATUS_VARIANTS`/`PRICE_PROPOSAL_STATUS_VARIANTS` above. */
+const APPOINTMENT_STATUS_VARIANTS = {
+  PENDING: 'warning',
+  CONFIRMED: 'success',
+  CANCELLED: 'error',
+};
+
 /** CUSTOMER/PROFESSIONAL author-role badge — not a status per se, but reuses
  * the same badge component for consistent visual weight in the chat-style
  * negotiation thread; CUSTOMER info-toned, PROFESSIONAL success-toned, a
@@ -769,6 +805,134 @@ async function loadEngagementChatThread(engagementId, container) {
   }
 }
 
+/** One `Appointment` in the "Appointments" tab — a status badge, the
+ * proposedByRole badge, the formatted `startsAt`–`endsAt` range, and — only
+ * when present — `cancelReason`/`cancelledAt`/`confirmedAt`. Reuses the
+ * existing `gs-negotiation-message*` CSS classes (see
+ * `css/admin-theme.css`) rather than adding a sibling set, same "already
+ * generic chat/card-style styling" reasoning `buildEngagementChatMessage`
+ * above already established — this isn't chat-shaped content, but the
+ * bordered-card/header/body layout fits just as well and nothing here is
+ * negotiation- or chat-specific. */
+function buildAppointmentCard(appointment) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'gs-negotiation-message';
+
+  const header = document.createElement('div');
+  header.className = 'gs-negotiation-message-header';
+  header.appendChild(
+    buildStatusBadge(
+      appointment.status,
+      APPOINTMENT_STATUS_VARIANTS[appointment.status],
+    ),
+  );
+  header.appendChild(
+    buildStatusBadge(
+      appointment.proposedByRole,
+      authorRoleVariant(appointment.proposedByRole),
+    ),
+  );
+  const timestamp = document.createElement('span');
+  timestamp.className = 'gs-negotiation-message-timestamp text-secondary';
+  timestamp.textContent = formatDateTime(appointment.createdAt);
+  header.appendChild(timestamp);
+  wrapper.appendChild(header);
+
+  const body = document.createElement('p');
+  body.className = 'gs-negotiation-message-body mb-0';
+  body.textContent = `${formatDateTime(appointment.startsAt)} – ${formatDateTime(appointment.endsAt)}`;
+  wrapper.appendChild(body);
+
+  // `cancelReason`/`cancelledAt`/`confirmedAt` — only rendered when present
+  // (a PENDING Appointment has none of these; a CONFIRMED one has only
+  // `confirmedAt`; a CANCELLED one has `cancelReason`/`cancelledAt`, and
+  // may or may not also have `confirmedAt` depending on whether it was
+  // cancelled from PENDING or CONFIRMED).
+  if (appointment.confirmedAt || appointment.cancelledAt) {
+    const details = document.createElement('div');
+    details.className = 'gs-detail-specialization gs-negotiation-proposal';
+    const fields = [];
+    if (appointment.confirmedAt) {
+      fields.push(buildField('Confirmed at', formatDateTime(appointment.confirmedAt)));
+    }
+    if (appointment.cancelledAt) {
+      fields.push(buildField('Cancelled at', formatDateTime(appointment.cancelledAt)));
+      fields.push(buildField('Cancel reason', appointment.cancelReason));
+    }
+    details.append(...fields);
+    wrapper.appendChild(details);
+  }
+
+  return wrapper;
+}
+
+/**
+ * Fetches `adminAppointmentsByEngagement(engagementId)` and renders it into
+ * `container` — called lazily by the "Appointments" tab's `onActivate` (see
+ * `openQuoteDetailModal`), only once per modal open, only when that tab is
+ * actually clicked. Same "no cheap count field to skip an empty fetch"
+ * scope trim as `loadEngagementChatThread` above — always fetches on first
+ * activation and renders an empty-state paragraph if the returned array is
+ * empty. Handles the known error cases scoped to THIS tab (never closes the
+ * whole modal / shows the page-wide error banner): lacking
+ * `Permission.APPOINTMENTS_READ`, or the target Engagement no longer
+ * existing (`ADMIN_ENGAGEMENT_NOT_FOUND` — practically unreachable here,
+ * since `engagementId` comes straight from this same `quoteDetail`
+ * response, but handled explicitly rather than falling through to the
+ * generic message). `APPOINTMENTS_MODULE_DISABLED` is deliberately NOT
+ * special-cased — `adminAppointmentsByEngagement` is never gated by that
+ * guard (see `AdminAppointmentsResolver`'s own header comment), so this
+ * code is never expected to come back from this query.
+ */
+async function loadAppointments(engagementId, container) {
+  try {
+    const body = await graphqlRequest(ADMIN_APPOINTMENTS_BY_ENGAGEMENT_QUERY, {
+      engagementId,
+    });
+
+    if (body.errors && body.errors.length > 0) {
+      if (handleAdminUnauthenticated(body)) {
+        detailDialog.close();
+        return;
+      }
+      const code = body.errors[0]?.extensions?.code;
+      container.textContent = '';
+      const message = document.createElement('p');
+      message.className = 'text-secondary mb-0';
+      message.textContent =
+        code === 'ADMIN_FORBIDDEN'
+          ? "You don't have permission to view this engagement's appointments."
+          : code === 'ADMIN_ENGAGEMENT_NOT_FOUND'
+            ? 'This engagement no longer exists.'
+            : 'Could not load appointments. Please try again.';
+      container.appendChild(message);
+      return;
+    }
+
+    container.textContent = '';
+    const appointments = body.data.adminAppointmentsByEngagement;
+    if (appointments.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'text-secondary mb-0';
+      empty.textContent = 'No appointments yet.';
+      container.appendChild(empty);
+      return;
+    }
+    for (const appointment of appointments) {
+      container.appendChild(buildAppointmentCard(appointment));
+    }
+  } catch (error) {
+    container.textContent = '';
+    const message = document.createElement('p');
+    message.className = 'text-secondary mb-0';
+    message.textContent =
+      error instanceof GraphQLNetworkError
+        ? error.message
+        : 'Something went wrong. Please try again.';
+    container.appendChild(message);
+  }
+}
+
 async function openQuoteDetailModal(rowData) {
   detailContentEl.textContent = '';
   showDetailError('');
@@ -842,6 +1006,39 @@ async function openQuoteDetailModal(rowData) {
           }
           chatLoaded = true;
           void loadEngagementChatThread(detail.engagement.id, chatContainer);
+        },
+      });
+
+      // "Appointments" tab (GOS-59 follow-up, 2026-08-24) — same
+      // `detail.engagement` gate as the "Chat" tab above (no Engagement ->
+      // no Appointment possible either), same always-fetch-on-first-
+      // activation shape (no cheap count field on `quoteDetail` to skip an
+      // empty fetch, same deliberate scope trim `loadEngagementChatThread`'s
+      // own comment documents). Deliberately visible even when
+      // `customer.appointments.enabled` is toggled off — this tab calls the
+      // ungated `adminAppointmentsByEngagement` query (see
+      // `AdminAppointmentsResolver`'s own header comment,
+      // `src/platform-admin/appointments/admin-appointments.resolver.ts`),
+      // so a support admin seeing populated Appointment history here with
+      // the customer-facing capability toggled off is expected/documented
+      // behavior, not a bug.
+      const appointmentsContainer = document.createElement('div');
+      const appointmentsLoading = document.createElement('p');
+      appointmentsLoading.className = 'text-secondary mb-0';
+      appointmentsLoading.textContent = 'Loading…';
+      appointmentsContainer.appendChild(appointmentsLoading);
+      let appointmentsLoaded = false;
+
+      tabs.push({
+        id: 'appointments',
+        label: 'Appointments',
+        content: appointmentsContainer,
+        onActivate: () => {
+          if (appointmentsLoaded) {
+            return;
+          }
+          appointmentsLoaded = true;
+          void loadAppointments(detail.engagement.id, appointmentsContainer);
         },
       });
     }
