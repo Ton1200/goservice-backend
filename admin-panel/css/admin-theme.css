@@ -670,7 +670,15 @@ h6.gs-settings-group-heading {
    follow-up, 2026-08-21, js/quotes.js) — one chat-style block per
    `QuoteNegotiationMessage`, oldest first. Its linked `QuotePriceProposal`
    (if any) nests a `.gs-detail-specialization` card, same bordered-card
-   treatment `userAccounts.js`'s specializations list already uses. */
+   treatment `userAccounts.js`'s specializations list already uses.
+
+   REUSED as-is (no sibling `.gs-chat-message*` set added) by the same
+   modal's "Chat de Coordinación" tab (GOS-46 follow-up, 2026-08-21,
+   `buildEngagementChatMessage` in js/quotes.js) — these rules are already
+   generic chat-bubble styling (padding/border/header/timestamp/body) with
+   nothing negotiation-specific baked in; that tab simply never appends a
+   `.gs-negotiation-proposal` card, since `EngagementMessage` has no
+   price-proposal-equivalent field. */
 .gs-negotiation-message {
   padding: 0.75rem;
   border: 1px solid var(--gs-border-default);

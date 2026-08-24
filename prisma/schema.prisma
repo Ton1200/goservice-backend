@@ -280,6 +280,10 @@ model CustomerProfile {
   authoredNegotiationMessages QuoteNegotiationMessage[]
   proposedPriceProposals      QuotePriceProposal[]      @relation("QuotePriceProposalProposedByCustomer")
   resolvedPriceProposals      QuotePriceProposal[]      @relation("QuotePriceProposalResolvedByCustomer")
+  // GOS-46 — purely additive back-reference, no new column here. A
+  // CustomerProfile may send Engagement Chat messages as one of the two
+  // parties on an Engagement.
+  sentEngagementChatMessages  EngagementChatMessage[]
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -328,6 +332,10 @@ model ProfessionalProfile {
   authoredNegotiationMessages QuoteNegotiationMessage[]
   proposedPriceProposals      QuotePriceProposal[]         @relation("QuotePriceProposalProposedByProfessional")
   resolvedPriceProposals      QuotePriceProposal[]         @relation("QuotePriceProposalResolvedByProfessional")
+  // GOS-46 — purely additive back-reference, no new column here. A
+  // ProfessionalProfile may send Engagement Chat messages as one of the two
+  // parties on an Engagement.
+  sentEngagementChatMessages  EngagementChatMessage[]
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
   // User" constraint. Indexes anticipate Discovery (country+city) and a
@@ -678,11 +686,96 @@ model Engagement {
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
+  // GOS-46 — the one Engagement Chat coordination conversation for this
+  // Engagement, if any (created transparently the first time either party
+  // sends a message). Engagement does not hold the FK — see
+  // EngagementChatConversation.engagementId (`@unique`) below, same
+  // "child holds the FK" convention ServiceRequest.engagement/Quote.engagement
+  // already establish above.
+  chatConversation      EngagementChatConversation?
+
   // Supports myEngagementsAsCustomer/myEngagementsAsProfessional (WHERE
   // <profile>Id = ? ORDER BY createdAt DESC). serviceRequestId/quoteId
   // above already get a unique index for free from `@unique`.
   @@index([customerProfileId, createdAt])
   @@index([professionalProfileId, createdAt])
+}
+
+// GOS-46 — Chat de Coordinación: a free-text coordination thread hung off
+// an already-`ACCEPTED` Engagement (schedule/address/materials logistics),
+// purely additive — see this pair of models' own comments below for the
+// deliberate absence of any structured business field.
+//
+// **Refinement over `domain-model.md`'s original Conversation/Message
+// hypothesis**: that section originally sketched Conversation as hanging
+// off `ServiceRequest`. Here it hangs off `Engagement` instead — a
+// deliberate, documented refinement (not a silent contradiction): free-form
+// coordination chat only makes sense once both parties are already
+// committed via an accepted Quote, matching this ticket's own business goal
+// ("Cliente y Profesional de un Engagement ya aceptado"). See
+// domain-model.md's own updated section for the full writeup.
+enum EngagementChatParty {
+  CUSTOMER
+  PROFESSIONAL
+}
+
+// GOS-46 — one per Engagement, created transparently (idempotent upsert
+// keyed on the `engagementId @unique` column below) the first time either
+// party sends a message via `sendEngagementMessage` — no separate "create
+// conversation" mutation exists, or ever will. Mirrors the "idempotent
+// upsert keyed on a single unique column" pattern
+// `ProfilesRepository.upsertCustomerProfile`/`upsertProfessionalProfile`
+// already establish, rather than a hand-rolled unique-constraint-plus-
+// catch-and-refetch race handler — Postgres's own `INSERT ... ON CONFLICT`
+// (what Prisma's `upsert` compiles to for a single unique key) already
+// makes the create-if-missing race atomic and safe.
+model EngagementChatConversation {
+  id           String     @id @default(uuid()) @db.Uuid
+  engagementId String     @unique @db.Uuid
+  // Cascade — a coordination conversation can never outlive its Engagement
+  // (same "must never block a hard delete" rule every other Engagement-
+  // owned/adjacent relation in this schema already follows).
+  engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  messages EngagementChatMessage[]
+}
+
+// GOS-46 — one free-text coordination message. `senderCustomerProfileId`/
+// `senderProfessionalProfileId` is the same nullable pair (exactly one
+// non-null, matching `senderRole`) as `QuoteNegotiationMessage`'s own
+// `authorCustomerProfileId`/`authorProfessionalProfileId`, enforced by the
+// same kind of raw-SQL CHECK constraint in the migration
+// (`engagement_chat_message_sender_shape_check`) — a structural guardrail,
+// not just application-code discipline.
+//
+// Deliberately carries NO structured business field — no price, no status,
+// no reference back into `Quote`/`Engagement` state. `content` is the ONLY
+// payload field. This is a deliberate divergence from
+// `QuoteNegotiationMessage` (which optionally carries a `priceProposal`):
+// Engagement Chat is coordination-only and must never become a side channel
+// for renegotiating price or engagement state.
+model EngagementChatMessage {
+  id             String                     @id @default(uuid()) @db.Uuid
+  conversationId String                     @db.Uuid
+  // Cascade — same rule as EngagementChatConversation.engagement above.
+  conversation   EngagementChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderRole     EngagementChatParty
+
+  senderCustomerProfileId     String?              @db.Uuid
+  senderCustomerProfile       CustomerProfile?     @relation(fields: [senderCustomerProfileId], references: [id], onDelete: Cascade)
+  senderProfessionalProfileId String?              @db.Uuid
+  senderProfessionalProfile   ProfessionalProfile? @relation(fields: [senderProfessionalProfileId], references: [id], onDelete: Cascade)
+
+  content   String
+  createdAt DateTime @default(now())
+
+  // Supports engagementMessages (WHERE conversationId = ? ORDER BY
+  // createdAt ASC) — the one lookup this whole capability's read path does,
+  // same "index the one real query pattern" precedent as
+  // QuoteNegotiationMessage's own @@index([quoteId, createdAt]).
+  @@index([conversationId, createdAt])
 }
 
 model ServiceRequestAttachment {
@@ -908,6 +1001,17 @@ enum Permission {
   // capability, deserving its own grant/withhold decision independent of
   // either.
   QUOTE_NEGOTIATION_READ
+  // Chat de Coordinación admin audit surface (GOS-46, 2026-08-21) — gates
+  // the read-only `adminEngagementChatThread` query
+  // (`src/platform-admin/engagement-chat/`). A genuinely NEW, dedicated
+  // permission — deliberately NOT `SERVICE_REQUESTS_READ` (this ticket's own
+  // instructions explicitly called out that reuse as the wrong precedent)
+  // nor `QUOTE_NEGOTIATION_READ` (the sibling admin negotiation-thread
+  // read surface's own permission): reading a private Engagement
+  // coordination conversation is a distinct, more sensitive capability —
+  // same "its own dedicated permission" reasoning QUOTE_NEGOTIATION_READ's
+  // own comment above already establishes for its sibling surface.
+  ENGAGEMENT_CHAT_READ
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see

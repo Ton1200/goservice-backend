@@ -97,6 +97,12 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // SERVICE_REQUESTS_READ/QUOTES_READ — see the Permission enum's own
       // comment in schema.prisma). SUPER_ADMIN gets every permission.
       Permission.QUOTE_NEGOTIATION_READ,
+      // Chat de Coordinación admin audit surface follow-up (GOS-46,
+      // 2026-08-21) — adminEngagementChatThread, its own dedicated
+      // permission (NOT SERVICE_REQUESTS_READ/QUOTE_NEGOTIATION_READ — see
+      // the Permission enum's own comment in schema.prisma). SUPER_ADMIN
+      // gets every permission.
+      Permission.ENGAGEMENT_CHAT_READ,
     ],
   },
   {

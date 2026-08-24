@@ -16,6 +16,7 @@ import '../quotes/models/quote-status.enum'; // GraphQL enum registration side e
 import '../engagements/models/engagement-status.enum'; // GraphQL enum registration side effect
 import '../quote-negotiation/models/quote-negotiation-party.enum'; // GraphQL enum registration side effect
 import '../quote-negotiation/models/quote-price-proposal-status.enum'; // GraphQL enum registration side effect
+import '../engagement-chat/models/engagement-chat-party.enum'; // GraphQL enum registration side effect
 import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
@@ -63,6 +64,10 @@ import { QuoteNegotiationRepository } from '../quote-negotiation/quote-negotiati
 import { QuoteNegotiationModuleEnabledGuard } from '../quote-negotiation/guards/quote-negotiation-module-enabled.guard';
 import { AdminQuoteNegotiationResolver } from './quote-negotiation/admin-quote-negotiation.resolver';
 import { GetAdminQuoteNegotiationThreadService } from './quote-negotiation/services/get-admin-quote-negotiation-thread.service';
+import { EngagementsRepository } from '../engagements/engagements.repository';
+import { EngagementChatRepository } from '../engagement-chat/engagement-chat.repository';
+import { AdminEngagementChatResolver } from './engagement-chat/admin-engagement-chat.resolver';
+import { GetAdminEngagementChatThreadService } from './engagement-chat/services/get-admin-engagement-chat-thread.service';
 import { AdminLockoutGuardService } from './admin-rbac/services/admin-lockout-guard.service';
 import { AdminRolesResolver } from './admin-roles/admin-roles.resolver';
 import { ListAdminRolesService } from './admin-roles/services/list-admin-roles.service';
@@ -381,6 +386,25 @@ import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapter
     QuoteNegotiationModuleEnabledGuard,
     AdminQuoteNegotiationResolver,
     GetAdminQuoteNegotiationThreadService,
+
+    // engagement-chat (GOS-46, 2026-08-21) — `adminEngagementChatThread`,
+    // READ-ONLY, gated by its own dedicated `Permission.ENGAGEMENT_CHAT_READ`
+    // (deliberately NOT `SERVICE_REQUESTS_READ`/`QUOTE_NEGOTIATION_READ` —
+    // see `AdminEngagementChatResolver`'s own header comment). No
+    // module-enabled kill switch — Engagement Chat has no admin-configurable
+    // feature flag. `EngagementsRepository`/`EngagementChatRepository` are
+    // reused CONCRETE classes from `src/engagements/`/`src/engagement-chat/`
+    // — same "never import the resolver-bearing module" pattern as
+    // `QuoteNegotiationRepository` above; neither `EngagementsModule` nor
+    // `EngagementChatModule` themselves are ever imported here (each has its
+    // own consumer-facing resolver, the same leak class documented
+    // throughout this file). Reuses `EngagementMessageModel` directly as
+    // this query's return type — same "orphaned type made reachable"
+    // reasoning as the quote-negotiation admin surface above.
+    EngagementsRepository,
+    EngagementChatRepository,
+    AdminEngagementChatResolver,
+    GetAdminEngagementChatThreadService,
 
     // admin-rbac / admin-roles / admin-users / admin-invites (Administrators
     // tab follow-up, 2026-08-20) — role/permission management + admin-user

@@ -81,7 +81,7 @@ const QUOTE_DETAIL_QUERY = `
   }
 `;
 
-// "Negociación" tab — fetched lazily, only the first time that tab is
+// "Negotiation" tab — fetched lazily, only the first time that tab is
 // actually activated (see `renderDetailTabs`'s `onActivate` — most admins
 // never open this tab, so it's never pre-loaded alongside `QUOTE_DETAIL_QUERY`
 // above). Gated server-side by `Permission.QUOTE_NEGOTIATION_READ` PLUS
@@ -103,6 +103,29 @@ const QUOTE_NEGOTIATION_THREAD_QUERY = `
         resolvedAt
         createdAt
       }
+    }
+  }
+`;
+
+// "Chat" tab (GOS-46 follow-up, 2026-08-21) — fetched lazily, only the first
+// time that tab is actually activated, same convention as
+// `QUOTE_NEGOTIATION_THREAD_QUERY` above. Only meaningful once
+// `detail.engagement` exists (see `openQuoteDetailModal`'s tab-building
+// logic) — Engagement Chat only ever exists once a Quote's Engagement
+// exists. Gated server-side by `Permission.ENGAGEMENT_CHAT_READ` only —
+// unlike `adminQuoteNegotiationThread`, this query is deliberately NOT
+// gated by any module-enabled feature flag (see
+// `AdminEngagementChatResolver`'s own header comment), so
+// `ENGAGEMENT_CHAT_MODULE_DISABLED` is never expected here and is not
+// special-cased in `loadEngagementChatThread` below.
+const ADMIN_ENGAGEMENT_CHAT_THREAD_QUERY = `
+  query AdminEngagementChatThread($engagementId: ID!) {
+    adminEngagementChatThread(engagementId: $engagementId) {
+      id
+      conversationId
+      senderRole
+      content
+      createdAt
     }
   }
 `;
@@ -176,7 +199,7 @@ function priceFormatter(cell) {
 
 /** Grid-cell version of the "does this Quote have negotiation activity"
  * signal — same `negotiationMessageCount` field the detail popup's
- * "Negociación" tab uses to decide whether to fetch the thread at all (see
+ * "Negotiation" tab uses to decide whether to fetch the thread at all (see
  * `loadNegotiationThread`). Kept as a plain count, not a fetch — the grid
  * must stay one lightweight `quotes(limit, offset)` call, never N+1 into
  * `adminQuoteNegotiationThread` per row. */
@@ -462,7 +485,7 @@ function authorRoleVariant(role) {
   return role === 'CUSTOMER' ? 'info' : 'success';
 }
 
-/** "Detalle" tab — everything the (pre-redesign) single-pane popup already
+/** "Details" tab — everything the (pre-redesign) single-pane popup already
  * showed, statuses now rendered via `buildStatusBadge` instead of plain
  * text, plus the new `negotiatedPrice` field right under `price`. */
 function buildQuoteDetailTabContent(detail) {
@@ -567,7 +590,7 @@ function buildNegotiationMessage(message) {
 
 /**
  * Fetches `adminQuoteNegotiationThread(quoteId)` and renders it into
- * `container` — called lazily by the "Negociación" tab's `onActivate`
+ * `container` — called lazily by the "Negotiation" tab's `onActivate`
  * (see `openQuoteDetailModal`), only once per modal open, only when that
  * tab is actually clicked. Handles the two known error cases scoped to
  * THIS tab (never closes the whole modal / shows the page-wide error
@@ -591,9 +614,9 @@ async function loadNegotiationThread(quoteId, container) {
       message.className = 'text-secondary mb-0';
       message.textContent =
         code === 'QUOTE_NEGOTIATION_MODULE_DISABLED'
-          ? 'El módulo de negociación está deshabilitado.'
+          ? 'The negotiation module is disabled.'
           : code === 'ADMIN_FORBIDDEN'
-            ? 'No tenés permiso para ver la negociación de esta cotización.'
+            ? "You don't have permission to view this quote's negotiation."
             : 'Could not load the negotiation thread. Please try again.';
       container.appendChild(message);
       return;
@@ -615,7 +638,7 @@ async function loadNegotiationThread(quoteId, container) {
   }
 }
 
-/** "Negociación" tab — an immediate empty state when
+/** "Negotiation" tab — an immediate empty state when
  * `negotiationMessageCount === 0` (no fetch needed at all), otherwise a
  * "Loading…" placeholder that `loadNegotiationThread` replaces once the tab
  * is actually activated (see `onActivate` below). */
@@ -625,7 +648,7 @@ function buildNegotiationTabContent(detail) {
   if (detail.negotiationMessageCount === 0) {
     const empty = document.createElement('p');
     empty.className = 'text-secondary mb-0';
-    empty.textContent = 'Sin mensajes de negociación.';
+    empty.textContent = 'No negotiation messages.';
     container.appendChild(empty);
     return { container, needsFetch: false };
   }
@@ -635,6 +658,115 @@ function buildNegotiationTabContent(detail) {
   loading.textContent = 'Loading…';
   container.appendChild(loading);
   return { container, needsFetch: true };
+}
+
+/** CUSTOMER/PROFESSIONAL sender-role badge for one `EngagementMessage` —
+ * CUSTOMER info-toned, PROFESSIONAL success-toned, same fixed-color
+ * convention `authorRoleVariant` already establishes for the Negotiation
+ * tab's author-role badge. */
+function senderRoleVariant(role) {
+  return role === 'CUSTOMER' ? 'info' : 'success';
+}
+
+/** One `EngagementMessage` in the "Chat" tab — a sender-role badge, the
+ * message text, and a timestamp. Simpler than `buildNegotiationMessage`:
+ * `EngagementMessage` carries no `priceProposal`-equivalent field at all
+ * (this thread structurally cannot touch Quote/Engagement state), so there
+ * is no price-proposal card branch to render. Reuses the existing
+ * `gs-negotiation-message*` CSS classes directly (see
+ * `css/admin-theme.css`) rather than adding a sibling set — those classes
+ * are already generic chat-bubble styling (padding/border/header/timestamp/
+ * body), with no negotiation-specific rule baked in. */
+function buildEngagementChatMessage(message) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'gs-negotiation-message';
+
+  const header = document.createElement('div');
+  header.className = 'gs-negotiation-message-header';
+  header.appendChild(
+    buildStatusBadge(message.senderRole, senderRoleVariant(message.senderRole)),
+  );
+  const timestamp = document.createElement('span');
+  timestamp.className = 'gs-negotiation-message-timestamp text-secondary';
+  timestamp.textContent = formatDateTime(message.createdAt);
+  header.appendChild(timestamp);
+  wrapper.appendChild(header);
+
+  const body = document.createElement('p');
+  body.className = 'gs-negotiation-message-body mb-0';
+  body.textContent = message.content;
+  wrapper.appendChild(body);
+
+  return wrapper;
+}
+
+/**
+ * Fetches `adminEngagementChatThread(engagementId)` and renders it into
+ * `container` — called lazily by the "Chat" tab's `onActivate` (see
+ * `openQuoteDetailModal`), only once per modal open, only when that tab is
+ * actually clicked. There is no `negotiationMessageCount`-equivalent field
+ * to skip an empty-thread fetch cheaply (a deliberate scope trim — adding
+ * one just for this would mean a new field on `QUOTE_DETAIL_QUERY`/
+ * `AdminQuotesResolver` for a single UI convenience), so this always
+ * fetches on first activation and renders an empty-state paragraph if the
+ * returned array is empty. Handles the known error cases scoped to THIS tab
+ * (never closes the whole modal / shows the page-wide error banner):
+ * lacking `Permission.ENGAGEMENT_CHAT_READ`, or the target Engagement no
+ * longer existing (`ADMIN_ENGAGEMENT_NOT_FOUND` — practically unreachable
+ * here, since `engagementId` comes straight from this same `quoteDetail`
+ * response, but handled explicitly rather than falling through to the
+ * generic message). `ENGAGEMENT_CHAT_MODULE_DISABLED` is deliberately NOT
+ * special-cased — `adminEngagementChatThread` is never gated by that guard
+ * (see `AdminEngagementChatResolver`'s own header comment), so this code is
+ * never expected to come back from this query.
+ */
+async function loadEngagementChatThread(engagementId, container) {
+  try {
+    const body = await graphqlRequest(ADMIN_ENGAGEMENT_CHAT_THREAD_QUERY, {
+      engagementId,
+    });
+
+    if (body.errors && body.errors.length > 0) {
+      if (handleAdminUnauthenticated(body)) {
+        detailDialog.close();
+        return;
+      }
+      const code = body.errors[0]?.extensions?.code;
+      container.textContent = '';
+      const message = document.createElement('p');
+      message.className = 'text-secondary mb-0';
+      message.textContent =
+        code === 'ADMIN_FORBIDDEN'
+          ? "You don't have permission to view this engagement's conversation."
+          : code === 'ADMIN_ENGAGEMENT_NOT_FOUND'
+            ? 'This engagement no longer exists.'
+            : 'Could not load the coordination chat. Please try again.';
+      container.appendChild(message);
+      return;
+    }
+
+    container.textContent = '';
+    const messages = body.data.adminEngagementChatThread;
+    if (messages.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'text-secondary mb-0';
+      empty.textContent = 'No coordination messages yet.';
+      container.appendChild(empty);
+      return;
+    }
+    for (const message of messages) {
+      container.appendChild(buildEngagementChatMessage(message));
+    }
+  } catch (error) {
+    container.textContent = '';
+    const message = document.createElement('p');
+    message.className = 'text-secondary mb-0';
+    message.textContent =
+      error instanceof GraphQLNetworkError
+        ? error.message
+        : 'Something went wrong. Please try again.';
+    container.appendChild(message);
+  }
 }
 
 async function openQuoteDetailModal(rowData) {
@@ -668,12 +800,12 @@ async function openQuoteDetailModal(rowData) {
     const tabs = [
       {
         id: 'detail',
-        label: 'Detalle',
+        label: 'Details',
         content: buildQuoteDetailTabContent(detail),
       },
       {
         id: 'negotiation',
-        label: 'Negociación',
+        label: 'Negotiation',
         content: negotiationContainer,
         onActivate: () => {
           if (negotiationLoaded || !needsFetch) {
@@ -684,6 +816,35 @@ async function openQuoteDetailModal(rowData) {
         },
       },
     ];
+
+    // "Chat" tab (GOS-46 follow-up) — only meaningful once `detail.engagement`
+    // exists (no Engagement -> no coordination chat possible); omitted from
+    // `tabs` entirely otherwise, same `if` gate the "Engagement" subsection
+    // in `buildQuoteDetailTabContent` already uses. Always lazy-fetches on
+    // first activation (no cheap count field to skip an empty fetch) — see
+    // `loadEngagementChatThread`'s own comment for why this is a deliberate
+    // scope trim, not an oversight.
+    if (detail.engagement) {
+      const chatContainer = document.createElement('div');
+      const chatLoading = document.createElement('p');
+      chatLoading.className = 'text-secondary mb-0';
+      chatLoading.textContent = 'Loading…';
+      chatContainer.appendChild(chatLoading);
+      let chatLoaded = false;
+
+      tabs.push({
+        id: 'engagement-chat',
+        label: 'Chat',
+        content: chatContainer,
+        onActivate: () => {
+          if (chatLoaded) {
+            return;
+          }
+          chatLoaded = true;
+          void loadEngagementChatThread(detail.engagement.id, chatContainer);
+        },
+      });
+    }
 
     detailContentEl.appendChild(
       renderDetailTabs(tabs, {
