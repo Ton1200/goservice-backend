@@ -26,6 +26,7 @@ import { EngagementsModule } from './engagements/engagements.module';
 import { QuotesModule } from './quotes/quotes.module';
 import { QuoteNegotiationModule } from './quote-negotiation/quote-negotiation.module';
 import { ServiceRequestsModule } from './service-requests/service-requests.module';
+import { EngagementChatModule } from './engagement-chat/engagement-chat.module';
 import type { AppConfig } from './config/configuration';
 
 @Module({
@@ -74,6 +75,7 @@ import type { AppConfig } from './config/configuration';
           QuotesModule,
           QuoteNegotiationModule,
           EngagementsModule,
+          EngagementChatModule,
         ],
         sortSchema: true,
         // GOS-8 acceptance criterion #11: error responses must never include
@@ -244,6 +246,7 @@ import type { AppConfig } from './config/configuration';
     QuotesModule,
     QuoteNegotiationModule,
     EngagementsModule,
+    EngagementChatModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },

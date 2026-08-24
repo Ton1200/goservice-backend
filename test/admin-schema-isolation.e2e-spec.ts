@@ -300,6 +300,14 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         // Administrators-tab follow-up (2026-08-20).
         'adminRoles',
         'adminUsers',
+        // Quote Negotiation admin audit surface follow-up (GOS-53,
+        // 2026-08-21) — this entry was already missing from this hardcoded
+        // list before GOS-46 touched this file at all (a pre-existing gap,
+        // not introduced by this change); added now alongside the
+        // GOS-46 entry below so this assertion is accurate again.
+        'adminQuoteNegotiationThread',
+        // Chat de Coordinación admin audit surface (GOS-46, 2026-08-21).
+        'adminEngagementChatThread',
       ].sort(),
     );
     expect(

@@ -126,7 +126,8 @@ const PLATFORM_SETTINGS: {
   // app has no reason to ever read it.
   {
     key: 'admin.session.timeout-minutes',
-    description: 'How long an admin session stays valid after login, in minutes.',
+    description:
+      'How long an admin session stays valid after login, in minutes.',
     value: '30',
     isPublic: false,
     valueType: 'NUMBER',
@@ -185,8 +186,7 @@ const PLATFORM_SETTINGS: {
   // NEVER exposed to the client, even indirectly.
   {
     key: 'identity.didit.mode',
-    description:
-      'Which Didit credential set is active: SANDBOX or PRODUCTION.',
+    description: 'Which Didit credential set is active: SANDBOX or PRODUCTION.',
     value: 'SANDBOX',
     isPublic: false,
   },
@@ -247,6 +247,43 @@ const PLATFORM_SETTINGS: {
     description:
       'Whether a Professional may attach a price proposal to a Quote Negotiation message.',
     value: 'true',
+    isPublic: false,
+  },
+  // GOS-46 follow-up — Engagement Chat ("Chat de Coordinación") admin
+  // enable/disable toggle. Deliberately placed under the `customer.*` group
+  // (human-requested, in a NEW `chat` sub-group), NOT a top-level
+  // `engagement-chat.*` key like `quote-negotiation.general.enabled` above —
+  // same dot-namespaced convention `customer.social-login.<provider>
+  // .enabled` already establishes, so it automatically renders under
+  // Customer > "Chat" in the admin panel's settings tree with zero frontend
+  // code changes (`admin-panel/js/settings.js`'s `buildSettingsTree`/
+  // `humanizeSegment` derive the tree purely from a key's dot-path — no
+  // per-key special-casing exists or is needed). Read via
+  // `PlatformSettingPort.isEnabled(key)` by the new
+  // `EngagementChatModuleEnabledGuard` (`src/engagement-chat/guards/
+  // engagement-chat-module-enabled.guard.ts`) — never a hardcoded TS
+  // constant, same mechanism as `quote-negotiation.general.enabled` above.
+  //
+  // Renamed from `customer.engagement-chat.enabled` (2026-08-21 follow-up,
+  // human-requested): "Engagement Chat" read as unnecessarily verbose in the
+  // Settings tab next to the feature's actual name — just "Chat". Only the
+  // key/Settings-group label changed; every `EngagementChat*` TS/GraphQL
+  // identifier is unchanged. No real database row existed under the old key
+  // yet at rename time (confirmed: this seed entry had never been applied
+  // to `goservice_dev`), so this was a pure rename, not a data migration.
+  //
+  // `value: 'false'` (default OFF) — unlike `quote-negotiation.general.
+  // enabled`'s default-ON, per explicit instruction for this feature.
+  // `isPublic: false`: this is a backend/admin-only gate — `goservice-mobile`
+  // doesn't need to know ahead of time whether Engagement Chat is enabled
+  // via `platformConfig`; it just calls `sendEngagementMessage`/
+  // `engagementMessages` and handles `ENGAGEMENT_CHAT_MODULE_DISABLED` like
+  // any other domain error, same reasoning as the Quote Negotiation flags.
+  {
+    key: 'customer.chat.enabled',
+    description:
+      'Global kill switch for the Engagement Chat capability (sendEngagementMessage/engagementMessages). Does not gate adminEngagementChatThread.',
+    value: 'false',
     isPublic: false,
   },
 ];

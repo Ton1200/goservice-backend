@@ -96,6 +96,16 @@ const PERMISSION_GROUPS = [
     write: 'CATEGORIES_WRITE',
   },
   { label: 'Quotes', read: 'QUOTES_READ' },
+  // GOS-53 (2026-08-21) — added here 2026-08-21 follow-up: this row was
+  // missing from the very start (the resource × action matrix above wasn't
+  // updated when `QUOTE_NEGOTIATION_READ` was added to the `Permission`
+  // enum), which meant no admin could ever be granted this permission
+  // through the panel at all. Same fix pattern as `Engagement Chat` below.
+  { label: 'Quote Negotiation', read: 'QUOTE_NEGOTIATION_READ' },
+  // GOS-46 (2026-08-21) — same "row missing from the matrix" gap as
+  // `Quote Negotiation` above: `ENGAGEMENT_CHAT_READ` existed on the
+  // `Permission` enum with no way to grant/revoke it from this panel.
+  { label: 'Engagement Chat', read: 'ENGAGEMENT_CHAT_READ' },
 ];
 
 const ACTION_COLUMNS = [
