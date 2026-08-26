@@ -14,6 +14,12 @@ import '../service-requests/models/service-request-status.enum'; // GraphQL enum
 import '../service-requests/models/service-request-urgency.enum'; // GraphQL enum registration side effect
 import '../quotes/models/quote-status.enum'; // GraphQL enum registration side effect
 import '../engagements/models/engagement-status.enum'; // GraphQL enum registration side effect
+import '../quote-negotiation/models/quote-negotiation-party.enum'; // GraphQL enum registration side effect
+import '../quote-negotiation/models/quote-price-proposal-status.enum'; // GraphQL enum registration side effect
+import '../engagement-chat/models/engagement-chat-party.enum'; // GraphQL enum registration side effect
+import '../appointments/models/appointment-status.enum'; // GraphQL enum registration side effect
+import '../appointments/models/appointment-party.enum'; // GraphQL enum registration side effect
+import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
 import { AdminPermissionsGuard } from './admin-rbac/guards/admin-permissions.guard';
@@ -56,6 +62,36 @@ import { QuotesRepository } from '../quotes/quotes.repository';
 import { AdminQuotesResolver } from './quotes/admin-quotes.resolver';
 import { ListAdminQuotesService } from './quotes/services/list-admin-quotes.service';
 import { GetAdminQuoteDetailService } from './quotes/services/get-admin-quote-detail.service';
+import { QuoteNegotiationRepository } from '../quote-negotiation/quote-negotiation.repository';
+import { QuoteNegotiationModuleEnabledGuard } from '../quote-negotiation/guards/quote-negotiation-module-enabled.guard';
+import { AdminQuoteNegotiationResolver } from './quote-negotiation/admin-quote-negotiation.resolver';
+import { GetAdminQuoteNegotiationThreadService } from './quote-negotiation/services/get-admin-quote-negotiation-thread.service';
+import { EngagementsRepository } from '../engagements/engagements.repository';
+import { EngagementChatRepository } from '../engagement-chat/engagement-chat.repository';
+import { AdminEngagementChatResolver } from './engagement-chat/admin-engagement-chat.resolver';
+import { GetAdminEngagementChatThreadService } from './engagement-chat/services/get-admin-engagement-chat-thread.service';
+import { AppointmentsRepository } from '../appointments/appointments.repository';
+import { AdminAppointmentsResolver } from './appointments/admin-appointments.resolver';
+import { GetAdminAppointmentsByEngagementService } from './appointments/services/get-admin-appointments-by-engagement.service';
+import { AdminLockoutGuardService } from './admin-rbac/services/admin-lockout-guard.service';
+import { AdminRolesResolver } from './admin-roles/admin-roles.resolver';
+import { ListAdminRolesService } from './admin-roles/services/list-admin-roles.service';
+import { CreateAdminRoleService } from './admin-roles/services/create-admin-role.service';
+import { UpdateAdminRolePermissionsService } from './admin-roles/services/update-admin-role-permissions.service';
+import { DeleteAdminRoleService } from './admin-roles/services/delete-admin-role.service';
+import { AdminUsersResolver } from './admin-users/admin-users.resolver';
+import { ListAdminUsersService } from './admin-users/services/list-admin-users.service';
+import { UpdateAdminUserService } from './admin-users/services/update-admin-user.service';
+import { DeleteAdminUserService } from './admin-users/services/delete-admin-user.service';
+import { AdminInvitesRepository } from './admin-invites/admin-invites.repository';
+import { IssueAdminInviteService } from './admin-invites/services/issue-admin-invite.service';
+import { InviteAdminUserService } from './admin-invites/services/invite-admin-user.service';
+import { ResendAdminInviteService } from './admin-invites/services/resend-admin-invite.service';
+import { AcceptAdminInviteService } from './admin-invites/services/accept-admin-invite.service';
+import { AdminInvitesResolver } from './admin-invites/admin-invites.resolver';
+import { AcceptAdminInviteResolver } from './admin-invites/accept-admin-invite.resolver';
+import { AdminInviteEmailSenderPort } from './admin-invites/ports/admin-invite-email-sender.port';
+import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapters/email-queue-admin-invite-email-sender.adapter';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -329,6 +365,111 @@ import { GetAdminQuoteDetailService } from './quotes/services/get-admin-quote-de
     AdminQuotesResolver,
     ListAdminQuotesService,
     GetAdminQuoteDetailService,
+
+    // quote-negotiation (GOS-53, 2026-08-21; permission/flag follow-up same
+    // day) — `adminQuoteNegotiationThread`, READ-ONLY, gated by its own
+    // dedicated `Permission.QUOTE_NEGOTIATION_READ` (REPLACES the first
+    // round's `Permission.SERVICE_REQUESTS_READ` — see
+    // `AdminQuoteNegotiationResolver`'s own header comment) AND by
+    // `quote-negotiation.general.enabled` via `QuoteNegotiationModuleEnabledGuard`
+    // (REVERSES the first round's "not gated by the flag" choice, same
+    // guard INSTANCE the consumer `QuoteNegotiationResolver` already
+    // applies — its constructor dependency, `PlatformSettingPort`, resolves
+    // fine here since `PlatformSettingsModule` is already imported above
+    // for other purposes, so no new module import was needed).
+    // `QuoteNegotiationRepository` is reused CONCRETE CLASS from
+    // `src/quote-negotiation/` — same "never import the resolver-bearing
+    // module" pattern as `QuotesRepository` above;
+    // `QuoteNegotiationModule` itself is never imported here (it has its
+    // own `QuoteNegotiationResolver`, the same leak class documented
+    // throughout this file). Reuses `QuoteNegotiationMessageModel`/
+    // `QuotePriceProposalModel` directly as this query's return type — see
+    // `GetAdminQuoteNegotiationThreadService`'s own header comment for why
+    // no separate `AdminQuoteNegotiationMessage`-named duplicate type was
+    // created.
+    QuoteNegotiationRepository,
+    QuoteNegotiationModuleEnabledGuard,
+    AdminQuoteNegotiationResolver,
+    GetAdminQuoteNegotiationThreadService,
+
+    // engagement-chat (GOS-46, 2026-08-21) — `adminEngagementChatThread`,
+    // READ-ONLY, gated by its own dedicated `Permission.ENGAGEMENT_CHAT_READ`
+    // (deliberately NOT `SERVICE_REQUESTS_READ`/`QUOTE_NEGOTIATION_READ` —
+    // see `AdminEngagementChatResolver`'s own header comment). No
+    // module-enabled kill switch — Engagement Chat has no admin-configurable
+    // feature flag. `EngagementsRepository`/`EngagementChatRepository` are
+    // reused CONCRETE classes from `src/engagements/`/`src/engagement-chat/`
+    // — same "never import the resolver-bearing module" pattern as
+    // `QuoteNegotiationRepository` above; neither `EngagementsModule` nor
+    // `EngagementChatModule` themselves are ever imported here (each has its
+    // own consumer-facing resolver, the same leak class documented
+    // throughout this file). Reuses `EngagementMessageModel` directly as
+    // this query's return type — same "orphaned type made reachable"
+    // reasoning as the quote-negotiation admin surface above.
+    EngagementsRepository,
+    EngagementChatRepository,
+    AdminEngagementChatResolver,
+    GetAdminEngagementChatThreadService,
+
+    // Appointment (Coordinación de Visita) admin audit surface (GOS-59,
+    // 2026-08-24) — `adminAppointmentsByEngagement`, READ-ONLY, gated by
+    // its own dedicated `Permission.APPOINTMENTS_READ` (deliberately NOT
+    // `SERVICE_REQUESTS_READ`/`QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ`
+    // — see `AdminAppointmentsResolver`'s own header comment). No
+    // module-enabled kill switch — Appointment has no admin-configurable
+    // feature flag. `EngagementsRepository` is already a provider above
+    // (reused, not duplicated). `AppointmentsRepository` is reused CONCRETE
+    // class from `src/appointments/` — same "never import the
+    // resolver-bearing module" pattern as `EngagementChatRepository` above;
+    // `AppointmentsModule` itself is never imported here (it has its own
+    // `AppointmentsResolver`, the same leak class documented throughout
+    // this file). Reuses `AppointmentModel` directly as this query's return
+    // type — same "orphaned type made reachable" reasoning as the
+    // engagement-chat admin surface above. Also reuses the SAME
+    // `adminEngagementNotFound()` error `AdminEngagementChatResolver`'s own
+    // service already defines (see
+    // `GetAdminAppointmentsByEngagementService`'s own header comment).
+    AppointmentsRepository,
+    AdminAppointmentsResolver,
+    GetAdminAppointmentsByEngagementService,
+
+    // admin-rbac / admin-roles / admin-users / admin-invites (Administrators
+    // tab follow-up, 2026-08-20) — role/permission management + admin-user
+    // invite/manage capability. `AdminRolesRepository`/`AdminUsersRepository`
+    // are already providers above (reused, not duplicated).
+    // `AdminLockoutGuardService` is this feature's safety-critical
+    // self-lockout guard (see its own header comment) — a plain injectable,
+    // no resolver of its own, shared by `UpdateAdminRolePermissionsService`
+    // and `UpdateAdminUserService`. `PasswordHasherPort` is already provided
+    // above (`Argon2PasswordHasherAdapter`) — reused directly by
+    // `AcceptAdminInviteService`, same pattern as every other reuse of that
+    // provider in this file. `EnsureEmailDeliveryAvailableService` comes from
+    // the already-imported `EmailModule`.
+    AdminLockoutGuardService,
+    AdminRolesResolver,
+    ListAdminRolesService,
+    CreateAdminRoleService,
+    UpdateAdminRolePermissionsService,
+    DeleteAdminRoleService,
+    AdminUsersResolver,
+    ListAdminUsersService,
+    UpdateAdminUserService,
+    DeleteAdminUserService,
+    AdminInvitesRepository,
+    {
+      provide: AdminInviteEmailSenderPort,
+      useClass: EmailQueueAdminInviteEmailSenderAdapter,
+    },
+    IssueAdminInviteService,
+    InviteAdminUserService,
+    ResendAdminInviteService,
+    AdminInvitesResolver,
+    // `AcceptAdminInviteService`/`AcceptAdminInviteResolver` back the ONE
+    // unguarded mutation in this whole feature (`acceptAdminInvite`) — see
+    // that resolver's own header comment for why it is a SEPARATE resolver
+    // class from `AdminInvitesResolver` above, never merged into it.
+    AcceptAdminInviteService,
+    AcceptAdminInviteResolver,
   ],
 })
 export class PlatformAdminModule {}

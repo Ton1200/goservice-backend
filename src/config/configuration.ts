@@ -158,6 +158,35 @@ export interface AppConfig {
      */
     signingSecret: string | undefined;
   };
+  /**
+   * Roles/admin-user management follow-up (2026-08-20) —
+   * `AdminInvite`-issuance policy (`inviteAdminUser`/`resendAdminInvite`).
+   * Same shape/defaults precedent as `passwordReset`/`emailVerification`:
+   * `ttlHours` (72h — a link, not a typed code, so a longer window than a
+   * 6-digit code's `codeTtlMinutes` is appropriate) and
+   * `resendCooldownSeconds` (60s, same as every other resend cooldown in
+   * this codebase).
+   */
+  adminInvite: {
+    ttlHours: number;
+    resendCooldownSeconds: number;
+  };
+  /**
+   * Roles/admin-user management follow-up (2026-08-20) — this backend's own
+   * PUBLIC base URL, used ONLY to build the admin-panel invite link
+   * (`${adminPanelPublicUrl}?invite=<token>`) sent by
+   * `EmailQueueAdminInviteEmailSenderAdapter`. No "public base URL of this
+   * server" concept existed anywhere before this — every prior email
+   * (verification code, password-reset code) is a typed value, never a
+   * link. Same "safe local-dev default, must be set explicitly for a real
+   * deployment" precedent `storageLocal.baseUrl` already establishes: the
+   * default below composes `http://localhost:${port}${adminPanelPath}`,
+   * which is only ever correct for THIS SAME process's own local dev
+   * server — a real deployment (a different host/port/scheme, e.g. behind a
+   * reverse proxy) MUST set `ADMIN_PANEL_PUBLIC_URL` explicitly, or every
+   * invite link sent will silently point at the wrong place.
+   */
+  adminPanelPublicUrl: string;
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
@@ -210,60 +239,84 @@ function parseAdminPanelPath(value: string | undefined): string {
     : withLeadingSlash;
 }
 
-export default (): AppConfig => ({
-  port: parsePort(process.env.PORT, 3000),
-  database: {
-    host: process.env.DATABASE_HOST ?? 'localhost',
-    port: parsePort(process.env.DATABASE_PORT, 5432),
-    name: process.env.DATABASE_NAME ?? 'goservice_dev',
-    user: process.env.DATABASE_USER ?? 'goservice_dev',
-    // Deliberately no hardcoded fallback for the password: an empty string
-    // fails DB auth loudly (surfaced as `databaseStatus: UNAVAILABLE`)
-    // rather than silently trying a guessed default.
-    password: process.env.DATABASE_PASSWORD ?? '',
-    poolMax: parsePort(process.env.DATABASE_POOL_MAX, 10),
-  },
-  corsAllowedOrigins: parseCorsAllowedOrigins(process.env.CORS_ALLOWED_ORIGINS),
-  redis: {
-    host: process.env.REDIS_HOST ?? 'localhost',
-    port: parsePort(process.env.REDIS_PORT, 6379),
-    password: process.env.REDIS_PASSWORD,
-  },
-  emailVerification: {
-    codeTtlMinutes: parsePort(
-      process.env.EMAIL_VERIFICATION_CODE_TTL_MINUTES,
-      15,
+export default (): AppConfig => {
+  // Computed as locals (rather than inline in the object literal below) so
+  // `adminPanelPublicUrl`'s local-dev default can reuse the SAME resolved
+  // `port`/`adminPanelPath` values the rest of this config object uses —
+  // never a second, independently-parsed copy that could drift.
+  const port = parsePort(process.env.PORT, 3000);
+  const adminPanelPath = parseAdminPanelPath(process.env.ADMIN_PANEL_PATH);
+
+  return {
+    port,
+    database: {
+      host: process.env.DATABASE_HOST ?? 'localhost',
+      port: parsePort(process.env.DATABASE_PORT, 5432),
+      name: process.env.DATABASE_NAME ?? 'goservice_dev',
+      user: process.env.DATABASE_USER ?? 'goservice_dev',
+      // Deliberately no hardcoded fallback for the password: an empty string
+      // fails DB auth loudly (surfaced as `databaseStatus: UNAVAILABLE`)
+      // rather than silently trying a guessed default.
+      password: process.env.DATABASE_PASSWORD ?? '',
+      poolMax: parsePort(process.env.DATABASE_POOL_MAX, 10),
+    },
+    corsAllowedOrigins: parseCorsAllowedOrigins(
+      process.env.CORS_ALLOWED_ORIGINS,
     ),
-    resendCooldownSeconds: parsePort(
-      process.env.EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
-      60,
+    redis: {
+      host: process.env.REDIS_HOST ?? 'localhost',
+      port: parsePort(process.env.REDIS_PORT, 6379),
+      password: process.env.REDIS_PASSWORD,
+    },
+    emailVerification: {
+      codeTtlMinutes: parsePort(
+        process.env.EMAIL_VERIFICATION_CODE_TTL_MINUTES,
+        15,
+      ),
+      resendCooldownSeconds: parsePort(
+        process.env.EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
+        60,
+      ),
+      maxAttempts: parsePort(process.env.EMAIL_VERIFICATION_MAX_ATTEMPTS, 5),
+    },
+    session: {
+      ttlHours: parsePort(process.env.SESSION_TTL_HOURS, 720),
+    },
+    passwordReset: {
+      codeTtlMinutes: parsePort(
+        process.env.PASSWORD_RESET_CODE_TTL_MINUTES,
+        15,
+      ),
+      resendCooldownSeconds: parsePort(
+        process.env.PASSWORD_RESET_RESEND_COOLDOWN_SECONDS,
+        60,
+      ),
+      maxAttempts: parsePort(process.env.PASSWORD_RESET_MAX_ATTEMPTS, 5),
+    },
+    adminBootstrap: {
+      email: process.env.ADMIN_BOOTSTRAP_EMAIL,
+      password: process.env.ADMIN_BOOTSTRAP_PASSWORD,
+      displayName: process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME,
+    },
+    adminCredentialsEncryptionKey: process.env.ADMIN_CREDENTIALS_ENCRYPTION_KEY,
+    graphqlIntrospectionEnabled: parseBoolean(
+      process.env.GRAPHQL_INTROSPECTION_ENABLED,
+      false,
     ),
-    maxAttempts: parsePort(process.env.EMAIL_VERIFICATION_MAX_ATTEMPTS, 5),
-  },
-  session: {
-    ttlHours: parsePort(process.env.SESSION_TTL_HOURS, 720),
-  },
-  passwordReset: {
-    codeTtlMinutes: parsePort(process.env.PASSWORD_RESET_CODE_TTL_MINUTES, 15),
-    resendCooldownSeconds: parsePort(
-      process.env.PASSWORD_RESET_RESEND_COOLDOWN_SECONDS,
-      60,
-    ),
-    maxAttempts: parsePort(process.env.PASSWORD_RESET_MAX_ATTEMPTS, 5),
-  },
-  adminBootstrap: {
-    email: process.env.ADMIN_BOOTSTRAP_EMAIL,
-    password: process.env.ADMIN_BOOTSTRAP_PASSWORD,
-    displayName: process.env.ADMIN_BOOTSTRAP_DISPLAY_NAME,
-  },
-  adminCredentialsEncryptionKey: process.env.ADMIN_CREDENTIALS_ENCRYPTION_KEY,
-  graphqlIntrospectionEnabled: parseBoolean(
-    process.env.GRAPHQL_INTROSPECTION_ENABLED,
-    false,
-  ),
-  adminPanelPath: parseAdminPanelPath(process.env.ADMIN_PANEL_PATH),
-  storageLocal: {
-    baseUrl: process.env.STORAGE_LOCAL_BASE_URL ?? 'http://localhost:3000',
-    signingSecret: process.env.STORAGE_LOCAL_SIGNING_SECRET,
-  },
-});
+    adminPanelPath,
+    storageLocal: {
+      baseUrl: process.env.STORAGE_LOCAL_BASE_URL ?? 'http://localhost:3000',
+      signingSecret: process.env.STORAGE_LOCAL_SIGNING_SECRET,
+    },
+    adminInvite: {
+      ttlHours: parsePort(process.env.ADMIN_INVITE_TTL_HOURS, 72),
+      resendCooldownSeconds: parsePort(
+        process.env.ADMIN_INVITE_RESEND_COOLDOWN_SECONDS,
+        60,
+      ),
+    },
+    adminPanelPublicUrl:
+      process.env.ADMIN_PANEL_PUBLIC_URL ??
+      `http://localhost:${port}${adminPanelPath}`,
+  };
+};

@@ -36,6 +36,13 @@ export class QuoteModel {
   @Field(() => Int)
   price!: number;
 
+  // GOS-53 — set only by `AcceptQuotePriceProposalService`, when a
+  // negotiated `QuotePriceProposal` is accepted. `price` (the original
+  // quoted price, above) is never overwritten — see that field's own
+  // schema comment for why this is a separate, additive column.
+  @Field(() => Int, { nullable: true })
+  negotiatedPrice?: number | null;
+
   @Field()
   message!: string;
 

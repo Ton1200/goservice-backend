@@ -22,6 +22,13 @@
 import { TabulatorFull as Tabulator } from '../vendor/tabulator/js/tabulator_esm.min.mjs';
 import { graphqlRequest, GraphQLNetworkError } from './graphqlClient.js';
 import { createMenuItem, openDropdownMenu } from './dropdownMenu.js';
+import {
+  buildBadgeField,
+  buildField,
+  buildStatusBadge,
+  buildSubsection,
+  renderDetailTabs,
+} from './detailView.js';
 import { clearSession } from './session.js';
 import { showLoginView } from './view.js';
 
@@ -65,6 +72,15 @@ const SERVICE_REQUEST_DETAIL_QUERY = `
       category { id name }
       customer { id userId displayName email firstName lastName }
       attachments { id url createdAt }
+      quotes {
+        id
+        price
+        negotiatedPrice
+        status
+        negotiationMessageCount
+        professional { displayName email }
+        createdAt
+      }
     }
   }
 `;
@@ -113,6 +129,27 @@ const FETCH_LIMIT = 200;
 // introspection is disabled by default).
 const URGENCY_VALUES = ['FLEXIBLE', 'THIS_WEEK', 'URGENT'];
 const STATUS_VALUES = ['OPEN', 'CANCELLED'];
+
+// Status -> badge-variant lookup tables (redesign follow-up, 2026-08-21) —
+// mirrors `prisma/schema.prisma`'s `ServiceRequestStatus`/`QuoteStatus`
+// enum values, same hardcoded-here trade-off `STATUS_VALUES` above already
+// accepts. `ServiceRequestStatus` here only lists `OPEN`/`ENGAGED`/
+// `CANCELLED` per this task's mapping — `ENGAGED` isn't in `STATUS_VALUES`
+// above (that list only drives the grid's header-filter dropdown, unrelated
+// to the badge lookup here) but IS a real, reachable status once a Quote is
+// accepted, so it still needs a variant.
+const SERVICE_REQUEST_STATUS_VARIANTS = {
+  OPEN: 'info',
+  ENGAGED: 'success',
+  CANCELLED: 'error',
+};
+
+const QUOTE_STATUS_VARIANTS = {
+  SENT: 'info',
+  ACCEPTED: 'success',
+  REJECTED: 'error',
+  WITHDRAWN: 'neutral',
+};
 
 const gridEl = document.getElementById('service-requests-grid');
 const errorEl = document.getElementById('service-requests-error');
@@ -274,8 +311,17 @@ const COLUMNS = [
     title: 'Description',
     field: 'description',
     headerFilter: 'input',
-    minWidth: 260,
-    formatter: 'textarea',
+    // Standing long-text-column convention (see `css/tabulator-theme.css`'s
+    // own `.gs-truncate-cell` comment) — was `formatter: 'textarea'`
+    // (multi-line wrap). `gs-truncate-cell` single-line-ellipsis-truncates,
+    // `tooltip: true` reveals the full description on hover/focus.
+    // Deliberately NO `maxWidth` — this codebase's own convention is
+    // `minWidth` only on every column in every grid; a hard `maxWidth` here
+    // fought Tabulator's own drag-to-resize (the column kept snapping back
+    // to the cap instead of staying where the user dragged it to).
+    minWidth: 200,
+    cssClass: 'gs-truncate-cell',
+    tooltip: true,
   },
   {
     title: 'Urgency',
@@ -408,35 +454,17 @@ function showDetailError(message) {
   detailErrorEl.hidden = message === '';
 }
 
-function buildField(label, value) {
-  const wrapper = document.createElement('div');
-
-  const labelEl = document.createElement('div');
-  labelEl.className = 'gs-detail-field-label';
-  labelEl.textContent = label;
-
-  const valueEl = document.createElement('div');
-  valueEl.className = 'gs-detail-field-value';
-  valueEl.textContent = value || '—';
-
-  wrapper.append(labelEl, valueEl);
-  return wrapper;
-}
-
-function buildSubsection(heading, contentNodes) {
-  const section = document.createElement('div');
-  section.className = 'gs-detail-subsection';
-
-  const headingEl = document.createElement('h4');
-  headingEl.className = 'gs-detail-subsection-heading';
-  headingEl.textContent = heading;
-  section.appendChild(headingEl);
-
-  for (const node of contentNodes) {
-    section.appendChild(node);
-  }
-  return section;
-}
+// Urgency -> badge-variant lookup (redesign follow-up, 2026-08-21) — this
+// task's own mapping instructions only spelled out `ServiceRequestStatus`/
+// `QuoteStatus`/`QuotePriceProposalStatus`, not `ServiceRequestUrgency`; this
+// is a judgment call worth a human sanity-check, same
+// low/medium/high-urgency-toned reasoning `FLEXIBLE`/`THIS_WEEK`/`URGENT`'s
+// own names already suggest.
+const URGENCY_VARIANTS = {
+  FLEXIBLE: 'neutral',
+  THIS_WEEK: 'warning',
+  URGENT: 'error',
+};
 
 /** Attachments render as real links (opening `LocalDevStorageAdapter`'s
  * `GET /uploads/:key` URL in a new tab) — never an `<img>` assumption,
@@ -464,7 +492,14 @@ function buildAttachmentsSection(attachments) {
   return buildSubsection('Attachments', [list]);
 }
 
-function buildDetailContent(detail) {
+function priceFormatterValue(value) {
+  return value == null ? '—' : `$${value}`;
+}
+
+/** "Detalle" tab — the existing Customer/Request/Attachments subsections,
+ * status/urgency now rendered via `buildStatusBadge` instead of plain
+ * text. */
+function buildServiceRequestDetailTabContent(detail) {
   const wrapper = document.createElement('div');
   const customerFullName =
     [detail.customer.firstName, detail.customer.lastName]
@@ -482,12 +517,21 @@ function buildDetailContent(detail) {
     buildSubsection('Request', [
       buildField('Category', detail.category.name),
       buildField('Description', detail.description),
-      buildField('Urgency', detail.urgency),
+      buildBadgeField(
+        'Urgency',
+        buildStatusBadge(detail.urgency, URGENCY_VARIANTS[detail.urgency]),
+      ),
       buildField(
         'Indicative budget',
         formatBudget(detail.indicativeBudgetMin, detail.indicativeBudgetMax),
       ),
-      buildField('Status', detail.status),
+      buildBadgeField(
+        'Status',
+        buildStatusBadge(
+          detail.status,
+          SERVICE_REQUEST_STATUS_VARIANTS[detail.status],
+        ),
+      ),
       buildField('Created at', formatDateTime(detail.createdAt)),
       buildField('Updated at', formatDateTime(detail.updatedAt)),
       buildField('Cancelled at', formatDateTime(detail.cancelledAt)),
@@ -495,6 +539,66 @@ function buildDetailContent(detail) {
   );
 
   wrapper.appendChild(buildAttachmentsSection(detail.attachments));
+
+  return wrapper;
+}
+
+/** One row in the "Cotizaciones" tab's quote list — professional name,
+ * price, negotiatedPrice (if set), a status badge, and (when this Quote has
+ * negotiation activity) a small visible count indicator. Read-only — no
+ * cross-navigation into `js/quotes.js`'s own detail popup (see this
+ * module's own header comment / the delivery report for why that
+ * nice-to-have was left out). */
+function buildQuoteRow(quote) {
+  const row = document.createElement('div');
+  row.className = 'gs-quote-row';
+
+  const main = document.createElement('div');
+  main.className = 'gs-quote-row-main';
+  main.append(
+    buildField('Professional', quote.professional.displayName),
+    buildField('Email', quote.professional.email),
+    buildField('Price', priceFormatterValue(quote.price)),
+    buildField('Precio negociado', priceFormatterValue(quote.negotiatedPrice)),
+  );
+  row.appendChild(main);
+
+  row.appendChild(
+    buildBadgeField(
+      'Status',
+      buildStatusBadge(quote.status, QUOTE_STATUS_VARIANTS[quote.status]),
+    ),
+  );
+
+  if (quote.negotiationMessageCount > 0) {
+    const indicator = document.createElement('div');
+    indicator.className = 'gs-quote-row-negotiation-indicator';
+    indicator.textContent = `💬 ${quote.negotiationMessageCount}`;
+    row.appendChild(indicator);
+  }
+
+  return row;
+}
+
+/** "Cotizaciones" tab — every Quote submitted against this ServiceRequest
+ * (already fetched eagerly, alongside the rest of `serviceRequestDetail` —
+ * unlike Quotes' own "Negociación" tab, there is no separate
+ * permission-gated query behind this list, so no lazy `onActivate` fetch is
+ * needed here). Empty state if none exist yet. */
+function buildQuotesTabContent(quotes) {
+  const wrapper = document.createElement('div');
+
+  if (!quotes || quotes.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'text-secondary mb-0';
+    empty.textContent = 'No quotes yet.';
+    wrapper.appendChild(empty);
+    return wrapper;
+  }
+
+  for (const quote of quotes) {
+    wrapper.appendChild(buildQuoteRow(quote));
+  }
 
   return wrapper;
 }
@@ -524,8 +628,25 @@ async function openServiceRequestDetailModal(rowData) {
       return;
     }
 
+    const detail = body.data.serviceRequestDetail;
+    const tabs = [
+      {
+        id: 'detail',
+        label: 'Detalle',
+        content: buildServiceRequestDetailTabContent(detail),
+      },
+      {
+        id: 'quotes',
+        label: 'Cotizaciones',
+        content: buildQuotesTabContent(detail.quotes),
+      },
+    ];
+
     detailContentEl.appendChild(
-      buildDetailContent(body.data.serviceRequestDetail),
+      renderDetailTabs(tabs, {
+        idPrefix: 'service-requests-detail',
+        ariaLabel: 'Service request detail sections',
+      }),
     );
   } catch (error) {
     showDetailError(

@@ -126,7 +126,8 @@ const PLATFORM_SETTINGS: {
   // app has no reason to ever read it.
   {
     key: 'admin.session.timeout-minutes',
-    description: 'How long an admin session stays valid after login, in minutes.',
+    description:
+      'How long an admin session stays valid after login, in minutes.',
     value: '30',
     isPublic: false,
     valueType: 'NUMBER',
@@ -185,8 +186,7 @@ const PLATFORM_SETTINGS: {
   // NEVER exposed to the client, even indirectly.
   {
     key: 'identity.didit.mode',
-    description:
-      'Which Didit credential set is active: SANDBOX or PRODUCTION.',
+    description: 'Which Didit credential set is active: SANDBOX or PRODUCTION.',
     value: 'SANDBOX',
     isPublic: false,
   },
@@ -211,6 +211,123 @@ const PLATFORM_SETTINGS: {
     description:
       'Gates the Google Geocoding provider (server-side address -> coordinates for CustomerProfile).',
     value: 'false',
+    isPublic: false,
+  },
+  // GOS-53 — Quote Negotiation feature flags. The ticket's own "hardcoded
+  // fallback" values are seeded here as REAL, admin-toggleable
+  // `PlatformSetting` rows instead — see
+  // `src/quote-negotiation/quote-negotiation.module.ts`'s own header
+  // comment for the full "no FeatureFlagPort/FeatureFlagGroup exists, the
+  // real successor is PlatformSettingPort" investigation this decision is
+  // based on. All three read via `PlatformSettingPort.isEnabled(key)` —
+  // never a hardcoded TS constant.
+  //
+  // `quote-negotiation.general.enabled` — the GLOBAL kill switch for the
+  // whole capability (comments + price proposals). `isPublic: false`: this
+  // is a backend/admin-only gate, not something `goservice-mobile` needs to
+  // branch on ahead of time the way `identity.enabled` above does — the
+  // mobile client just calls the mutations/query and handles
+  // `QUOTE_NEGOTIATION_MODULE_DISABLED` like any other domain error.
+  {
+    key: 'quote-negotiation.general.enabled',
+    description:
+      'Global kill switch for the Quote Negotiation capability (postQuoteNegotiationMessage/acceptQuotePriceProposal/rejectQuotePriceProposal/quoteNegotiationMessages).',
+    value: 'true',
+    isPublic: false,
+  },
+  // `quote-negotiation.price-edit.customer-can-propose` /
+  // `.professional-can-propose` — independent, role-specific gates on
+  // whether that role may attach a `proposedPrice` to a negotiation
+  // message. Defaults match the ticket's own specified fallback: a
+  // Customer proposing a price is OFF by default, a Professional
+  // countering is ON by default. `isPublic: false` — same reasoning as
+  // `general.enabled` above.
+  {
+    key: 'quote-negotiation.price-edit.customer-can-propose',
+    description:
+      'Whether a Customer may attach a price proposal to a Quote Negotiation message.',
+    value: 'false',
+    isPublic: false,
+  },
+  {
+    key: 'quote-negotiation.price-edit.professional-can-propose',
+    description:
+      'Whether a Professional may attach a price proposal to a Quote Negotiation message.',
+    value: 'true',
+    isPublic: false,
+  },
+  // GOS-46 follow-up — Engagement Chat ("Chat de Coordinación") admin
+  // enable/disable toggle. Deliberately placed under the `customer.*` group
+  // (human-requested, in a NEW `chat` sub-group), NOT a top-level
+  // `engagement-chat.*` key like `quote-negotiation.general.enabled` above —
+  // same dot-namespaced convention `customer.social-login.<provider>
+  // .enabled` already establishes, so it automatically renders under
+  // Customer > "Chat" in the admin panel's settings tree with zero frontend
+  // code changes (`admin-panel/js/settings.js`'s `buildSettingsTree`/
+  // `humanizeSegment` derive the tree purely from a key's dot-path — no
+  // per-key special-casing exists or is needed). Read via
+  // `PlatformSettingPort.isEnabled(key)` by the new
+  // `EngagementChatModuleEnabledGuard` (`src/engagement-chat/guards/
+  // engagement-chat-module-enabled.guard.ts`) — never a hardcoded TS
+  // constant, same mechanism as `quote-negotiation.general.enabled` above.
+  //
+  // Renamed from `customer.engagement-chat.enabled` (2026-08-21 follow-up,
+  // human-requested): "Engagement Chat" read as unnecessarily verbose in the
+  // Settings tab next to the feature's actual name — just "Chat". Only the
+  // key/Settings-group label changed; every `EngagementChat*` TS/GraphQL
+  // identifier is unchanged. No real database row existed under the old key
+  // yet at rename time (confirmed: this seed entry had never been applied
+  // to `goservice_dev`), so this was a pure rename, not a data migration.
+  //
+  // `value: 'false'` (default OFF) — unlike `quote-negotiation.general.
+  // enabled`'s default-ON, per explicit instruction for this feature.
+  // `isPublic: false`: this is a backend/admin-only gate — `goservice-mobile`
+  // doesn't need to know ahead of time whether Engagement Chat is enabled
+  // via `platformConfig`; it just calls `sendEngagementMessage`/
+  // `engagementMessages` and handles `ENGAGEMENT_CHAT_MODULE_DISABLED` like
+  // any other domain error, same reasoning as the Quote Negotiation flags.
+  {
+    key: 'customer.chat.enabled',
+    description:
+      'Global kill switch for the Engagement Chat capability (sendEngagementMessage/engagementMessages). Does not gate adminEngagementChatThread.',
+    value: 'false',
+    isPublic: false,
+  },
+  // GOS-59 follow-up — Appointment ("Coordinación de Visita") admin
+  // enable/disable toggle. Placed under the same `customer.*` group AS A
+  // SIBLING of `customer.chat.enabled` above — NOT nested under it (`chat`
+  // and `appointments` are two independent capability sub-groups, both
+  // dot-namespaced under `customer.*`) — same convention, so this key
+  // automatically renders under Customer > "Appointments" in the admin
+  // panel's settings tree with zero frontend code changes
+  // (`admin-panel/js/settings.js`'s `buildSettingsTree`/`humanizeSegment`
+  // derive the tree purely from a key's dot-path — no per-key
+  // special-casing exists or is needed). Read via
+  // `PlatformSettingPort.isEnabled(key)` by the new
+  // `AppointmentsModuleEnabledGuard` (`src/appointments/guards/
+  // appointments-module-enabled.guard.ts`) — never a hardcoded TS constant,
+  // same mechanism as `customer.chat.enabled`/`quote-negotiation.general.
+  // enabled` above.
+  //
+  // `value: 'true'` (default ON) — UNLIKE `customer.chat.enabled`'s default
+  // OFF: Appointment is an already-shipped, working capability (GOS-59) as
+  // of this follow-up, not a new one being introduced gated-off; the point
+  // of this switch is letting an admin turn it OFF during an incident, not
+  // requiring an opt-in before it works at all (same "already-working
+  // feature" default-ON reasoning as `quote-negotiation.general.enabled`
+  // and the social-login flags above — `PlatformSettingPort.isEnabled`'s own
+  // doc comment on fail-open-when-missing documents the same trade-off for
+  // an unseeded/typo'd key).
+  // `isPublic: false`: this is a backend/admin-only gate — `goservice-mobile`
+  // doesn't need to know ahead of time whether Appointment is enabled via
+  // `platformConfig`; it just calls `proposeAppointment`/etc. and handles
+  // `APPOINTMENTS_MODULE_DISABLED` like any other domain error, same
+  // reasoning as the Engagement Chat/Quote Negotiation flags.
+  {
+    key: 'customer.appointments.enabled',
+    description:
+      'Global kill switch for the Appointment capability (proposeAppointment/acceptAppointment/cancelAppointment/appointmentsByEngagement).',
+    value: 'true',
     isPublic: false,
   },
 ];

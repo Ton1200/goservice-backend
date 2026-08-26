@@ -17,6 +17,13 @@
 import { TabulatorFull as Tabulator } from '../vendor/tabulator/js/tabulator_esm.min.mjs';
 import { graphqlRequest, GraphQLNetworkError } from './graphqlClient.js';
 import { createMenuItem, openDropdownMenu } from './dropdownMenu.js';
+import {
+  buildBadgeField,
+  buildField,
+  buildStatusBadge,
+  buildSubsection,
+  renderDetailTabs,
+} from './detailView.js';
 import { clearSession } from './session.js';
 import { showLoginView } from './view.js';
 
@@ -29,6 +36,8 @@ const QUOTES_QUERY = `
       items {
         id
         price
+        finalPrice
+        negotiationMessageCount
         message
         status
         createdAt
@@ -53,8 +62,10 @@ const QUOTE_DETAIL_QUERY = `
     quoteDetail(id: $id) {
       id
       price
+      negotiatedPrice
       message
       status
+      negotiationMessageCount
       createdAt
       updatedAt
       serviceRequest {
@@ -66,6 +77,82 @@ const QUOTE_DETAIL_QUERY = `
       }
       professional { id userId displayName email firstName lastName }
       engagement { id status createdAt }
+    }
+  }
+`;
+
+// "Negotiation" tab — fetched lazily, only the first time that tab is
+// actually activated (see `renderDetailTabs`'s `onActivate` — most admins
+// never open this tab, so it's never pre-loaded alongside `QUOTE_DETAIL_QUERY`
+// above). Gated server-side by `Permission.QUOTE_NEGOTIATION_READ` PLUS
+// `quote-negotiation.general.enabled` (`AdminQuoteNegotiationResolver`) —
+// both failure modes are handled explicitly in `loadNegotiationThread`
+// below, scoped to this tab only, never a page-wide crash.
+const QUOTE_NEGOTIATION_THREAD_QUERY = `
+  query AdminQuoteNegotiationThread($quoteId: ID!) {
+    adminQuoteNegotiationThread(quoteId: $quoteId) {
+      id
+      authorRole
+      message
+      createdAt
+      priceProposal {
+        id
+        proposedByRole
+        proposedPrice
+        status
+        resolvedAt
+        createdAt
+      }
+    }
+  }
+`;
+
+// "Chat" tab (GOS-46 follow-up, 2026-08-21) — fetched lazily, only the first
+// time that tab is actually activated, same convention as
+// `QUOTE_NEGOTIATION_THREAD_QUERY` above. Only meaningful once
+// `detail.engagement` exists (see `openQuoteDetailModal`'s tab-building
+// logic) — Engagement Chat only ever exists once a Quote's Engagement
+// exists. Gated server-side by `Permission.ENGAGEMENT_CHAT_READ` only —
+// unlike `adminQuoteNegotiationThread`, this query is deliberately NOT
+// gated by any module-enabled feature flag (see
+// `AdminEngagementChatResolver`'s own header comment), so
+// `ENGAGEMENT_CHAT_MODULE_DISABLED` is never expected here and is not
+// special-cased in `loadEngagementChatThread` below.
+const ADMIN_ENGAGEMENT_CHAT_THREAD_QUERY = `
+  query AdminEngagementChatThread($engagementId: ID!) {
+    adminEngagementChatThread(engagementId: $engagementId) {
+      id
+      conversationId
+      senderRole
+      content
+      createdAt
+    }
+  }
+`;
+
+// "Appointments" tab (GOS-59 follow-up, 2026-08-24) — fetched lazily, only
+// the first time that tab is actually activated, same convention as
+// `ADMIN_ENGAGEMENT_CHAT_THREAD_QUERY` above. Only meaningful once
+// `detail.engagement` exists (see `openQuoteDetailModal`'s tab-building
+// logic) — an Appointment only ever exists once a Quote's Engagement
+// exists. Gated server-side by `Permission.APPOINTMENTS_READ` only —
+// deliberately NOT gated by `customer.appointments.enabled`
+// (`AppointmentsModuleEnabledGuard`), same posture `adminEngagementChatThread`
+// already established (see `AdminAppointmentsResolver`'s own header
+// comment), so `APPOINTMENTS_MODULE_DISABLED` is never expected here and is
+// not special-cased in `loadAppointments` below.
+const ADMIN_APPOINTMENTS_BY_ENGAGEMENT_QUERY = `
+  query AdminAppointmentsByEngagement($engagementId: ID!) {
+    adminAppointmentsByEngagement(engagementId: $engagementId) {
+      id
+      status
+      startsAt
+      endsAt
+      proposedByRole
+      cancelReason
+      cancelledAt
+      confirmedAt
+      createdAt
     }
   }
 `;
@@ -137,6 +224,17 @@ function priceFormatter(cell) {
   return value == null ? '—' : `$${value}`;
 }
 
+/** Grid-cell version of the "does this Quote have negotiation activity"
+ * signal — same `negotiationMessageCount` field the detail popup's
+ * "Negotiation" tab uses to decide whether to fetch the thread at all (see
+ * `loadNegotiationThread`). Kept as a plain count, not a fetch — the grid
+ * must stay one lightweight `quotes(limit, offset)` call, never N+1 into
+ * `adminQuoteNegotiationThread` per row. */
+function negotiationCountFormatter(cell) {
+  const count = cell.getValue();
+  return count > 0 ? `💬 ${count}` : '—';
+}
+
 function fullNameOrDisplayName(person) {
   const fullName = [person.firstName, person.lastName]
     .filter(Boolean)
@@ -196,7 +294,20 @@ const COLUMNS = [
     field: 'serviceRequestSummary',
     formatter: serviceRequestSummaryFormatter,
     headerFilter: 'input',
-    minWidth: 260,
+    // Standing long-text-column convention (see `css/tabulator-theme.css`'s
+    // own `.gs-truncate-cell` comment). `serviceRequestSummaryFormatter`
+    // itself already hard-truncates the description to 60 chars — this
+    // `tooltip` still reveals the FULL, untruncated description (category +
+    // complete text). Deliberately NO `maxWidth` — see `Message` column
+    // below (and `serviceRequests.js`'s Description column) for why: it
+    // fought Tabulator's own drag-to-resize, inconsistent with every other
+    // column in every grid, which only ever set `minWidth`.
+    minWidth: 200,
+    cssClass: 'gs-truncate-cell',
+    tooltip: (event, cell) => {
+      const serviceRequest = cell.getRow().getData().serviceRequest;
+      return `${serviceRequest.category.name} — ${serviceRequest.description}`;
+    },
   },
   {
     title: 'Customer',
@@ -234,11 +345,40 @@ const COLUMNS = [
     minWidth: 100,
   },
   {
+    // The price that actually counts once a negotiation resolved one —
+    // `Quote.finalPrice` on the server is `negotiatedPrice ?? price`, so
+    // this column reads the same for every row whether or not it was ever
+    // negotiated; no client-side fallback logic needed here. Sits right
+    // next to `Price` so a difference between the two is obvious at a
+    // glance without opening the detail popup.
+    title: 'Final Price',
+    field: 'finalPrice',
+    formatter: priceFormatter,
+    headerFilter: false,
+    minWidth: 110,
+  },
+  {
+    title: 'Negotiation',
+    field: 'negotiationMessageCount',
+    formatter: negotiationCountFormatter,
+    headerFilter: false,
+    headerSort: false,
+    hozAlign: 'center',
+    minWidth: 110,
+  },
+  {
     title: 'Message',
     field: 'message',
     headerFilter: 'input',
-    minWidth: 220,
-    formatter: 'textarea',
+    // Standing long-text-column convention (see `css/tabulator-theme.css`'s
+    // own `.gs-truncate-cell` comment) — was `formatter: 'textarea'`.
+    // Deliberately NO `maxWidth` — fights Tabulator's own drag-to-resize
+    // (the column snaps back to the cap instead of staying where dragged),
+    // inconsistent with every other column in every grid here, which only
+    // ever sets `minWidth`.
+    minWidth: 200,
+    cssClass: 'gs-truncate-cell',
+    tooltip: true,
   },
   {
     title: 'Status',
@@ -342,37 +482,49 @@ function showDetailError(message) {
   detailErrorEl.hidden = message === '';
 }
 
-function buildField(label, value) {
-  const wrapper = document.createElement('div');
-
-  const labelEl = document.createElement('div');
-  labelEl.className = 'gs-detail-field-label';
-  labelEl.textContent = label;
-
-  const valueEl = document.createElement('div');
-  valueEl.className = 'gs-detail-field-value';
-  valueEl.textContent = value || '—';
-
-  wrapper.append(labelEl, valueEl);
-  return wrapper;
+function priceFormatterValue(value) {
+  return value == null ? '—' : `$${value}`;
 }
 
-function buildSubsection(heading, contentNodes) {
-  const section = document.createElement('div');
-  section.className = 'gs-detail-subsection';
+// Status -> badge-variant lookup tables (redesign follow-up, 2026-08-21) —
+// mirrors `prisma/schema.prisma`'s `QuoteStatus`/`QuotePriceProposalStatus`
+// enum values, same hardcoded-here trade-off `STATUS_VALUES` above already
+// accepts (no build step/codegen, introspection disabled by default).
+const QUOTE_STATUS_VARIANTS = {
+  SENT: 'info',
+  ACCEPTED: 'success',
+  REJECTED: 'error',
+  WITHDRAWN: 'neutral',
+};
 
-  const headingEl = document.createElement('h4');
-  headingEl.className = 'gs-detail-subsection-heading';
-  headingEl.textContent = heading;
-  section.appendChild(headingEl);
+const PRICE_PROPOSAL_STATUS_VARIANTS = {
+  PENDING: 'warning',
+  ACCEPTED: 'success',
+  REJECTED: 'error',
+  SUPERSEDED: 'neutral',
+};
 
-  for (const node of contentNodes) {
-    section.appendChild(node);
-  }
-  return section;
+/** `Appointment.status` -> badge-variant lookup (GOS-59 follow-up,
+ * 2026-08-24), same "hardcoded, mirrors the Prisma enum" trade-off as
+ * `QUOTE_STATUS_VARIANTS`/`PRICE_PROPOSAL_STATUS_VARIANTS` above. */
+const APPOINTMENT_STATUS_VARIANTS = {
+  PENDING: 'warning',
+  CONFIRMED: 'success',
+  CANCELLED: 'error',
+};
+
+/** CUSTOMER/PROFESSIONAL author-role badge — not a status per se, but reuses
+ * the same badge component for consistent visual weight in the chat-style
+ * negotiation thread; CUSTOMER info-toned, PROFESSIONAL success-toned, a
+ * simple fixed choice so a reader can tell the two roles apart at a glance. */
+function authorRoleVariant(role) {
+  return role === 'CUSTOMER' ? 'info' : 'success';
 }
 
-function buildDetailContent(detail) {
+/** "Details" tab — everything the (pre-redesign) single-pane popup already
+ * showed, statuses now rendered via `buildStatusBadge` instead of plain
+ * text, plus the new `negotiatedPrice` field right under `price`. */
+function buildQuoteDetailTabContent(detail) {
   const wrapper = document.createElement('div');
   const customerFullName = fullNameOrDisplayName(
     detail.serviceRequest.customerProfile,
@@ -382,8 +534,12 @@ function buildDetailContent(detail) {
   wrapper.appendChild(
     buildSubsection('Quote', [
       buildField('Price', priceFormatterValue(detail.price)),
+      buildField('Precio negociado', priceFormatterValue(detail.negotiatedPrice)),
       buildField('Message', detail.message),
-      buildField('Status', detail.status),
+      buildBadgeField(
+        'Status',
+        buildStatusBadge(detail.status, QUOTE_STATUS_VARIANTS[detail.status]),
+      ),
       buildField('Created at', formatDateTime(detail.createdAt)),
       buildField('Updated at', formatDateTime(detail.updatedAt)),
     ]),
@@ -425,8 +581,356 @@ function buildDetailContent(detail) {
   return wrapper;
 }
 
-function priceFormatterValue(value) {
-  return value == null ? '—' : `$${value}`;
+/** One `QuoteNegotiationMessage` — an author-role badge, the message text,
+ * a timestamp, and (if this message carried one) a bordered card for its
+ * linked `QuotePriceProposal`. */
+function buildNegotiationMessage(message) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'gs-negotiation-message';
+
+  const header = document.createElement('div');
+  header.className = 'gs-negotiation-message-header';
+  header.appendChild(
+    buildStatusBadge(message.authorRole, authorRoleVariant(message.authorRole)),
+  );
+  const timestamp = document.createElement('span');
+  timestamp.className = 'gs-negotiation-message-timestamp text-secondary';
+  timestamp.textContent = formatDateTime(message.createdAt);
+  header.appendChild(timestamp);
+  wrapper.appendChild(header);
+
+  const body = document.createElement('p');
+  body.className = 'gs-negotiation-message-body mb-0';
+  body.textContent = message.message;
+  wrapper.appendChild(body);
+
+  if (message.priceProposal) {
+    const proposal = message.priceProposal;
+    const card = document.createElement('div');
+    card.className = 'gs-detail-specialization gs-negotiation-proposal';
+    card.append(
+      buildField('Precio propuesto', priceFormatterValue(proposal.proposedPrice)),
+      buildBadgeField(
+        'Estado',
+        buildStatusBadge(
+          proposal.status,
+          PRICE_PROPOSAL_STATUS_VARIANTS[proposal.status],
+        ),
+      ),
+    );
+    wrapper.appendChild(card);
+  }
+
+  return wrapper;
+}
+
+/**
+ * Fetches `adminQuoteNegotiationThread(quoteId)` and renders it into
+ * `container` — called lazily by the "Negotiation" tab's `onActivate`
+ * (see `openQuoteDetailModal`), only once per modal open, only when that
+ * tab is actually clicked. Handles the two known error cases scoped to
+ * THIS tab (never closes the whole modal / shows the page-wide error
+ * banner): the negotiation module disabled, or the caller lacking
+ * `Permission.QUOTE_NEGOTIATION_READ`.
+ */
+async function loadNegotiationThread(quoteId, container) {
+  try {
+    const body = await graphqlRequest(QUOTE_NEGOTIATION_THREAD_QUERY, {
+      quoteId,
+    });
+
+    if (body.errors && body.errors.length > 0) {
+      if (handleAdminUnauthenticated(body)) {
+        detailDialog.close();
+        return;
+      }
+      const code = body.errors[0]?.extensions?.code;
+      container.textContent = '';
+      const message = document.createElement('p');
+      message.className = 'text-secondary mb-0';
+      message.textContent =
+        code === 'QUOTE_NEGOTIATION_MODULE_DISABLED'
+          ? 'The negotiation module is disabled.'
+          : code === 'ADMIN_FORBIDDEN'
+            ? "You don't have permission to view this quote's negotiation."
+            : 'Could not load the negotiation thread. Please try again.';
+      container.appendChild(message);
+      return;
+    }
+
+    container.textContent = '';
+    for (const message of body.data.adminQuoteNegotiationThread) {
+      container.appendChild(buildNegotiationMessage(message));
+    }
+  } catch (error) {
+    container.textContent = '';
+    const message = document.createElement('p');
+    message.className = 'text-secondary mb-0';
+    message.textContent =
+      error instanceof GraphQLNetworkError
+        ? error.message
+        : 'Something went wrong. Please try again.';
+    container.appendChild(message);
+  }
+}
+
+/** "Negotiation" tab — an immediate empty state when
+ * `negotiationMessageCount === 0` (no fetch needed at all), otherwise a
+ * "Loading…" placeholder that `loadNegotiationThread` replaces once the tab
+ * is actually activated (see `onActivate` below). */
+function buildNegotiationTabContent(detail) {
+  const container = document.createElement('div');
+
+  if (detail.negotiationMessageCount === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'text-secondary mb-0';
+    empty.textContent = 'No negotiation messages.';
+    container.appendChild(empty);
+    return { container, needsFetch: false };
+  }
+
+  const loading = document.createElement('p');
+  loading.className = 'text-secondary mb-0';
+  loading.textContent = 'Loading…';
+  container.appendChild(loading);
+  return { container, needsFetch: true };
+}
+
+/** CUSTOMER/PROFESSIONAL sender-role badge for one `EngagementMessage` —
+ * CUSTOMER info-toned, PROFESSIONAL success-toned, same fixed-color
+ * convention `authorRoleVariant` already establishes for the Negotiation
+ * tab's author-role badge. */
+function senderRoleVariant(role) {
+  return role === 'CUSTOMER' ? 'info' : 'success';
+}
+
+/** One `EngagementMessage` in the "Chat" tab — a sender-role badge, the
+ * message text, and a timestamp. Simpler than `buildNegotiationMessage`:
+ * `EngagementMessage` carries no `priceProposal`-equivalent field at all
+ * (this thread structurally cannot touch Quote/Engagement state), so there
+ * is no price-proposal card branch to render. Reuses the existing
+ * `gs-negotiation-message*` CSS classes directly (see
+ * `css/admin-theme.css`) rather than adding a sibling set — those classes
+ * are already generic chat-bubble styling (padding/border/header/timestamp/
+ * body), with no negotiation-specific rule baked in. */
+function buildEngagementChatMessage(message) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'gs-negotiation-message';
+
+  const header = document.createElement('div');
+  header.className = 'gs-negotiation-message-header';
+  header.appendChild(
+    buildStatusBadge(message.senderRole, senderRoleVariant(message.senderRole)),
+  );
+  const timestamp = document.createElement('span');
+  timestamp.className = 'gs-negotiation-message-timestamp text-secondary';
+  timestamp.textContent = formatDateTime(message.createdAt);
+  header.appendChild(timestamp);
+  wrapper.appendChild(header);
+
+  const body = document.createElement('p');
+  body.className = 'gs-negotiation-message-body mb-0';
+  body.textContent = message.content;
+  wrapper.appendChild(body);
+
+  return wrapper;
+}
+
+/**
+ * Fetches `adminEngagementChatThread(engagementId)` and renders it into
+ * `container` — called lazily by the "Chat" tab's `onActivate` (see
+ * `openQuoteDetailModal`), only once per modal open, only when that tab is
+ * actually clicked. There is no `negotiationMessageCount`-equivalent field
+ * to skip an empty-thread fetch cheaply (a deliberate scope trim — adding
+ * one just for this would mean a new field on `QUOTE_DETAIL_QUERY`/
+ * `AdminQuotesResolver` for a single UI convenience), so this always
+ * fetches on first activation and renders an empty-state paragraph if the
+ * returned array is empty. Handles the known error cases scoped to THIS tab
+ * (never closes the whole modal / shows the page-wide error banner):
+ * lacking `Permission.ENGAGEMENT_CHAT_READ`, or the target Engagement no
+ * longer existing (`ADMIN_ENGAGEMENT_NOT_FOUND` — practically unreachable
+ * here, since `engagementId` comes straight from this same `quoteDetail`
+ * response, but handled explicitly rather than falling through to the
+ * generic message). `ENGAGEMENT_CHAT_MODULE_DISABLED` is deliberately NOT
+ * special-cased — `adminEngagementChatThread` is never gated by that guard
+ * (see `AdminEngagementChatResolver`'s own header comment), so this code is
+ * never expected to come back from this query.
+ */
+async function loadEngagementChatThread(engagementId, container) {
+  try {
+    const body = await graphqlRequest(ADMIN_ENGAGEMENT_CHAT_THREAD_QUERY, {
+      engagementId,
+    });
+
+    if (body.errors && body.errors.length > 0) {
+      if (handleAdminUnauthenticated(body)) {
+        detailDialog.close();
+        return;
+      }
+      const code = body.errors[0]?.extensions?.code;
+      container.textContent = '';
+      const message = document.createElement('p');
+      message.className = 'text-secondary mb-0';
+      message.textContent =
+        code === 'ADMIN_FORBIDDEN'
+          ? "You don't have permission to view this engagement's conversation."
+          : code === 'ADMIN_ENGAGEMENT_NOT_FOUND'
+            ? 'This engagement no longer exists.'
+            : 'Could not load the coordination chat. Please try again.';
+      container.appendChild(message);
+      return;
+    }
+
+    container.textContent = '';
+    const messages = body.data.adminEngagementChatThread;
+    if (messages.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'text-secondary mb-0';
+      empty.textContent = 'No coordination messages yet.';
+      container.appendChild(empty);
+      return;
+    }
+    for (const message of messages) {
+      container.appendChild(buildEngagementChatMessage(message));
+    }
+  } catch (error) {
+    container.textContent = '';
+    const message = document.createElement('p');
+    message.className = 'text-secondary mb-0';
+    message.textContent =
+      error instanceof GraphQLNetworkError
+        ? error.message
+        : 'Something went wrong. Please try again.';
+    container.appendChild(message);
+  }
+}
+
+/** One `Appointment` in the "Appointments" tab — a status badge, the
+ * proposedByRole badge, the formatted `startsAt`–`endsAt` range, and — only
+ * when present — `cancelReason`/`cancelledAt`/`confirmedAt`. Reuses the
+ * existing `gs-negotiation-message*` CSS classes (see
+ * `css/admin-theme.css`) rather than adding a sibling set, same "already
+ * generic chat/card-style styling" reasoning `buildEngagementChatMessage`
+ * above already established — this isn't chat-shaped content, but the
+ * bordered-card/header/body layout fits just as well and nothing here is
+ * negotiation- or chat-specific. */
+function buildAppointmentCard(appointment) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'gs-negotiation-message';
+
+  const header = document.createElement('div');
+  header.className = 'gs-negotiation-message-header';
+  header.appendChild(
+    buildStatusBadge(
+      appointment.status,
+      APPOINTMENT_STATUS_VARIANTS[appointment.status],
+    ),
+  );
+  header.appendChild(
+    buildStatusBadge(
+      appointment.proposedByRole,
+      authorRoleVariant(appointment.proposedByRole),
+    ),
+  );
+  const timestamp = document.createElement('span');
+  timestamp.className = 'gs-negotiation-message-timestamp text-secondary';
+  timestamp.textContent = formatDateTime(appointment.createdAt);
+  header.appendChild(timestamp);
+  wrapper.appendChild(header);
+
+  const body = document.createElement('p');
+  body.className = 'gs-negotiation-message-body mb-0';
+  body.textContent = `${formatDateTime(appointment.startsAt)} – ${formatDateTime(appointment.endsAt)}`;
+  wrapper.appendChild(body);
+
+  // `cancelReason`/`cancelledAt`/`confirmedAt` — only rendered when present
+  // (a PENDING Appointment has none of these; a CONFIRMED one has only
+  // `confirmedAt`; a CANCELLED one has `cancelReason`/`cancelledAt`, and
+  // may or may not also have `confirmedAt` depending on whether it was
+  // cancelled from PENDING or CONFIRMED).
+  if (appointment.confirmedAt || appointment.cancelledAt) {
+    const details = document.createElement('div');
+    details.className = 'gs-detail-specialization gs-negotiation-proposal';
+    const fields = [];
+    if (appointment.confirmedAt) {
+      fields.push(buildField('Confirmed at', formatDateTime(appointment.confirmedAt)));
+    }
+    if (appointment.cancelledAt) {
+      fields.push(buildField('Cancelled at', formatDateTime(appointment.cancelledAt)));
+      fields.push(buildField('Cancel reason', appointment.cancelReason));
+    }
+    details.append(...fields);
+    wrapper.appendChild(details);
+  }
+
+  return wrapper;
+}
+
+/**
+ * Fetches `adminAppointmentsByEngagement(engagementId)` and renders it into
+ * `container` — called lazily by the "Appointments" tab's `onActivate` (see
+ * `openQuoteDetailModal`), only once per modal open, only when that tab is
+ * actually clicked. Same "no cheap count field to skip an empty fetch"
+ * scope trim as `loadEngagementChatThread` above — always fetches on first
+ * activation and renders an empty-state paragraph if the returned array is
+ * empty. Handles the known error cases scoped to THIS tab (never closes the
+ * whole modal / shows the page-wide error banner): lacking
+ * `Permission.APPOINTMENTS_READ`, or the target Engagement no longer
+ * existing (`ADMIN_ENGAGEMENT_NOT_FOUND` — practically unreachable here,
+ * since `engagementId` comes straight from this same `quoteDetail`
+ * response, but handled explicitly rather than falling through to the
+ * generic message). `APPOINTMENTS_MODULE_DISABLED` is deliberately NOT
+ * special-cased — `adminAppointmentsByEngagement` is never gated by that
+ * guard (see `AdminAppointmentsResolver`'s own header comment), so this
+ * code is never expected to come back from this query.
+ */
+async function loadAppointments(engagementId, container) {
+  try {
+    const body = await graphqlRequest(ADMIN_APPOINTMENTS_BY_ENGAGEMENT_QUERY, {
+      engagementId,
+    });
+
+    if (body.errors && body.errors.length > 0) {
+      if (handleAdminUnauthenticated(body)) {
+        detailDialog.close();
+        return;
+      }
+      const code = body.errors[0]?.extensions?.code;
+      container.textContent = '';
+      const message = document.createElement('p');
+      message.className = 'text-secondary mb-0';
+      message.textContent =
+        code === 'ADMIN_FORBIDDEN'
+          ? "You don't have permission to view this engagement's appointments."
+          : code === 'ADMIN_ENGAGEMENT_NOT_FOUND'
+            ? 'This engagement no longer exists.'
+            : 'Could not load appointments. Please try again.';
+      container.appendChild(message);
+      return;
+    }
+
+    container.textContent = '';
+    const appointments = body.data.adminAppointmentsByEngagement;
+    if (appointments.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'text-secondary mb-0';
+      empty.textContent = 'No appointments yet.';
+      container.appendChild(empty);
+      return;
+    }
+    for (const appointment of appointments) {
+      container.appendChild(buildAppointmentCard(appointment));
+    }
+  } catch (error) {
+    container.textContent = '';
+    const message = document.createElement('p');
+    message.className = 'text-secondary mb-0';
+    message.textContent =
+      error instanceof GraphQLNetworkError
+        ? error.message
+        : 'Something went wrong. Please try again.';
+    container.appendChild(message);
+  }
 }
 
 async function openQuoteDetailModal(rowData) {
@@ -452,7 +956,99 @@ async function openQuoteDetailModal(rowData) {
       return;
     }
 
-    detailContentEl.appendChild(buildDetailContent(body.data.quoteDetail));
+    const detail = body.data.quoteDetail;
+    const { container: negotiationContainer, needsFetch } =
+      buildNegotiationTabContent(detail);
+    let negotiationLoaded = false;
+
+    const tabs = [
+      {
+        id: 'detail',
+        label: 'Details',
+        content: buildQuoteDetailTabContent(detail),
+      },
+      {
+        id: 'negotiation',
+        label: 'Negotiation',
+        content: negotiationContainer,
+        onActivate: () => {
+          if (negotiationLoaded || !needsFetch) {
+            return;
+          }
+          negotiationLoaded = true;
+          void loadNegotiationThread(detail.id, negotiationContainer);
+        },
+      },
+    ];
+
+    // "Chat" tab (GOS-46 follow-up) — only meaningful once `detail.engagement`
+    // exists (no Engagement -> no coordination chat possible); omitted from
+    // `tabs` entirely otherwise, same `if` gate the "Engagement" subsection
+    // in `buildQuoteDetailTabContent` already uses. Always lazy-fetches on
+    // first activation (no cheap count field to skip an empty fetch) — see
+    // `loadEngagementChatThread`'s own comment for why this is a deliberate
+    // scope trim, not an oversight.
+    if (detail.engagement) {
+      const chatContainer = document.createElement('div');
+      const chatLoading = document.createElement('p');
+      chatLoading.className = 'text-secondary mb-0';
+      chatLoading.textContent = 'Loading…';
+      chatContainer.appendChild(chatLoading);
+      let chatLoaded = false;
+
+      tabs.push({
+        id: 'engagement-chat',
+        label: 'Chat',
+        content: chatContainer,
+        onActivate: () => {
+          if (chatLoaded) {
+            return;
+          }
+          chatLoaded = true;
+          void loadEngagementChatThread(detail.engagement.id, chatContainer);
+        },
+      });
+
+      // "Appointments" tab (GOS-59 follow-up, 2026-08-24) — same
+      // `detail.engagement` gate as the "Chat" tab above (no Engagement ->
+      // no Appointment possible either), same always-fetch-on-first-
+      // activation shape (no cheap count field on `quoteDetail` to skip an
+      // empty fetch, same deliberate scope trim `loadEngagementChatThread`'s
+      // own comment documents). Deliberately visible even when
+      // `customer.appointments.enabled` is toggled off — this tab calls the
+      // ungated `adminAppointmentsByEngagement` query (see
+      // `AdminAppointmentsResolver`'s own header comment,
+      // `src/platform-admin/appointments/admin-appointments.resolver.ts`),
+      // so a support admin seeing populated Appointment history here with
+      // the customer-facing capability toggled off is expected/documented
+      // behavior, not a bug.
+      const appointmentsContainer = document.createElement('div');
+      const appointmentsLoading = document.createElement('p');
+      appointmentsLoading.className = 'text-secondary mb-0';
+      appointmentsLoading.textContent = 'Loading…';
+      appointmentsContainer.appendChild(appointmentsLoading);
+      let appointmentsLoaded = false;
+
+      tabs.push({
+        id: 'appointments',
+        label: 'Appointments',
+        content: appointmentsContainer,
+        onActivate: () => {
+          if (appointmentsLoaded) {
+            return;
+          }
+          appointmentsLoaded = true;
+          void loadAppointments(detail.engagement.id, appointmentsContainer);
+        },
+      });
+    }
+
+    detailContentEl.appendChild(
+      renderDetailTabs(tabs, {
+        idPrefix: 'quotes-detail',
+        ariaLabel: 'Quote detail sections',
+      }),
+    );
   } catch (error) {
     showDetailError(
       error instanceof GraphQLNetworkError

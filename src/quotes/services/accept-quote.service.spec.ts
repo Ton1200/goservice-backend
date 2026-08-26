@@ -3,6 +3,7 @@ import { QuoteStatus, ServiceRequestStatus } from '@prisma/client';
 import { EngagementsRepository } from '../../engagements/engagements.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
+import { QuoteNegotiationRepository } from '../../quote-negotiation/quote-negotiation.repository';
 import { ServiceRequestsRepository } from '../../service-requests/service-requests.repository';
 import { QuotesRepository } from '../quotes.repository';
 import { AcceptQuoteService } from './accept-quote.service';
@@ -38,6 +39,7 @@ describe('AcceptQuoteService', () => {
     serviceRequest?: ReturnType<typeof makeServiceRequest> | null;
     serviceRequestCasCount?: number;
     quoteCasCount?: number;
+    pendingProposal?: { id: string } | null;
   }) {
     const fakeTx = { __fakeTransactionClient: true };
     const $transaction = jest.fn(
@@ -95,12 +97,24 @@ describe('AcceptQuoteService', () => {
       create,
     } as unknown as EngagementsRepository;
 
+    const findPendingProposalByQuoteId = jest
+      .fn()
+      .mockResolvedValue(
+        overrides?.pendingProposal === undefined
+          ? null
+          : overrides.pendingProposal,
+      );
+    const quoteNegotiationRepository = {
+      findPendingProposalByQuoteId,
+    } as unknown as QuoteNegotiationRepository;
+
     const service = new AcceptQuoteService(
       prisma,
       profilesRepository,
       serviceRequestsRepository,
       quotesRepository,
       engagementsRepository,
+      quoteNegotiationRepository,
     );
 
     return {
@@ -112,6 +126,7 @@ describe('AcceptQuoteService', () => {
       transitionToAcceptedIfSent,
       rejectSiblingsSent,
       create,
+      findPendingProposalByQuoteId,
     };
   }
 
@@ -261,5 +276,43 @@ describe('AcceptQuoteService', () => {
     expect(transitionToAcceptedIfSent).toHaveBeenCalledTimes(1);
     expect(rejectSiblingsSent).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('throws QUOTE_HAS_PENDING_PRICE_PROPOSAL when the Quote has an unresolved PENDING price proposal, and never starts the transaction', async () => {
+    const { service, findPendingProposalByQuoteId, transitionToEngagedIfOpen } =
+      makeService({ pendingProposal: { id: 'proposal-1' } });
+
+    await expect(
+      service.acceptQuote('user-1', 'quote-1'),
+    ).rejects.toMatchObject({ code: 'QUOTE_HAS_PENDING_PRICE_PROPOSAL' });
+
+    expect(findPendingProposalByQuoteId).toHaveBeenCalledWith('quote-1');
+    expect(transitionToEngagedIfOpen).not.toHaveBeenCalled();
+  });
+
+  it('accepts normally when there is no price proposal at all', async () => {
+    const { service, findPendingProposalByQuoteId } = makeService({
+      pendingProposal: null,
+    });
+
+    const result = await service.acceptQuote('user-1', 'quote-1');
+
+    expect(findPendingProposalByQuoteId).toHaveBeenCalledWith('quote-1');
+    expect(result.status).toBe(ServiceRequestStatus.ENGAGED);
+  });
+
+  it('accepts normally when the most recent price proposal is already resolved (not PENDING)', async () => {
+    // `findPendingProposalByQuoteId` only ever returns a row for a
+    // currently-PENDING proposal (see that repository method's own query) —
+    // an ACCEPTED/REJECTED/SUPERSEDED proposal means it returns null, same
+    // as "no proposal at all".
+    const { service, findPendingProposalByQuoteId } = makeService({
+      pendingProposal: null,
+    });
+
+    const result = await service.acceptQuote('user-1', 'quote-1');
+
+    expect(findPendingProposalByQuoteId).toHaveBeenCalledWith('quote-1');
+    expect(result.status).toBe(ServiceRequestStatus.ENGAGED);
   });
 });

@@ -37,10 +37,22 @@ export type QuoteWithRelations = Prisma.QuoteGetPayload<{
 const ADMIN_QUOTE_SELECT = {
   id: true,
   price: true,
+  // GOS-53 (Quote Negotiation) admin follow-up — the negotiated price
+  // agreed via the Quote Negotiation thread, if any (`Quote.negotiatedPrice`
+  // — see that column's own schema comment). `null` until/unless a
+  // `QuotePriceProposal` on this Quote is accepted.
+  negotiatedPrice: true,
   message: true,
   status: true,
   createdAt: true,
   updatedAt: true,
+  // GOS-53 admin follow-up — a cheap, permission-light "is there
+  // negotiation activity here" signal for the grid/detail view. Actually
+  // reading the thread itself still requires `Permission.QUOTE_NEGOTIATION_READ`
+  // via the separate `adminQuoteNegotiationThread` query (gated by
+  // `QuoteNegotiationModuleEnabledGuard` too) — this count alone never
+  // exposes message content.
+  _count: { select: { negotiationMessages: true } },
   serviceRequest: {
     select: {
       id: true,
@@ -214,6 +226,31 @@ export class QuotesRepository {
         id: { not: acceptedQuoteId },
       },
       data: { status: QuoteStatus.REJECTED, rejectedAt: new Date() },
+    });
+  }
+
+  // ---- GOS-53 (Quote Negotiation) — `AcceptQuotePriceProposalService`
+  // (`src/quote-negotiation/`) reuses THIS class as a concrete provider,
+  // same "reuse the concrete repository class directly, never import the
+  // resolver-bearing QuotesModule" pattern already established elsewhere.
+  // Deliberately kept HERE (not on `QuoteNegotiationRepository`) — this
+  // class's own header comment already claims "the ONLY place in this
+  // codebase that issues Prisma queries for Quote"; a write to
+  // `Quote.negotiatedPrice` from a second repository would break that rule.
+  // Runs inside the caller's own `tx` (same "no separate transaction"
+  // convention as `transitionToAcceptedIfSent`/`rejectSiblingsSent` above)
+  // — always called alongside `QuoteNegotiationRepository.acceptProposal`'s
+  // own CAS write, in the same transaction.
+
+  setNegotiatedPrice(
+    tx: Prisma.TransactionClient,
+    quoteId: string,
+    negotiatedPrice: number,
+  ): Promise<{ id: string }> {
+    return tx.quote.update({
+      where: { id: quoteId },
+      data: { negotiatedPrice },
+      select: { id: true },
     });
   }
 

@@ -3,8 +3,10 @@ import { AuthModule } from '../auth/auth.module';
 import { EngagementsModule } from '../engagements/engagements.module';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
 import { ProfilesModule } from '../profiles/profiles.module';
+import { QuoteNegotiationRepository } from '../quote-negotiation/quote-negotiation.repository';
 import { ServiceRequestsRepository } from '../service-requests/service-requests.repository';
 import { UsersModule } from '../users/users.module';
+import { QuoteFieldResolver } from './quote-field.resolver';
 import { QuotesRepository } from './quotes.repository';
 import { QuotesResolver } from './quotes.resolver';
 import { AcceptQuoteService } from './services/accept-quote.service';
@@ -37,6 +39,14 @@ import { WithdrawQuoteService } from './services/withdraw-quote.service';
  * resolver-bearing Module" pattern already established elsewhere in this
  * codebase (see `service-requests.module.ts`'s/`platform-admin.module.ts`'s
  * own comments).
+ *
+ * `QuoteNegotiationRepository` is reused the SAME way (GOS-53 follow-up) —
+ * `AcceptQuoteService` needs to check for an unresolved `PENDING`
+ * `QuotePriceProposal` before accepting a `Quote` (see that service's own
+ * comment), but `quotes/` must NEVER import `QuoteNegotiationModule` back
+ * (it, in turn, already reuses `QuotesRepository`/`ServiceRequestsRepository`
+ * this same concrete-provider way — see `quote-negotiation.module.ts`'s own
+ * comment — so importing it here would form a two-way module cycle).
  */
 @Module({
   imports: [
@@ -48,8 +58,10 @@ import { WithdrawQuoteService } from './services/withdraw-quote.service';
   ],
   providers: [
     QuotesResolver,
+    QuoteFieldResolver,
     QuotesRepository,
     ServiceRequestsRepository,
+    QuoteNegotiationRepository,
     SubmitQuoteService,
     WithdrawQuoteService,
     ListQuotesForServiceRequestService,

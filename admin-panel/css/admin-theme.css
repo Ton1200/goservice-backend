@@ -538,6 +538,23 @@ h6.gs-settings-group-heading {
   background-color: rgba(28, 36, 48, 0.5);
 }
 
+/* The role-edit dialog's resource x action permission matrix
+   (js/adminRoles.js's `buildPermissionCheckboxes`) — six columns (Resource,
+   All, Read, Write, Delete, Manage) inside a `.gs-detail-dialog` whose own
+   `max-width` is 40rem, so a slightly tighter cell padding than Tabler's
+   default table keeps every column readable without needing the
+   `.table-responsive` wrapper's horizontal scroll on a typical desktop
+   viewport (it still applies as a fallback on anything narrower). */
+.gs-permission-matrix th,
+.gs-permission-matrix td {
+  padding: 0.5rem 0.75rem;
+  white-space: nowrap;
+}
+
+.gs-permission-matrix td.text-secondary {
+  font-size: 0.875rem;
+}
+
 .gs-detail-tablist {
   margin-bottom: 1rem;
 }
@@ -598,12 +615,128 @@ h6.gs-settings-group-heading {
   margin-bottom: 0;
 }
 
+/* Generic status pill (`js/detailView.js`'s `buildStatusBadge`) — GOS-53
+   Quote Negotiation admin follow-up (2026-08-21). Reuses the
+   `--gs-feedback-*` tokens defined on `:root` above, which nothing in this
+   panel actually consumed for a status value before this (only
+   `categories.js`'s unrelated `badge bg-secondary-lt` child-count pill
+   existed). Used inside detail-popup tabpanels wherever a Quote/
+   ServiceRequest/QuotePriceProposal status used to render as plain text. */
+.gs-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: var(--tblr-font-weight-medium, 500);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.gs-status-badge--success {
+  color: var(--gs-feedback-success);
+  background-color: var(--gs-feedback-success-surface);
+}
+
+.gs-status-badge--warning {
+  color: var(--gs-feedback-warning);
+  background-color: var(--gs-feedback-warning-surface);
+}
+
+.gs-status-badge--error {
+  color: var(--gs-feedback-error);
+  background-color: var(--gs-feedback-error-surface);
+}
+
+.gs-status-badge--info {
+  color: var(--gs-feedback-info);
+  background-color: var(--gs-feedback-info-surface);
+}
+
+.gs-status-badge--neutral {
+  color: var(--gs-text-secondary);
+  background-color: var(--gs-surface-secondary);
+}
+
 .gs-detail-photo {
   max-width: 6rem;
   max-height: 6rem;
   border-radius: 4px;
   margin-bottom: 1rem;
   display: block;
+}
+
+/* Quotes detail modal's "Negociación" tab (GOS-53 Quote Negotiation admin
+   follow-up, 2026-08-21, js/quotes.js) — one chat-style block per
+   `QuoteNegotiationMessage`, oldest first. Its linked `QuotePriceProposal`
+   (if any) nests a `.gs-detail-specialization` card, same bordered-card
+   treatment `userAccounts.js`'s specializations list already uses.
+
+   REUSED as-is (no sibling `.gs-chat-message*` set added) by the same
+   modal's "Chat de Coordinación" tab (GOS-46 follow-up, 2026-08-21,
+   `buildEngagementChatMessage` in js/quotes.js) — these rules are already
+   generic chat-bubble styling (padding/border/header/timestamp/body) with
+   nothing negotiation-specific baked in; that tab simply never appends a
+   `.gs-negotiation-proposal` card, since `EngagementMessage` has no
+   price-proposal-equivalent field. */
+.gs-negotiation-message {
+  padding: 0.75rem;
+  border: 1px solid var(--gs-border-default);
+  border-radius: 4px;
+  margin-bottom: 0.75rem;
+  background-color: var(--gs-surface-primary);
+}
+
+.gs-negotiation-message:last-child {
+  margin-bottom: 0;
+}
+
+.gs-negotiation-message-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.gs-negotiation-message-timestamp {
+  font-size: 0.8125rem;
+}
+
+.gs-negotiation-message-body {
+  word-break: break-word;
+}
+
+.gs-negotiation-proposal {
+  margin-top: 0.75rem;
+}
+
+/* Service Requests detail modal's "Cotizaciones" tab (same follow-up,
+   js/serviceRequests.js) — one row per Quote submitted against this
+   ServiceRequest. */
+.gs-quote-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--gs-border-default);
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+  background-color: var(--gs-surface-secondary);
+}
+
+.gs-quote-row:last-child {
+  margin-bottom: 0;
+}
+
+.gs-quote-row-main {
+  flex: 1 1 auto;
+  min-width: 12rem;
+}
+
+.gs-quote-row-negotiation-indicator {
+  font-size: 0.75rem;
+  color: var(--gs-text-muted);
 }
 
 /* Service Requests detail modal's "Attachments" list (GOS-38 follow-up,

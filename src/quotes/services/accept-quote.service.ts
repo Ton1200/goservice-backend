@@ -3,10 +3,12 @@ import { QuoteStatus, ServiceRequestStatus } from '@prisma/client';
 import { EngagementsRepository } from '../../engagements/engagements.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
+import { QuoteNegotiationRepository } from '../../quote-negotiation/quote-negotiation.repository';
 import { customerProfileRequired } from '../../service-requests/errors/customer-profile-required.error';
 import { ServiceRequestModel } from '../../service-requests/models/service-request.model';
 import { ServiceRequestsRepository } from '../../service-requests/service-requests.repository';
 import { quoteAcceptConflict } from '../errors/quote-accept-conflict.error';
+import { quoteHasPendingPriceProposal } from '../errors/quote-has-pending-price-proposal.error';
 import { quoteNotFound } from '../errors/quote-not-found.error';
 import { quoteNotSent } from '../errors/quote-not-sent.error';
 import { serviceRequestNotOpen } from '../errors/service-request-not-open.error';
@@ -32,14 +34,36 @@ import { QuotesRepository } from '../quotes.repository';
  *
  * A pre-read happens BEFORE the transaction, purely for a good, SPECIFIC
  * error message in the common (non-race) case
- * (`quoteNotFound`/`quoteNotSent`/`serviceRequestNotOpen`). The actual
- * safety mechanism against a concurrent accept/cancel/withdraw is the two
- * guarded `updateMany` CAS writes INSIDE the transaction — either can
- * report `count !== 1` even when the pre-read looked fine a moment
- * earlier, in which case this throws the generic, non-enumerating
- * `quoteAcceptConflict()` and the whole transaction rolls back: no
- * `Engagement` is ever created, and neither the `ServiceRequest` nor the
- * `Quote` end up partially transitioned.
+ * (`quoteNotFound`/`quoteNotSent`/`serviceRequestNotOpen`/
+ * `quoteHasPendingPriceProposal`). The actual safety mechanism against a
+ * concurrent accept/cancel/withdraw is the two guarded `updateMany` CAS
+ * writes INSIDE the transaction — either can report `count !== 1` even
+ * when the pre-read looked fine a moment earlier, in which case this
+ * throws the generic, non-enumerating `quoteAcceptConflict()` and the
+ * whole transaction rolls back: no `Engagement` is ever created, and
+ * neither the `ServiceRequest` nor the `Quote` end up partially
+ * transitioned.
+ *
+ * GOS-53 follow-up: also refuses to accept a Quote while it has an
+ * unresolved `PENDING` `QuotePriceProposal` open against it — see
+ * `quoteHasPendingPriceProposal()`'s own comment for the business-rule
+ * gap this closes (`Engagement` stores no price of its own; the "real"
+ * price is always `Quote.negotiatedPrice ?? Quote.price`, so accepting
+ * while a negotiation is unresolved would silently lock in the wrong
+ * price). This check is pre-transaction only, same "good error message,
+ * not the actual race guard" posture as the other pre-read checks above —
+ * unlike `ServiceRequest.status`/`Quote.status`, there is no CAS write
+ * touching `QuotePriceProposal` in this transaction, so a proposal created
+ * in the narrow window between this check and the transaction committing
+ * is a known, accepted (not CAS-guarded) race, same class of risk this
+ * codebase already accepts for other pre-only reads.
+ * `QuoteNegotiationRepository` is reused here as a CONCRETE provider class
+ * (NOT imported via `QuoteNegotiationModule`, which has its own
+ * `@Resolver()` and — critically — already reuses `QuotesRepository` in
+ * the OPPOSITE direction; importing `QuoteNegotiationModule` here would
+ * create a two-way module cycle) — same "reuse the concrete repository
+ * class directly, never import the resolver-bearing Module" pattern this
+ * file's own header already documents for `ServiceRequestsRepository`.
  *
  * Transaction order (see the GOS-41 plan's decision #5):
  *   (a) CAS `ServiceRequest.status: OPEN -> ENGAGED` + set `acceptedQuoteId`
@@ -64,6 +88,7 @@ export class AcceptQuoteService {
     private readonly serviceRequestsRepository: ServiceRequestsRepository,
     private readonly quotesRepository: QuotesRepository,
     private readonly engagementsRepository: EngagementsRepository,
+    private readonly quoteNegotiationRepository: QuoteNegotiationRepository,
   ) {}
 
   async acceptQuote(
@@ -101,6 +126,14 @@ export class AcceptQuoteService {
     }
     if (quote.status !== QuoteStatus.SENT) {
       throw quoteNotSent();
+    }
+
+    const pendingProposal =
+      await this.quoteNegotiationRepository.findPendingProposalByQuoteId(
+        quote.id,
+      );
+    if (pendingProposal) {
+      throw quoteHasPendingPriceProposal();
     }
 
     await this.prisma.$transaction(async (tx) => {

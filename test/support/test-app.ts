@@ -187,6 +187,22 @@ export async function cleanProfilesData(prisma: PrismaService): Promise<void> {
 }
 
 /**
+ * GOS-59 — deletes all `Appointment` rows. Call BEFORE
+ * `cleanQuotesAndEngagementsData` below — `Appointment.engagementId`
+ * references `Engagement` (`onDelete: Cascade`, so
+ * `cleanQuotesAndEngagementsData`'s own `engagement.deleteMany()` would
+ * sweep these away too — this explicit helper exists anyway, same
+ * "independently callable, matches every other `clean*Data` helper's own
+ * convention" reasoning `cleanIdentityVerificationData` already documents
+ * for its own Cascade-redundant cleanup).
+ */
+export async function cleanAppointmentsData(
+  prisma: PrismaService,
+): Promise<void> {
+  await prisma.appointment.deleteMany();
+}
+
+/**
  * GOS-41 — deletes all `quotes`/`engagements`-module rows, in FK-safe order
  * (`Engagement` first — it references both `ServiceRequest` and `Quote` —
  * then `Quote`). Call BEFORE `cleanServiceRequestsData` below. Strictly
@@ -420,11 +436,19 @@ export async function enableTestIdentityVerification(
  * reasoning as `Category` above) or `PlatformSetting` rows (shared,
  * seed-owned data other suites — e.g. `auth-social-login.e2e-spec.ts` —
  * also depend on existing with their seeded defaults).
+ *
+ * `adminInvite.deleteMany()` (Administrators-tab follow-up, 2026-08-20) is
+ * technically redundant with `adminUser.deleteMany()`'s own
+ * `onDelete: Cascade` on `AdminInvite.adminUserId` — included explicitly
+ * anyway, same "independently callable, matches every other `clean*Data`
+ * helper's own convention" reasoning `cleanIdentityVerificationData` already
+ * documents for its own Cascade-redundant cleanup.
  */
 export async function cleanAdminUsersData(
   prisma: PrismaService,
 ): Promise<void> {
   await prisma.adminAuditLog.deleteMany();
+  await prisma.adminInvite.deleteMany();
   await prisma.adminSession.deleteMany();
   await prisma.adminUser.deleteMany();
 }

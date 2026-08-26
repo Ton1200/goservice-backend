@@ -5,6 +5,8 @@ import type {
 import { AdminServiceRequestCustomerModel } from './admin-service-request-customer.model';
 import { AdminServiceRequestDetailModel } from './admin-service-request-detail.model';
 import { AdminServiceRequestModel } from './admin-service-request.model';
+import { AdminServiceRequestQuoteModel } from './admin-service-request-quote.model';
+import { AdminServiceRequestQuoteProfessionalModel } from './admin-service-request-quote-professional.model';
 
 function toCustomerModel(
   customerProfile: AdminServiceRequestRow['customerProfile'],
@@ -42,6 +44,30 @@ export function toAdminServiceRequestModel(
   return model;
 }
 
+function toQuoteProfessionalModel(
+  professionalProfile: AdminServiceRequestDetailRow['quotes'][number]['professionalProfile'],
+): AdminServiceRequestQuoteProfessionalModel {
+  const model = new AdminServiceRequestQuoteProfessionalModel();
+  model.displayName = professionalProfile.displayName;
+  model.email = professionalProfile.user.email;
+  return model;
+}
+
+function toQuoteModel(
+  quote: AdminServiceRequestDetailRow['quotes'][number],
+): AdminServiceRequestQuoteModel {
+  const model = new AdminServiceRequestQuoteModel();
+  model.id = quote.id;
+  model.price = quote.price;
+  model.negotiatedPrice = quote.negotiatedPrice;
+  model.finalPrice = quote.negotiatedPrice ?? quote.price;
+  model.status = quote.status;
+  model.negotiationMessageCount = quote._count.negotiationMessages;
+  model.professional = toQuoteProfessionalModel(quote.professionalProfile);
+  model.createdAt = quote.createdAt;
+  return model;
+}
+
 /**
  * Maps a `ServiceRequestsRepository.ADMIN_SERVICE_REQUEST_DETAIL_SELECT`-shaped
  * row to the GraphQL-facing `AdminServiceRequestDetailModel`.
@@ -60,6 +86,7 @@ export function toAdminServiceRequestDetailModel(
   model.status = row.status;
   model.cancelledAt = row.cancelledAt;
   model.attachments = row.attachments;
+  model.quotes = row.quotes.map(toQuoteModel);
   model.createdAt = row.createdAt;
   model.updatedAt = row.updatedAt;
   return model;

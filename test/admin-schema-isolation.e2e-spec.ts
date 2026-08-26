@@ -143,6 +143,22 @@ const ADMIN_ONLY_FIELDS = [
   // mutation — see AdminQuotesResolver's own header comment for why).
   'quotes',
   'quoteDetail',
+  // Administrators-tab follow-up (2026-08-20) — role/permission management
+  // (`src/platform-admin/admin-roles/`) + admin-user invite/manage
+  // (`src/platform-admin/admin-users/`, `src/platform-admin/admin-invites/`).
+  // `acceptAdminInvite` is the ONE exception in this whole feature — see its
+  // own resolver's header comment for why it deliberately has NO guard at
+  // all, unlike every other field listed here.
+  'adminRoles',
+  'createAdminRole',
+  'updateAdminRolePermissions',
+  'deleteAdminRole',
+  'adminUsers',
+  'updateAdminUser',
+  'deleteAdminUser',
+  'inviteAdminUser',
+  'resendAdminInvite',
+  'acceptAdminInvite',
 ];
 
 // Fields that must NEVER appear on `/admin/graphql` — consumer-only
@@ -281,6 +297,20 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         // mutation (see AdminQuotesResolver's own header comment for why).
         'quotes',
         'quoteDetail',
+        // Administrators-tab follow-up (2026-08-20).
+        'adminRoles',
+        'adminUsers',
+        // Quote Negotiation admin audit surface follow-up (GOS-53,
+        // 2026-08-21) — this entry was already missing from this hardcoded
+        // list before GOS-46 touched this file at all (a pre-existing gap,
+        // not introduced by this change); added now alongside the
+        // GOS-46 entry below so this assertion is accurate again.
+        'adminQuoteNegotiationThread',
+        // Chat de Coordinación admin audit surface (GOS-46, 2026-08-21).
+        'adminEngagementChatThread',
+        // Appointment (Coordinación de Visita) admin audit surface (GOS-59,
+        // 2026-08-24).
+        'adminAppointmentsByEngagement',
       ].sort(),
     );
     expect(
@@ -303,6 +333,18 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         'createCategory',
         'updateCategory',
         'deleteCategory',
+        // Administrators-tab follow-up (2026-08-20). `acceptAdminInvite` is
+        // included here too — it IS a real field on this schema's
+        // mutationType (reachable, just unguarded) — see this file's own
+        // `ADMIN_ONLY_FIELDS` comment for the distinction.
+        'createAdminRole',
+        'updateAdminRolePermissions',
+        'deleteAdminRole',
+        'updateAdminUser',
+        'deleteAdminUser',
+        'inviteAdminUser',
+        'resendAdminInvite',
+        'acceptAdminInvite',
       ].sort(),
     );
   });
