@@ -1,5 +1,6 @@
 import { Field, InputType } from '@nestjs/graphql';
 import {
+  IsBoolean,
   IsEnum,
   IsOptional,
   IsString,
@@ -56,4 +57,16 @@ export class UpsertCustomerProfileInput {
   @IsOptional()
   @IsUrl()
   photoUrl?: string;
+
+  // GOS-62 — explicit opt-in location-sharing consent flag ONLY (no
+  // latitude/longitude, no real geolocation logic — see DEC-005, still
+  // status "Proposed"). Optional/partial-update semantics, same convention
+  // as `photoUrl` above: when omitted on an edit, the currently persisted
+  // value is left unchanged (see `upsert-customer-profile.service.ts`) —
+  // it is NOT reset to `false`. Only an explicit `true`/`false` in the
+  // request body changes it.
+  @Field(() => Boolean, { nullable: true })
+  @IsOptional()
+  @IsBoolean()
+  locationSharingEnabled?: boolean;
 }

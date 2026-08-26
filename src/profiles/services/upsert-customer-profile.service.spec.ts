@@ -107,6 +107,31 @@ describe('UpsertCustomerProfileService', () => {
     expect(callArg.photoUrl).toBeUndefined();
   });
 
+  it('passes locationSharingEnabled through to the repository when provided', async () => {
+    const { service, upsertCustomerProfile } = makeService();
+
+    await service.upsertCustomerProfile(
+      'user-1',
+      validInput({ locationSharingEnabled: true }),
+    );
+
+    expect(upsertCustomerProfile).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ locationSharingEnabled: true }),
+    );
+  });
+
+  it('passes locationSharingEnabled through as undefined (not a wipe/reset-to-false value) when omitted', async () => {
+    const { service, upsertCustomerProfile } = makeService();
+
+    await service.upsertCustomerProfile('user-1', validInput());
+
+    const callArg = (upsertCustomerProfile.mock.calls as unknown[][])[0][1] as {
+      locationSharingEnabled?: boolean;
+    };
+    expect(callArg.locationSharingEnabled).toBeUndefined();
+  });
+
   it('passes through a non-default country when provided', async () => {
     const { service, upsertCustomerProfile } = makeService();
 

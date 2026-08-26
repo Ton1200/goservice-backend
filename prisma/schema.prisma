@@ -264,6 +264,18 @@ model CustomerProfile {
   // decided yet — see infrastructure.md's open hosting-provider question —
   // so this is just a URL string today, not backed by any real upload flow).
   photoUrl    String?
+  // GOS-62 — explicit opt-in consent flag ONLY: whether this Customer is
+  // willing to share their location, added ahead of any real geolocation
+  // capability (DEC-005, still status "Proposed" — this field does not
+  // resolve that decision, only prepares consent ahead of it). Default
+  // `false` (opt-in, never opt-out-by-default) — added retroactively via
+  // `prisma/migrations/*_add_location_sharing_consent_flag/migration.sql`'s
+  // own comment, same "document the retroactive addition" standard as
+  // `country`'s own migration note above. Deliberately NOT a
+  // latitude/longitude pair or any coordinate — no real geospatial data
+  // exists anywhere in this schema yet; that belongs to a separate future
+  // story once DEC-005 is actually decided.
+  locationSharingEnabled Boolean @default(false)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
@@ -319,6 +331,11 @@ model ProfessionalProfile {
   // some plumbing can report different experience for each.)
   languages              String[]                       @default([])
   verificationStatus     ProfessionalVerificationStatus @default(UNVERIFIED)
+  // GOS-62 — same explicit opt-in consent flag as `CustomerProfile`'s own
+  // field of the same name (see that field's own comment for the full
+  // rationale) — independent per profile: a User holding both a
+  // CustomerProfile and a ProfessionalProfile may set each one differently.
+  locationSharingEnabled Boolean                        @default(false)
   createdAt              DateTime                       @default(now())
   updatedAt              DateTime                       @updatedAt
 
