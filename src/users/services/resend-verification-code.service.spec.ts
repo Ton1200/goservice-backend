@@ -136,6 +136,7 @@ describe('ResendVerificationCodeService', () => {
       user: {
         id: 'u1',
         email: 'jane@example.com',
+        firstName: 'Jane',
         accountStatus: UserAccountStatus.PENDING_EMAIL_VERIFICATION,
       },
       activeCode: { id: 'code-1', createdAt },
@@ -151,6 +152,7 @@ describe('ResendVerificationCodeService', () => {
     expect(sendVerificationCode).toHaveBeenCalledWith(
       'jane@example.com',
       expect.stringMatching(/^\d{6}$/),
+      'Jane',
     );
   });
 

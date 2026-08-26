@@ -20,7 +20,7 @@ describe('ForceUserAccountPasswordResetService', () => {
       .fn()
       .mockResolvedValue(
         options.user === undefined
-          ? { id: 'u1', email: 'jane@example.com' }
+          ? { id: 'u1', email: 'jane@example.com', firstName: 'Jane' }
           : options.user,
       );
     const usersRepository = { findByIdForAdmin } as unknown as UsersRepository;
@@ -90,7 +90,7 @@ describe('ForceUserAccountPasswordResetService', () => {
 
     const result = await service.forceUserAccountPasswordReset('admin-1', 'u1');
 
-    expect(issueForUser).toHaveBeenCalledWith('u1', 'jane@example.com');
+    expect(issueForUser).toHaveBeenCalledWith('u1', 'jane@example.com', 'Jane');
     expect(result).toEqual({ success: true });
   });
 

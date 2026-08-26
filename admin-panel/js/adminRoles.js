@@ -117,6 +117,21 @@ const PERMISSION_GROUPS = [
   // this panel's Roles screen is the only recovery path on a machine that
   // was already bootstrapped before this permission existed.
   { label: 'Appointments', read: 'APPOINTMENTS_READ' },
+  // Editable transactional-email templates follow-up (2026-08-24) — same
+  // "row missing from the matrix" gap as every entry above it: this repo's
+  // own bootstrap script (`scripts/bootstrap-super-admin.ts`) deliberately
+  // never resets an EXISTING role's permissions once seeded (see that
+  // file's "PERMISSIONS GUARANTEE — NARROWED" comment), so on any
+  // already-bootstrapped environment this Roles screen is the ONLY way to
+  // grant EMAIL_TEMPLATES_READ/WRITE to a role — without this row there was
+  // no checkbox anywhere to do that, which is exactly the failure a real
+  // admin hit ("You do not have permission to view email templates" with no
+  // way to fix it from the panel).
+  {
+    label: 'Email Templates',
+    read: 'EMAIL_TEMPLATES_READ',
+    write: 'EMAIL_TEMPLATES_WRITE',
+  },
 ];
 
 const ACTION_COLUMNS = [

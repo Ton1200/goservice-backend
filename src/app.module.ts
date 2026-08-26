@@ -26,6 +26,7 @@ import { EngagementsModule } from './engagements/engagements.module';
 import { QuotesModule } from './quotes/quotes.module';
 import { QuoteNegotiationModule } from './quote-negotiation/quote-negotiation.module';
 import { ServiceRequestsModule } from './service-requests/service-requests.module';
+import { StorageModule } from './service-requests/storage.module';
 import { EngagementChatModule } from './engagement-chat/engagement-chat.module';
 import { AppointmentsModule } from './appointments/appointments.module';
 import type { AppConfig } from './config/configuration';
@@ -236,6 +237,12 @@ import type { AppConfig } from './config/configuration';
       },
     }),
     PrismaModule,
+    // Uploadable-logo follow-up (2026-08-25) — `@Global()`, imported once
+    // here, mirroring `PrismaModule` immediately above (see
+    // `StorageModule`'s own header comment for why it must be a single,
+    // process-wide instance now that both `ServiceRequestsModule` and
+    // `PlatformAdminModule` need `StoragePort`).
+    StorageModule,
     SystemStatusModule,
     UsersModule,
     AuthModule,

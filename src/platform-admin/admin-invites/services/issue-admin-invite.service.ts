@@ -34,6 +34,7 @@ export class IssueAdminInviteService {
   async issueForAdminUser(
     adminUserId: string,
     email: string,
+    displayName: string,
   ): Promise<{ issued: boolean }> {
     const { ttlHours, resendCooldownSeconds } = this.configService.get(
       'adminInvite',
@@ -60,7 +61,11 @@ export class IssueAdminInviteService {
       tokenHash,
       expiresAt,
     });
-    await this.adminInviteEmailSender.sendAdminInvite(email, rawToken);
+    await this.adminInviteEmailSender.sendAdminInvite(
+      email,
+      rawToken,
+      displayName,
+    );
 
     return { issued: true };
   }

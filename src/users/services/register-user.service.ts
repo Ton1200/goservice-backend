@@ -98,7 +98,11 @@ export class RegisterUserService {
       acceptedTermsAndPrivacy: input.acceptedTermsAndPrivacy,
     });
 
-    await this.issueAndSendVerificationCode(user.id, user.email);
+    await this.issueAndSendVerificationCode(
+      user.id,
+      user.email,
+      user.firstName,
+    );
 
     this.logAttempt('success');
     return { userId: user.id, emailVerificationRequired: true };
@@ -107,6 +111,7 @@ export class RegisterUserService {
   private async issueAndSendVerificationCode(
     userId: string,
     email: string,
+    firstName: string | null,
   ): Promise<void> {
     const { codeTtlMinutes } = this.configService.get('emailVerification', {
       infer: true,
@@ -120,9 +125,12 @@ export class RegisterUserService {
       expiresAt,
     });
 
-    // Stub sender only, by explicit design (real email delivery out of
-    // scope) — never logs the plaintext code or raw email itself.
-    await this.verificationCodeSender.sendVerificationCode(email, code);
+    // Never logs the plaintext code or raw email itself.
+    await this.verificationCodeSender.sendVerificationCode(
+      email,
+      code,
+      firstName,
+    );
   }
 
   private isInTheFuture(date: Date): boolean {

@@ -1118,6 +1118,21 @@ enum Permission {
   // `QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ` above: auditing
   // Appointment scheduling data is its own distinct capability.
   APPOINTMENTS_READ
+  // Editable transactional-email templates follow-up (2026-08-24) — gates
+  // the `emailTemplates` query (`src/platform-admin/email-templates/`):
+  // reading the current subject/HTML body/text body of the 3 transactional
+  // emails (verification-code, password-reset-code, admin-invite). Read-only,
+  // mirroring every other `*_READ`-only surface's own semantics.
+  EMAIL_TEMPLATES_READ
+  // Editable transactional-email templates follow-up (2026-08-24, same day)
+  // — gates `updateEmailTemplate`/`sendTestEmailTemplate`. A genuinely NEW,
+  // dedicated permission pair — deliberately NOT folded into
+  // `FEATURE_FLAGS_WRITE` or any other existing config permission: editing
+  // the raw HTML/text an end user actually receives (and can trigger a real
+  // outbound send via `sendTestEmailTemplate`) is its own distinct,
+  // higher-impact capability, same "its own dedicated permission" reasoning
+  // already established throughout this enum.
+  EMAIL_TEMPLATES_WRITE
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see
@@ -1165,6 +1180,17 @@ model AdminUser {
   // possibly more via `resendAdminInvite`). See AdminInvite's own header
   // comment below.
   invites                 AdminInvite[]
+  // Editable transactional-email templates follow-up (2026-08-24) —
+  // `EmailTemplate.updatedByAdminUser`'s inverse relation, same
+  // "both sides of a relation declared together" requirement as
+  // `updatedPlatformSettings` above. See `EmailTemplate`'s own header
+  // comment below.
+  updatedEmailTemplates   EmailTemplate[]
+  // Shared email header/footer follow-up (2026-08-25) —
+  // `EmailLayout.updatedByAdminUser`'s inverse relation, same "both sides of
+  // a relation declared together" requirement as `updatedEmailTemplates`
+  // above. See `EmailLayout`'s own header comment below.
+  updatedEmailLayouts     EmailLayout[]
 
   @@index([status])
 }
@@ -1311,6 +1337,112 @@ model PlatformSetting {
   // schema migration every time a new provider/credential is added. Only
   // meaningful when isEncrypted = true; left null otherwise.
   provider      String?
+
+  updatedByAdminUserId String?    @db.Uuid
+  updatedByAdminUser   AdminUser? @relation(fields: [updatedByAdminUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Editable transactional-email templates follow-up (2026-08-24) — makes the
+// 3 transactional emails this backend sends (`verification_code`,
+// `password_reset_code`, `admin_invite`) 100% editable from the platform-admin
+// panel (subject + HTML body + plain-text body), replacing the former
+// hardcoded `src/email/templates/*.template.ts` string-builder functions.
+// `key` is a CLOSED, fixed set of 3 values (see
+// `src/platform-admin/email-templates/known-email-template-keys.constant.ts`,
+// the single source of truth for that set) — there is deliberately no
+// `createEmailTemplate`/`deleteEmailTemplate` mutation; every row is
+// seeded once (`prisma/seed.ts`) and only ever UPDATED afterwards, same
+// "fixed catalog, no create/delete via GraphQL" shape as `Category`'s own
+// seed-only origin (though Category later grew real CRUD — this model
+// deliberately does NOT, since the 3 templates correspond 1:1 to actual
+// code call sites that reference them by key; adding a 4th key requires a
+// code change to actually send it, not just a new DB row).
+//
+// `htmlBody`/`textBody` are plain, admin-typed TEXT — never rendered via a
+// template engine or JSX at runtime. Personalization uses simple
+// `{{variableName}}` token substitution only — see
+// `src/email/templates/render-email-template.util.ts`, the ONE place this
+// substitution happens, applied identically regardless of which sender
+// adapter is calling it.
+//
+// `updatedByAdminUserId`/`updatedByAdminUser` mirrors `PlatformSetting`'s
+// own `onDelete: SetNull` pattern exactly — a deleted admin's past edits are
+// not themselves erased, just anonymized.
+model EmailTemplate {
+  id        String @id @default(uuid()) @db.Uuid
+  // 'verification_code' | 'password_reset_code' | 'admin_invite' — see this
+  // model's own header comment; validated against
+  // `KNOWN_EMAIL_TEMPLATE_KEYS` at the application layer
+  // (`UpdateEmailTemplateService`), not by a DB-level enum, so the constant
+  // stays the single source of truth for the whole feature (seed, admin-UI
+  // labels/variable hints, and validation) without a schema migration if
+  // the key SET itself ever needs to change.
+  key       String @unique
+  subject   String
+  htmlBody  String
+  textBody  String
+
+  updatedByAdminUserId String?    @db.Uuid
+  updatedByAdminUser   AdminUser? @relation(fields: [updatedByAdminUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Shared email header/footer follow-up (2026-08-25) — extracts the
+// header/footer HTML/text that used to be hand-embedded once per row inside
+// each of the 3 `EmailTemplate.htmlBody` values (via a build-time-only
+// `emailLayout()` helper in `prisma/seed.ts`) into a real, admin-editable,
+// SHARED row, applied automatically to every `EmailTemplate` by
+// `EmailTemplateRenderer` (`src/email/templates/email-template-renderer.service.ts`)
+// — so editing the header/footer is a single admin action instead of editing
+// all 3 template rows separately, and any future 4th template gets the same
+// header/footer with zero extra wiring.
+//
+// A TRUE SINGLETON: `id` is always the literal string `'singleton'` (never a
+// generated uuid — see `EmailLayoutRepository.get()`/`.upsert()`, the only
+// place this table is ever queried/written), since there is exactly one
+// header/footer for the whole platform, not a keyed catalog like
+// `EmailTemplate`. Reuses the EXISTING `Permission.EMAIL_TEMPLATES_READ`/
+// `EMAIL_TEMPLATES_WRITE` values — no new `Permission` enum member: managing
+// the shared layout is the same admin capability as managing the templates
+// it wraps, not a separate one.
+//
+// `headerHtml`/`footerHtml`/`headerText`/`footerText` are plain, admin-typed
+// TEXT — never rendered via a template engine or JSX at runtime, same
+// "simple `{{variableName}}` token substitution only" design as
+// `EmailTemplate.htmlBody`/`.textBody` (see that model's own header
+// comment). `{{greeting}}` is the one variable common to all 3 current
+// templates — see `EmailTemplateRenderer`'s own header comment for the full
+// composition contract.
+//
+// `updatedByAdminUserId`/`updatedByAdminUser` mirrors `EmailTemplate`'s own
+// `onDelete: SetNull` pattern exactly — a deleted admin's past edits are not
+// themselves erased, just anonymized.
+//
+// `logoUrl` (uploadable-logo follow-up, 2026-08-25) — NULLABLE: an
+// independent field (never mixed into `headerHtml`'s free text), reusing the
+// EXISTING GOS-38 upload infra (`StoragePort`/`LocalDevStorageAdapter`/
+// `UploadsController` in `src/service-requests/`) — the admin panel requests
+// a signed upload URL, PUTs the file, then persists the resulting public URL
+// here via the ordinary `updateEmailLayout` mutation, same as any other
+// field on this row. Referenced from `headerHtml`/`footerHtml` via the same
+// `{{logoUrl}}` token mechanism every other layout variable already uses
+// (see `EmailTemplateRenderer`'s own header comment) — so a future logo
+// change is just a re-upload, with zero HTML editing required. `null` means
+// "no logo configured" (an unseeded/never-customized environment, or an
+// admin explicitly clearing it) — `EmailTemplateRenderer` substitutes `''`
+// for a `null` `logoUrl`, never breaks rendering.
+model EmailLayout {
+  id         String  @id @default("singleton")
+  headerHtml String
+  footerHtml String
+  headerText String
+  footerText String
+  logoUrl    String?
 
   updatedByAdminUserId String?    @db.Uuid
   updatedByAdminUser   AdminUser? @relation(fields: [updatedByAdminUserId], references: [id], onDelete: SetNull)

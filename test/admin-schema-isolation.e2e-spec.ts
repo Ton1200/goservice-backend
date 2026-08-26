@@ -159,6 +159,18 @@ const ADMIN_ONLY_FIELDS = [
   'inviteAdminUser',
   'resendAdminInvite',
   'acceptAdminInvite',
+  // Editable transactional-email templates follow-up (2026-08-24) —
+  // `src/platform-admin/email-templates/`.
+  'emailTemplates',
+  'updateEmailTemplate',
+  'sendTestEmailTemplate',
+  // Shared email header/footer follow-up (2026-08-25) — same resolver
+  // (`AdminEmailTemplatesResolver`), same `EMAIL_TEMPLATES_READ`/`_WRITE`
+  // permissions.
+  'emailLayout',
+  'updateEmailLayout',
+  // Uploadable-logo follow-up (same day, same resolver/permissions).
+  'requestEmailLogoUploadUrl',
 ];
 
 // Fields that must NEVER appear on `/admin/graphql` — consumer-only
@@ -311,6 +323,10 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         // Appointment (Coordinación de Visita) admin audit surface (GOS-59,
         // 2026-08-24).
         'adminAppointmentsByEngagement',
+        // Editable transactional-email templates follow-up (2026-08-24).
+        'emailTemplates',
+        // Shared email header/footer follow-up (2026-08-25).
+        'emailLayout',
       ].sort(),
     );
     expect(
@@ -345,6 +361,13 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         'inviteAdminUser',
         'resendAdminInvite',
         'acceptAdminInvite',
+        // Editable transactional-email templates follow-up (2026-08-24).
+        'updateEmailTemplate',
+        'sendTestEmailTemplate',
+        // Shared email header/footer follow-up (2026-08-25).
+        'updateEmailLayout',
+        // Uploadable-logo follow-up (same day).
+        'requestEmailLogoUploadUrl',
       ].sort(),
     );
   });

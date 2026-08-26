@@ -183,4 +183,12 @@ export const envValidationSchema = Joi.object({
   // with a local-dev-only default composed from `PORT`/`ADMIN_PANEL_PATH` —
   // a real deployment MUST set this explicitly.
   ADMIN_PANEL_PUBLIC_URL: Joi.string().uri().optional(),
+
+  // Local-dev-only email catcher (Mailpit) — see `configuration.ts`'s
+  // `mailpit` doc comment and `EmailProviderRouterAdapter`. Optional, with
+  // safe local-dev defaults (`localhost:1025`) — not read at all unless an
+  // admin explicitly sets `notifications.email.provider` to `MAILPIT`, and
+  // never honored when `NODE_ENV=production` regardless of these values.
+  MAILPIT_SMTP_HOST: Joi.string().optional(),
+  MAILPIT_SMTP_PORT: Joi.number().integer().positive().optional(),
 }).unknown(true); // allow other, unrelated env vars (PATH, etc.) through untouched

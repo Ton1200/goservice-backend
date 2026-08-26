@@ -92,6 +92,13 @@ import { AdminInvitesResolver } from './admin-invites/admin-invites.resolver';
 import { AcceptAdminInviteResolver } from './admin-invites/accept-admin-invite.resolver';
 import { AdminInviteEmailSenderPort } from './admin-invites/ports/admin-invite-email-sender.port';
 import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapters/email-queue-admin-invite-email-sender.adapter';
+import { AdminEmailTemplatesResolver } from './email-templates/admin-email-templates.resolver';
+import { ListEmailTemplatesService } from './email-templates/services/list-email-templates.service';
+import { UpdateEmailTemplateService } from './email-templates/services/update-email-template.service';
+import { SendTestEmailTemplateService } from './email-templates/services/send-test-email-template.service';
+import { GetEmailLayoutService } from './email-templates/services/get-email-layout.service';
+import { UpdateEmailLayoutService } from './email-templates/services/update-email-layout.service';
+import { RequestEmailLogoUploadUrlService } from './email-templates/services/request-email-logo-upload-url.service';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -470,6 +477,51 @@ import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapter
     // class from `AdminInvitesResolver` above, never merged into it.
     AcceptAdminInviteService,
     AcceptAdminInviteResolver,
+
+    // email-templates (editable transactional-email templates follow-up,
+    // 2026-08-24) — `emailTemplates`/`updateEmailTemplate`/
+    // `sendTestEmailTemplate`. `EmailTemplatesRepository`/`EmailTemplatePort`
+    // are NOT redeclared here — they come from the already-imported
+    // `EmailModule`, which imports AND RE-EXPORTS the resolver-free
+    // `EmailTemplatesModule` (see both modules' own header comments), the
+    // same "reuse the concrete repository via a resolver-free module,
+    // never import a resolver-bearing one" pattern as
+    // `PlatformSettingsRepository` above. `EnsureEmailDeliveryAvailableService`/
+    // `EmailQueueService` (needed by `SendTestEmailTemplateService`) also
+    // already come from `EmailModule`.
+    AdminEmailTemplatesResolver,
+    ListEmailTemplatesService,
+    UpdateEmailTemplateService,
+    SendTestEmailTemplateService,
+
+    // shared email header/footer (2026-08-25 follow-up) — `emailLayout`/
+    // `updateEmailLayout`, registered on the SAME `AdminEmailTemplatesResolver`
+    // above (see that resolver's own header comment for why). Same
+    // "EmailLayoutRepository/EmailLayoutPort come from the already-imported
+    // EmailModule -> EmailTemplatesModule chain, never redeclared here"
+    // pattern as `EmailTemplatesRepository`/`EmailTemplatePort` immediately
+    // above.
+    GetEmailLayoutService,
+    UpdateEmailLayoutService,
+
+    // uploadable email logo (2026-08-25 follow-up) — `requestEmailLogoUploadUrl`.
+    // Reuses the EXISTING GOS-38 `StoragePort` seam
+    // (`src/service-requests/ports/storage.port.ts`) rather than building
+    // new storage plumbing — `RequestEmailLogoUploadUrlService` injects
+    // `StoragePort` directly, resolvable here WITHOUT importing
+    // `ServiceRequestsModule` (same "never import a resolver-bearing
+    // module" leak-avoidance pattern documented throughout this file — that
+    // module owns its own `ServiceRequestsResolver`) and WITHOUT
+    // re-declaring `LocalDevStorageAdapter`/`StoragePort` as local providers
+    // here either: both now come from the `@Global()` `StorageModule`
+    // (`src/service-requests/storage.module.ts`, imported once at
+    // `AppModule` root, mirroring `PrismaModule`'s own pattern) — see that
+    // module's own header comment for why a single, process-wide instance
+    // is REQUIRED here, not just a style choice (two independent
+    // `LocalDevStorageAdapter` instances would each generate a DIFFERENT
+    // random signing secret whenever `STORAGE_LOCAL_SIGNING_SECRET` is
+    // unset, breaking upload-token verification across modules).
+    RequestEmailLogoUploadUrlService,
   ],
 })
 export class PlatformAdminModule {}

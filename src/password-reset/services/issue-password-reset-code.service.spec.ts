@@ -53,7 +53,7 @@ describe('IssuePasswordResetCodeService', () => {
     const { service, createPasswordResetCode, sendPasswordResetCode } =
       makeService({ activeCode: null });
 
-    const result = await service.issueForUser('u1', 'jane@example.com');
+    const result = await service.issueForUser('u1', 'jane@example.com', 'Jane');
 
     expect(result).toEqual({ issued: true });
     expect(createPasswordResetCode).toHaveBeenCalledWith(
@@ -62,6 +62,7 @@ describe('IssuePasswordResetCodeService', () => {
     expect(sendPasswordResetCode).toHaveBeenCalledWith(
       'jane@example.com',
       expect.stringMatching(/^\d{6}$/),
+      'Jane',
     );
   });
 
@@ -74,7 +75,7 @@ describe('IssuePasswordResetCodeService', () => {
       sendPasswordResetCode,
     } = makeService({ activeCode: { id: 'code-1', createdAt } });
 
-    const result = await service.issueForUser('u1', 'jane@example.com');
+    const result = await service.issueForUser('u1', 'jane@example.com', 'Jane');
 
     expect(result).toEqual({ issued: false });
     expect(createPasswordResetCode).not.toHaveBeenCalled();
@@ -88,7 +89,7 @@ describe('IssuePasswordResetCodeService', () => {
       activeCode: { id: 'code-1', createdAt },
     });
 
-    const result = await service.issueForUser('u1', 'jane@example.com');
+    const result = await service.issueForUser('u1', 'jane@example.com', 'Jane');
 
     expect(result).toEqual({ issued: true });
     expect(invalidateCode).toHaveBeenCalledWith('code-1');

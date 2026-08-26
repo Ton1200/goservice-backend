@@ -23,6 +23,7 @@ import { loadUserAccounts } from './userAccounts.js';
 import { loadServiceRequests } from './serviceRequests.js';
 import { loadQuotes } from './quotes.js';
 import { loadCategories } from './categories.js';
+import { loadMarketingSection } from './marketing.js';
 import { loadAdministratorsSection } from './administrators.js';
 import { initAcceptInviteView } from './acceptInvite.js';
 import { showLoginView, showDashboardView } from './view.js';
@@ -44,6 +45,10 @@ initNav({
   // Category-tree follow-up (2026-08-18) — same "fetch fresh data every
   // time this section is shown" pattern.
   'categories-section': loadCategories,
+  // Marketing-tab follow-up (2026-08-25) — owns its own Email (and future
+  // channel) sub-tab switch; see js/marketing.js. Replaces the former
+  // standalone 'email-templates-section' top-level nav entry.
+  'marketing-section': loadMarketingSection,
   // Administrators-tab follow-up (2026-08-20) — owns its own Roles/Admin
   // Users sub-tab switch; see js/administrators.js.
   'administradores-section': loadAdministratorsSection,

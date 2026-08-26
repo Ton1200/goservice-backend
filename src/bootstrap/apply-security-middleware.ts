@@ -102,6 +102,30 @@ export function applySecurityMiddleware(
       // helmet ships it — nothing about this app needs a different value
       // for any of those. See the final report for what helmet actually
       // applied, verified via `curl -I` against a running dev server.
+      //
+      // EXCEPTION, scoped below: `Cross-Origin-Resource-Policy` defaults to
+      // `same-origin`, which is correct everywhere EXCEPT `/uploads/*`
+      // (`UploadsController`) — that route exists specifically to be
+      // embedded cross-origin (an `<img src="...">` inside an emailed
+      // HTML page, viewed from Mailpit's own origin in local dev, or from
+      // a real email client's origin in production; same reasoning applies
+      // to `CustomerProfile.photoUrl`/`ProfessionalProfile.photoUrl` and any
+      // other consumer of `StoragePort`'s `publicUrl`). Real bug found
+      // 2026-08-25 (uploadable-logo follow-up): a logo `<img>` inside a
+      // real sent email rendered broken in Mailpit — `curl`/direct
+      // navigation to the URL always "worked" (CORP is a browser-enforced,
+      // subresource-embedding-only policy; a direct GET or `curl -I` never
+      // triggers it), which is why this was invisible to a byte-count
+      // check and only surfaced visually.
     }),
+  );
+  // Scoped the SAME way `/graphql`'s CORS middleware above is (a route
+  // prefix, not a global relaxation) — registered AFTER the global
+  // `helmet()` call so it runs second for `/uploads/*` requests and
+  // overwrites that one header; every other route keeps the default
+  // `same-origin` CORP untouched.
+  app.use(
+    '/uploads',
+    helmet.crossOriginResourcePolicy({ policy: 'cross-origin' }),
   );
 }

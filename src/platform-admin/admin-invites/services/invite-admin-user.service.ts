@@ -75,6 +75,7 @@ export class InviteAdminUserService {
     await this.issueAdminInviteService.issueForAdminUser(
       created.id,
       created.email,
+      created.displayName,
     );
 
     await this.prisma.$transaction(async (tx) => {

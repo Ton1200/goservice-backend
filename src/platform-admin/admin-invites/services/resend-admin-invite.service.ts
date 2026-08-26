@@ -47,6 +47,7 @@ export class ResendAdminInviteService {
     const { issued } = await this.issueAdminInviteService.issueForAdminUser(
       existing.id,
       existing.email,
+      existing.displayName,
     );
 
     if (issued) {

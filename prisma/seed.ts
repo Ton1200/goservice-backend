@@ -2,6 +2,9 @@
 // mutation ever creates/updates/deletes a Category; this is the ONLY place
 // Category rows are created. Run via `npm run prisma:seed`
 // (`prisma db seed`, wired in package.json's `prisma.seed` config).
+import { existsSync } from 'fs';
+import { copyFile, mkdir } from 'fs/promises';
+import { join } from 'path';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -113,6 +116,22 @@ const PLATFORM_SETTINGS: {
     key: 'notifications.email.resend.from-name',
     description: 'Display name used alongside the Resend from-address.',
     value: 'GoService',
+    isPublic: false,
+  },
+  // Added alongside Mailpit (local-dev-only email catcher, ADR 0004's dated
+  // update) — selects which channel actually handles delivery:
+  // `RESEND`/`MAILPIT`. Seeded `'RESEND'` (the production-safe default,
+  // same choice `EmailProviderRouterAdapter` and
+  // `EnsureEmailDeliveryAvailableService` fall back to for a missing row)
+  // so a fresh environment behaves exactly as it did before this key
+  // existed — nothing changes unless an admin deliberately switches it to
+  // `MAILPIT` for local development. `isPublic: false` — backend-only,
+  // same reasoning as `notifications.email.resend.enabled` above.
+  {
+    key: 'notifications.email.provider',
+    description:
+      'Which channel delivers outgoing email: RESEND (production) or MAILPIT (local dev only).',
+    value: 'RESEND',
     isPublic: false,
   },
   // GOS-3x follow-up (2026-08-11) — was ADMIN_SESSION_TTL_MINUTES, a
@@ -325,6 +344,210 @@ const PLATFORM_SETTINGS: {
   },
 ];
 
+// Editable transactional-email templates follow-up (2026-08-24) — seeds the
+// 3 fixed `EmailTemplate` rows (`verification_code`/`password_reset_code`/
+// `admin_invite`) with a hand-written, email-client-safe default HTML design
+// (outer `<table>` layout, every style INLINE via `style="..."`, no
+// flexbox/grid/`<style>` blocks, ~600px max-width) — REQUIRED for a fresh
+// environment to not be broken: without this, `EmailTemplatePort.getByKey`
+// returns `null` and every sender adapter
+// (`EmailQueueVerificationCodeSenderAdapter`/
+// `EmailQueuePasswordResetEmailSenderAdapter`/
+// `EmailQueueAdminInviteEmailSenderAdapter`) fails loudly with
+// `EMAIL_TEMPLATE_NOT_CONFIGURED` — same "required seed, not optional
+// decoration" precedent `notifications.email.resend.*` already establishes
+// above. See `src/platform-admin/email-templates/known-email-template-keys.constant.ts`
+// for the single source of truth on which `{{variableName}}` tokens each
+// template actually receives, and `src/email/templates/render-email-template.util.ts`
+// for how substitution works (HTML-escaped only when rendering into
+// `htmlBody`).
+//
+// Brand colors match `goservice-mobile`'s own design system exactly
+// (`goservice-mobile/src/design-system/theme/colors.light.ts`):
+// `brand.primary` (#12365E, the wordmark), `brand.primarySurface` (#DDE7F4,
+// the code display box background), `action.primary` (#2E6BE6, the
+// admin-invite button).
+//
+// Shared header/footer follow-up (2026-08-25) — the header/footer HTML that
+// used to be hand-embedded once per row via the `emailLayout()` helper
+// (DELETED — this comment documents its former existence for anyone
+// grepping history) now lives as the single seeded `EmailLayout` row below
+// (`EMAIL_LAYOUT`), applied automatically to every `EmailTemplate` at
+// send-time by `EmailTemplateRenderer`
+// (`src/email/templates/email-template-renderer.service.ts`) — NOT
+// re-embedded into each `EMAIL_TEMPLATES` entry's `htmlBody` anymore (see
+// each entry's own comment below). `headerHtml`/`footerHtml` below are the
+// EXACT, unchanged HTML the old helper used to splice around `bodyHtml` —
+// relocated, not redesigned.
+// Uploadable-logo follow-up (2026-08-25) — the ONE hardcoded, FIXED storage
+// key this seed writes the provisional monogram bytes to. Fixed (not
+// `randomBytes` per run) so re-seeding is idempotent and never creates
+// duplicate files — see `seedEmailLogo()` below. Must match
+// `LocalDevStorageAdapter.pathFor`'s own regex
+// (`/^[a-f0-9]{32}(\.[a-z]+)?$/`): 32 lowercase hex chars + a `.png`
+// extension, generated once via
+// `node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"`
+// and pasted here as a constant — never regenerated.
+const SEEDED_EMAIL_LOGO_KEY = 'a8f39a588b2aa735f59cd641bad81381.png';
+
+const EMAIL_LAYOUT = {
+  headerHtml:
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F6F6F8; padding:24px 0;">` +
+    `<tr><td align="center">` +
+    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#FFFFFF; border-radius:8px; overflow:hidden;">` +
+    `<tr><td style="padding:24px 32px; border-bottom:1px solid #F6F6F8;">` +
+    // Uploadable-logo follow-up (2026-08-25) — REPLACES the former plain
+    // text `<span>GoService</span>` wordmark with an `<img>` referencing
+    // the `{{logoUrl}}` token (the SAME `{{variableName}}` substitution
+    // mechanism every other layout variable already uses — see
+    // `EmailTemplateRenderer`'s own header comment). No other part of this
+    // header/footer design changes.
+    `<img src="{{logoUrl}}" alt="GoService" style="height:40px; display:block;">` +
+    `</td></tr>` +
+    `<tr><td style="padding:32px; font-family:Arial, Helvetica, sans-serif; font-size:15px; line-height:1.5; color:#1C2430;">`,
+  footerHtml:
+    `</td></tr>` +
+    `<tr><td style="padding:20px 32px; background-color:#F6F6F8; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:1.5; color:#8A94A6;">` +
+    `Este es un mensaje automático de GoService. Si no esperabas este correo, podés ignorarlo con seguridad.` +
+    `</td></tr>` +
+    `</table>` +
+    `</td></tr>` +
+    `</table>`,
+  // Today's `textBody` values have NO header/footer at all — every one of
+  // them starts directly with `{{greeting}}` — so there is nothing to
+  // prepend; an empty string keeps that behavior identical once
+  // `EmailTemplateRenderer` starts wrapping every template's text body too.
+  headerText: '',
+  footerText:
+    '\n\n---\nEste es un mensaje automático de GoService. Si no esperabas este correo, podés ignorarlo con seguridad.',
+};
+
+/**
+ * Uploadable-logo follow-up (2026-08-25) — a ONE-TIME, DELIBERATE seed-time
+ * convenience that copies the mobile app's own provisional monogram
+ * (`goservice-mobile/assets/branding/monogram-g-provisional.png`, the
+ * project's current, explicitly-provisional logo — see that file's own
+ * naming) directly into this backend's local upload storage
+ * (`var/uploads/`, the SAME directory `LocalDevStorageAdapter.writeFile`
+ * already uses), so the "uploadable logo" feature ships with a REAL working
+ * logo rather than an empty field.
+ *
+ * NOT a repeatable pattern — this is the ONLY place this backend ever
+ * reaches into `goservice-mobile/` for an asset, and it is NOT something
+ * that runs in a real production seed: a real admin uploads their own logo
+ * through the admin panel (`requestEmailLogoUploadUrl` +
+ * `updateEmailLayout`), exactly like any other content edit. This function
+ * exists purely so a FRESH local/e2e environment's `EmailLayout` singleton
+ * starts with a working, visible logo instead of a blank one.
+ *
+ * DEFENSIVE: if the source file is missing (e.g. the `goservice-mobile`
+ * submodule/checkout isn't present in whatever environment runs this seed),
+ * this logs a warning and returns `null` rather than failing the whole
+ * seed — `EMAIL_LAYOUT`'s `{{logoUrl}}` token then just renders as an empty
+ * string (see `EmailTemplateRenderer`'s own `?? ''` fallback), never a
+ * broken image tag pointing at a 404.
+ */
+async function seedEmailLogo(): Promise<string | null> {
+  const sourcePath = join(
+    __dirname,
+    '..',
+    '..',
+    'goservice-mobile',
+    'assets',
+    'branding',
+    'monogram-g-provisional.png',
+  );
+
+  if (!existsSync(sourcePath)) {
+    console.warn(
+      `seed: provisional logo source not found at ${sourcePath} — leaving EmailLayout.logoUrl unset on first seed. (This is expected if goservice-mobile isn't checked out alongside this repo.)`,
+    );
+    return null;
+  }
+
+  try {
+    const uploadsDir = join(process.cwd(), 'var', 'uploads');
+    await mkdir(uploadsDir, { recursive: true });
+    await copyFile(sourcePath, join(uploadsDir, SEEDED_EMAIL_LOGO_KEY));
+  } catch (error) {
+    console.warn(
+      `seed: failed to copy the provisional logo into var/uploads/ — leaving EmailLayout.logoUrl unset on first seed.`,
+      error,
+    );
+    return null;
+  }
+
+  const baseUrl = process.env.STORAGE_LOCAL_BASE_URL ?? 'http://localhost:3000';
+  return `${baseUrl}/uploads/${SEEDED_EMAIL_LOGO_KEY}`;
+}
+
+function codeDisplayBoxHtml(): string {
+  return (
+    `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:20px 0;">` +
+    `<tr><td style="background-color:#DDE7F4; border-radius:6px; padding:16px 24px; font-family:Arial, Helvetica, sans-serif; font-size:32px; font-weight:bold; letter-spacing:6px; color:#12365E;">{{code}}</td></tr>` +
+    `</table>`
+  );
+}
+
+const EMAIL_TEMPLATES: {
+  key: string;
+  subject: string;
+  htmlBody: string;
+  textBody: string;
+}[] = [
+  {
+    key: 'verification_code',
+    subject: 'Tu código de verificación de GoService',
+    // Bare inner body ONLY — no `emailLayout(...)` wrapper anymore (see
+    // `EMAIL_LAYOUT`'s own comment above): the shared header/footer is
+    // applied automatically at send-time by `EmailTemplateRenderer`, not
+    // baked into this row.
+    htmlBody:
+      `<p style="margin:0 0 16px 0;">{{greeting}}</p>` +
+      `<p style="margin:0 0 8px 0;">Tu código de verificación es:</p>` +
+      codeDisplayBoxHtml() +
+      `<p style="margin:16px 0 0 0;">Vence en {{ttlMinutes}} minutos y es válido para un solo uso. Si no solicitaste este código, podés ignorar este mensaje.</p>`,
+    textBody:
+      `{{greeting}}\n\n` +
+      `Tu código de verificación es: {{code}}\n\n` +
+      `Vence en {{ttlMinutes}} minutos y es válido para un solo uso. ` +
+      `Si no solicitaste este código, podés ignorar este mensaje.`,
+  },
+  {
+    key: 'password_reset_code',
+    subject: 'Tu código para restablecer tu contraseña de GoService',
+    // Bare inner body ONLY — see `verification_code`'s own comment above.
+    htmlBody:
+      `<p style="margin:0 0 16px 0;">{{greeting}}</p>` +
+      `<p style="margin:0 0 8px 0;">Tu código para restablecer tu contraseña es:</p>` +
+      codeDisplayBoxHtml() +
+      `<p style="margin:16px 0 0 0;">Vence en {{ttlMinutes}} minutos y es válido para un solo uso. Si no solicitaste este cambio, podés ignorar este mensaje: tu contraseña actual seguirá funcionando.</p>`,
+    textBody:
+      `{{greeting}}\n\n` +
+      `Tu código para restablecer tu contraseña es: {{code}}\n\n` +
+      `Vence en {{ttlMinutes}} minutos y es válido para un solo uso. ` +
+      `Si no solicitaste este cambio, podés ignorar este mensaje: tu contraseña actual seguirá funcionando.`,
+  },
+  {
+    key: 'admin_invite',
+    subject: 'Fuiste invitado al panel de administración de GoService',
+    // Bare inner body ONLY — see `verification_code`'s own comment above.
+    htmlBody:
+      `<p style="margin:0 0 16px 0;">{{greeting}}</p>` +
+      `<p style="margin:0 0 20px 0;">Fuiste invitado como administrador al panel de administración de GoService.</p>` +
+      `<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border-radius:6px; background-color:#2E6BE6;">` +
+      `<a href="{{inviteLink}}" style="background:#2E6BE6; color:#ffffff; padding:12px 24px; border-radius:6px; text-decoration:none; display:inline-block; font-family:Arial, Helvetica, sans-serif; font-size:15px; font-weight:bold;">Configurar mi contraseña</a>` +
+      `</td></tr></table>` +
+      `<p style="margin:20px 0 0 0;">Este enlace vence en {{ttlHours}} horas y solo puede usarse una vez. Si no esperabas esta invitación, podés ignorar este mensaje con seguridad.</p>`,
+    textBody:
+      `{{greeting}}\n\n` +
+      `Fuiste invitado como administrador al panel de administración de GoService.\n\n` +
+      `Configurá tu contraseña acá: {{inviteLink}}\n\n` +
+      `Este enlace vence en {{ttlHours}} horas y solo puede usarse una vez. ` +
+      `Si no esperabas esta invitación, podés ignorar este mensaje con seguridad.`,
+  },
+];
+
 async function main(): Promise<void> {
   for (const name of CATEGORIES) {
     // upsert-on-name makes the seed itself idempotent/re-runnable.
@@ -360,6 +583,42 @@ async function main(): Promise<void> {
       },
     });
   }
+
+  for (const template of EMAIL_TEMPLATES) {
+    // update: {} — an already-admin-edited template's real content is never
+    // clobbered back to this default design by re-running the seed, same
+    // idempotent convention as `PLATFORM_SETTINGS` above.
+    await prisma.emailTemplate.upsert({
+      where: { key: template.key },
+      update: {},
+      create: {
+        key: template.key,
+        subject: template.subject,
+        htmlBody: template.htmlBody,
+        textBody: template.textBody,
+      },
+    });
+  }
+
+  // Shared header/footer follow-up (2026-08-25) — the single `EmailLayout`
+  // row (`id: 'singleton'`). `update: {}` — same idempotent-safe-against-
+  // admin-edits convention as `EMAIL_TEMPLATES`/`PLATFORM_SETTINGS` above: an
+  // already-admin-edited layout is never clobbered back to this default by
+  // re-running the seed. `logoUrl` is likewise only ever set on FIRST
+  // creation (`create`) — see `seedEmailLogo()`'s own header comment.
+  const seededLogoUrl = await seedEmailLogo();
+  await prisma.emailLayout.upsert({
+    where: { id: 'singleton' },
+    update: {},
+    create: {
+      id: 'singleton',
+      headerHtml: EMAIL_LAYOUT.headerHtml,
+      footerHtml: EMAIL_LAYOUT.footerHtml,
+      headerText: EMAIL_LAYOUT.headerText,
+      footerText: EMAIL_LAYOUT.footerText,
+      logoUrl: seededLogoUrl,
+    },
+  });
 }
 
 main()

@@ -79,6 +79,7 @@ export class RequestPasswordResetService {
     const { issued } = await this.issuePasswordResetCodeService.issueForUser(
       user.id,
       user.email,
+      user.firstName,
     );
     if (!issued) {
       await this.getDecoyHash();
