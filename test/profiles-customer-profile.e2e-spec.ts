@@ -21,14 +21,14 @@ const LOGIN_MUTATION = `
 
 const MY_CUSTOMER_PROFILE_QUERY = `
   query MyCustomerProfile {
-    myCustomerProfile { id displayName addressLine city province country photoUrl }
+    myCustomerProfile { id displayName addressLine city province country photoUrl locationSharingEnabled }
   }
 `;
 
 const UPSERT_CUSTOMER_PROFILE_MUTATION = `
   mutation UpsertCustomerProfile($input: UpsertCustomerProfileInput!) {
     upsertCustomerProfile(input: $input) {
-      id displayName addressLine city province country photoUrl
+      id displayName addressLine city province country photoUrl locationSharingEnabled
     }
   }
 `;
@@ -52,6 +52,7 @@ interface MyCustomerProfileResponseBody {
       province: string;
       country: string;
       photoUrl: string | null;
+      locationSharingEnabled: boolean;
     } | null;
   } | null;
   errors?: GraphQLErrorEntry[];
@@ -67,6 +68,7 @@ interface UpsertCustomerProfileResponseBody {
       province: string;
       country: string;
       photoUrl: string | null;
+      locationSharingEnabled: boolean;
     };
   } | null;
   errors?: GraphQLErrorEntry[];
@@ -331,5 +333,70 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
     expect(editBody.data?.upsertCustomerProfile.photoUrl).toBe(
       'https://cdn.example.com/photo.jpg',
     );
+  });
+
+  // GOS-62 — location-sharing consent flag: opt-in, default OFF, boolean
+  // ONLY (no coordinates, no geolocation logic — see DEC-005, still status
+  // "Proposed"). One seeded user/session threaded through all three
+  // assertions (default -> explicit true -> edit that omits it) — same
+  // "share a session across sequential assertions on the SAME row" instinct
+  // as `upsertProfessionalProfileRequest`'s combined languages/photoUrl
+  // test — deliberately kept to a single `login` call so this file's
+  // shared 10-calls/60s `login` throttle budget isn't exceeded.
+  it(
+    'defaults locationSharingEnabled to false when omitted on creation, ' +
+      'accepts and returns an explicit true, then leaves it unchanged ' +
+      '(partial-update semantics — NOT reset to false) on a later edit ' +
+      'that omits it, all reflected in myCustomerProfile too',
+    async () => {
+      const { email } = await seedEmailVerifiedUser();
+      const sessionToken = await loginSessionToken(email);
+
+      const createResponse = await upsertCustomerProfileRequest(
+        VALID_INPUT,
+        sessionToken,
+      ).expect(200);
+      const createBody =
+        createResponse.body as UpsertCustomerProfileResponseBody;
+      expect(
+        createBody.data?.upsertCustomerProfile.locationSharingEnabled,
+      ).toBe(false);
+
+      const trueResponse = await upsertCustomerProfileRequest(
+        { ...VALID_INPUT, locationSharingEnabled: true },
+        sessionToken,
+      ).expect(200);
+      const trueBody = trueResponse.body as UpsertCustomerProfileResponseBody;
+      expect(trueBody.data?.upsertCustomerProfile.locationSharingEnabled).toBe(
+        true,
+      );
+
+      const editResponse = await upsertCustomerProfileRequest(
+        { ...VALID_INPUT, city: 'Cordoba' },
+        sessionToken,
+      ).expect(200);
+      const editBody = editResponse.body as UpsertCustomerProfileResponseBody;
+      expect(editBody.data?.upsertCustomerProfile.locationSharingEnabled).toBe(
+        true,
+      );
+
+      const queryResponse = await myCustomerProfileRequest(sessionToken);
+      const queryBody = queryResponse.body as MyCustomerProfileResponseBody;
+      expect(queryBody.data?.myCustomerProfile?.locationSharingEnabled).toBe(
+        true,
+      );
+    },
+  );
+
+  it('rejects a non-boolean locationSharingEnabled at the DTO validation layer', async () => {
+    const { email } = await seedEmailVerifiedUser();
+    const sessionToken = await loginSessionToken(email);
+
+    const response = await upsertCustomerProfileRequest(
+      { ...VALID_INPUT, locationSharingEnabled: 'yes' },
+      sessionToken,
+    );
+
+    expect(response.body).toHaveProperty('errors');
   });
 });

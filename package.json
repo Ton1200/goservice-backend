@@ -23,7 +23,11 @@
     "prisma:studio": "prisma studio",
     "prisma:seed": "prisma db seed",
     "admin:bootstrap": "ts-node --project tsconfig.scripts.json scripts/bootstrap-super-admin.ts",
-    "admin:create-user": "ts-node --project tsconfig.scripts.json scripts/create-admin-user.ts"
+    "admin:create-user": "ts-node --project tsconfig.scripts.json scripts/create-admin-user.ts",
+    "demo:seed": "ts-node --project tsconfig.scripts.json scripts/seed-demo-data.ts",
+    "demo:seed:negotiation": "ts-node --project tsconfig.scripts.json scripts/seed-negotiation-scenarios.ts",
+    "demo:seed:engagement-chat": "ts-node --project tsconfig.scripts.json scripts/seed-engagement-chat-scenarios.ts",
+    "demo:seed:appointments": "ts-node --project tsconfig.scripts.json scripts/seed-appointment-scenarios.ts"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",
@@ -50,6 +54,7 @@
     "ioredis": "^5.11.1",
     "joi": "^17.13.4",
     "jose": "^4.15.9",
+    "nodemailer": "^7.0.13",
     "pg": "^8.22.0",
     "reflect-metadata": "^0.2.2",
     "resend": "^6.18.1",
@@ -65,6 +70,7 @@
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.0",
+    "@types/nodemailer": "^7.0.12",
     "@types/pg": "^8.20.0",
     "@types/supertest": "^7.0.0",
     "eslint": "^9.18.0",

@@ -23,7 +23,7 @@ const MY_PROFESSIONAL_PROFILE_QUERY = `
   query MyProfessionalProfile {
     myProfessionalProfile {
       id displayName city country serviceAreaDescription bio
-      verificationStatus photoUrl languages
+      verificationStatus photoUrl languages locationSharingEnabled
       specializations { role description yearsOfExperience order category { id name } }
     }
   }
@@ -33,7 +33,7 @@ const UPSERT_PROFESSIONAL_PROFILE_MUTATION = `
   mutation UpsertProfessionalProfile($input: UpsertProfessionalProfileInput!) {
     upsertProfessionalProfile(input: $input) {
       id displayName city country serviceAreaDescription bio
-      verificationStatus photoUrl languages
+      verificationStatus photoUrl languages locationSharingEnabled
       specializations { role description yearsOfExperience order category { id name } }
     }
   }
@@ -66,6 +66,7 @@ interface ProfessionalProfilePayload {
   verificationStatus: string;
   photoUrl: string | null;
   languages: string[];
+  locationSharingEnabled: boolean;
   specializations: SpecializationPayload[];
 }
 
@@ -611,6 +612,129 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
       {
         ...baseInput([primarySpecialization(categoryId)]),
         languages: ['es', 'es'],
+      },
+      sessionToken,
+    );
+
+    expect(response.body).toHaveProperty('errors');
+  });
+
+  // GOS-62 — location-sharing consent flag: opt-in, default OFF, boolean
+  // ONLY (no coordinates, no geolocation logic — see DEC-005, still status
+  // "Proposed"). Deliberately ONE seeded user/session threaded through
+  // every assertion below (default -> explicit true -> edit that omits it
+  // -> independence from the same user's CustomerProfile) — same "share a
+  // session across sequential assertions" instinct as
+  // `upsertProfessionalProfileRequest`'s combined photoUrl/languages test
+  // above, kept to a single `login` call so this file's shared
+  // 10-calls/60s `login` throttle budget (see `getSharedValidationSessionToken`'s
+  // own comment) isn't exceeded now that this suite is larger.
+  it(
+    'defaults locationSharingEnabled to false when omitted on creation, ' +
+      'accepts and returns an explicit true, leaves it unchanged ' +
+      '(partial-update semantics — NOT reset to false) on a later edit ' +
+      "that omits it, and stays independent from the SAME user's " +
+      'CustomerProfile.locationSharingEnabled (different values on each)',
+    async () => {
+      const { email, userId } = await seedEmailVerifiedUser();
+      const sessionToken = await loginSessionToken(email);
+      const [categoryId] = await seedCategories(1);
+
+      const createResponse = await upsertProfessionalProfileRequest(
+        baseInput([primarySpecialization(categoryId)]),
+        sessionToken,
+      ).expect(200);
+      const createBody =
+        createResponse.body as UpsertProfessionalProfileResponseBody;
+      expect(
+        createBody.data?.upsertProfessionalProfile.locationSharingEnabled,
+      ).toBe(false);
+
+      const trueResponse = await upsertProfessionalProfileRequest(
+        {
+          ...baseInput([primarySpecialization(categoryId)]),
+          locationSharingEnabled: true,
+        },
+        sessionToken,
+      ).expect(200);
+      const trueBody =
+        trueResponse.body as UpsertProfessionalProfileResponseBody;
+      expect(
+        trueBody.data?.upsertProfessionalProfile.locationSharingEnabled,
+      ).toBe(true);
+
+      const editResponse = await upsertProfessionalProfileRequest(
+        baseInput([
+          primarySpecialization(categoryId, { description: 'Edit.' }),
+        ]),
+        sessionToken,
+      ).expect(200);
+      const editBody =
+        editResponse.body as UpsertProfessionalProfileResponseBody;
+      expect(
+        editBody.data?.upsertProfessionalProfile.locationSharingEnabled,
+      ).toBe(true);
+
+      const queryResponse = await myProfessionalProfileRequest(sessionToken);
+      const queryBody = queryResponse.body as MyProfessionalProfileResponseBody;
+      expect(
+        queryBody.data?.myProfessionalProfile?.locationSharingEnabled,
+      ).toBe(true);
+
+      // Same User, own CustomerProfile, explicit false — independent
+      // fields, not a single User-level flag.
+      const CUSTOMER_INPUT = {
+        displayName: 'Juan Perez',
+        addressLine: 'Av. Siempreviva 742',
+        city: 'CABA',
+        province: 'Buenos Aires',
+        locationSharingEnabled: false,
+      };
+      const upsertCustomerResponse = await request(app.getHttpServer())
+        .post('/graphql')
+        .set('Authorization', `Bearer ${sessionToken}`)
+        .send({
+          query: `
+            mutation UpsertCustomerProfile($input: UpsertCustomerProfileInput!) {
+              upsertCustomerProfile(input: $input) { id locationSharingEnabled }
+            }
+          `,
+          variables: { input: CUSTOMER_INPUT },
+        })
+        .expect(200);
+      const customerBody = upsertCustomerResponse.body as {
+        data: {
+          upsertCustomerProfile: {
+            id: string;
+            locationSharingEnabled: boolean;
+          };
+        } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+      expect(customerBody.errors).toBeUndefined();
+      expect(
+        customerBody.data?.upsertCustomerProfile.locationSharingEnabled,
+      ).toBe(false);
+
+      const professionalProfile = await prisma.professionalProfile.findUnique({
+        where: { userId },
+      });
+      const customerProfile = await prisma.customerProfile.findUnique({
+        where: { userId },
+      });
+      expect(professionalProfile?.locationSharingEnabled).toBe(true);
+      expect(customerProfile?.locationSharingEnabled).toBe(false);
+    },
+  );
+
+  it('rejects a non-boolean locationSharingEnabled at the DTO validation layer', async () => {
+    const sessionToken = await getSharedValidationSessionToken();
+    const [categoryId] = await seedCategories(1);
+
+    const response = await upsertProfessionalProfileRequest(
+      {
+        ...baseInput([primarySpecialization(categoryId)]),
+        locationSharingEnabled: 'yes',
       },
       sessionToken,
     );

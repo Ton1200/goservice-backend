@@ -53,6 +53,12 @@ export class ProfessionalProfile {
   @Field(() => ProfessionalVerificationStatus)
   verificationStatus!: ProfessionalVerificationStatus;
 
+  // GOS-62 — same explicit opt-in location-sharing consent flag as
+  // `CustomerProfile.locationSharingEnabled` (see that field's own comment
+  // for the full rationale). Independent per profile.
+  @Field(() => Boolean)
+  locationSharingEnabled!: boolean;
+
   @Field(() => GraphQLISODateTime)
   createdAt!: Date;
 

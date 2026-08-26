@@ -32,6 +32,13 @@ const DEFAULT_COUNTRY = CountryCode.AR;
  * Never logs `displayName`/`city`/`country`/`serviceAreaDescription`/`bio`/
  * `photoUrl`/`languages`/any specialization `description` — only IDs,
  * booleans, counts, and status/role values.
+ *
+ * `locationSharingEnabled` (GOS-62) is passed through exactly like
+ * `photoUrl`/`languages` below — `undefined` when omitted, never coerced —
+ * so an edit that doesn't mention it leaves the previously persisted value
+ * untouched. See `UpsertCustomerProfileService`'s own comment on this same
+ * field for the full rationale (independent per profile — a User with both
+ * a CustomerProfile and a ProfessionalProfile may set each differently).
  */
 @Injectable()
 export class UpsertProfessionalProfileService {
@@ -58,6 +65,7 @@ export class UpsertProfessionalProfileService {
         photoUrl: input.photoUrl,
         languages: input.languages,
         specializations: input.specializations,
+        locationSharingEnabled: input.locationSharingEnabled,
       });
 
     this.logger.log({

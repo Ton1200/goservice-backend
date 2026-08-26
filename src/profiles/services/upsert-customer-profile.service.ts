@@ -18,6 +18,17 @@ const DEFAULT_COUNTRY = CountryCode.AR;
  *
  * Never logs `displayName`/`addressLine`/`city`/`province`/`country`/
  * `photoUrl` — only IDs, booleans, and status values.
+ *
+ * `locationSharingEnabled` (GOS-62) is passed through exactly like
+ * `photoUrl` below — `undefined` when omitted, never coerced to `false` —
+ * so an edit that doesn't mention it leaves the previously persisted value
+ * untouched (Prisma drops `undefined` fields from its update payload; see
+ * `ProfilesRepository.upsertCustomerProfile`). Unlike `country`, it does
+ * NOT get a `?? DEFAULT` fallback here — that fallback exists so `create`
+ * always has a value, but the schema's own `@default(false)` already
+ * covers that case for a boolean, without the update-time footgun a `??`
+ * fallback would introduce (it would silently reset the flag on every edit
+ * that omits it).
  */
 @Injectable()
 export class UpsertCustomerProfileService {
@@ -37,6 +48,7 @@ export class UpsertCustomerProfileService {
         province: input.province,
         country: input.country ?? DEFAULT_COUNTRY,
         photoUrl: input.photoUrl,
+        locationSharingEnabled: input.locationSharingEnabled,
       });
 
     this.logger.log({

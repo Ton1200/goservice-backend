@@ -131,6 +131,7 @@ const USER_ACCOUNT_DETAIL_QUERY = `
         province
         country
         photoUrl
+        locationSharingEnabled
       }
       professionalProfile {
         displayName
@@ -141,6 +142,7 @@ const USER_ACCOUNT_DETAIL_QUERY = `
         photoUrl
         languages
         verificationStatus
+        locationSharingEnabled
         specializations {
           role
           description
@@ -921,6 +923,15 @@ function buildCustomerProfileTabContent(profile) {
     wrapper.appendChild(photo);
   }
   wrapper.appendChild(buildField('Display name', profile.displayName));
+  // Boolean, not a free-text value — passed as an explicit 'Yes'/'No' string
+  // rather than the raw boolean, since `buildField` renders a falsy value
+  // (including `false`) as '—' via `value || '—'`.
+  wrapper.appendChild(
+    buildField(
+      'Location sharing',
+      profile.locationSharingEnabled ? 'Yes' : 'No',
+    ),
+  );
 
   wrapper.appendChild(
     buildSubsection('Address', [
@@ -953,6 +964,13 @@ function buildProfessionalProfileTabContent(profile) {
       profile.languages && profile.languages.length > 0
         ? profile.languages.join(', ')
         : null,
+    ),
+    // Boolean, not a free-text value — passed as an explicit 'Yes'/'No'
+    // string rather than the raw boolean, since `buildField` renders a
+    // falsy value (including `false`) as '—' via `value || '—'`.
+    buildField(
+      'Location sharing',
+      profile.locationSharingEnabled ? 'Yes' : 'No',
     ),
   );
 
