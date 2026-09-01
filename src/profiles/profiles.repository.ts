@@ -339,6 +339,15 @@ export class ProfilesRepository {
    * then), atomically transitions `User.accountStatus` from
    * `EMAIL_VERIFIED` to `PENDING_APPROVAL` within the same transaction —
    * see the class doc comment above.
+   *
+   * `photoUrl`/`locationSharingEnabled` (GOS-62) are genuinely optional,
+   * partial-update fields: `undefined` when the caller's `data` object
+   * omits them, and Prisma silently drops `undefined` keys from both
+   * `create`/`update` payloads (its query engine serializes them out) —
+   * so an edit that omits either one leaves the previously persisted value
+   * untouched rather than resetting it. `create`'s missing value falls
+   * back to the schema's own column default (`false` for
+   * `locationSharingEnabled`, `null` for `photoUrl`).
    */
   async upsertCustomerProfile(
     userId: string,
@@ -349,6 +358,7 @@ export class ProfilesRepository {
       province: string;
       country: CountryCode;
       photoUrl?: string;
+      locationSharingEnabled?: boolean;
     },
   ): Promise<{
     profile: CustomerProfile;
@@ -397,6 +407,10 @@ export class ProfilesRepository {
    * `PENDING_APPROVAL` within the same transaction — the exact same
    * pattern `upsertCustomerProfile` above already uses, sharing the same
    * underlying `UsersRepository` method: see the class doc comment above.
+   *
+   * `locationSharingEnabled` (GOS-62) follows the exact same optional,
+   * partial-update convention as `upsertCustomerProfile`'s own field of the
+   * same name above — see that method's own comment.
    */
   async upsertProfessionalProfile(
     userId: string,
@@ -408,6 +422,7 @@ export class ProfilesRepository {
       bio: string;
       photoUrl?: string;
       languages?: string[];
+      locationSharingEnabled?: boolean;
       specializations: {
         categoryId: string;
         role: SpecializationRole;

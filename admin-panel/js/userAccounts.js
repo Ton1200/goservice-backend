@@ -44,6 +44,7 @@
 //      fetched lazily on open, never pre-loaded alongside the grid.
 import { TabulatorFull as Tabulator } from '../vendor/tabulator/js/tabulator_esm.min.mjs';
 import { closeDropdownMenu, createMenuItem, openDropdownMenu } from './dropdownMenu.js';
+import { buildField, buildSubsection, renderDetailTabs } from './detailView.js';
 import { graphqlRequest, GraphQLNetworkError } from './graphqlClient.js';
 import { clearSession } from './session.js';
 import { showLoginView } from './view.js';
@@ -130,6 +131,7 @@ const USER_ACCOUNT_DETAIL_QUERY = `
         province
         country
         photoUrl
+        locationSharingEnabled
       }
       professionalProfile {
         displayName
@@ -140,6 +142,7 @@ const USER_ACCOUNT_DETAIL_QUERY = `
         photoUrl
         languages
         verificationStatus
+        locationSharingEnabled
         specializations {
           role
           description
@@ -874,36 +877,6 @@ function showDetailError(message) {
 
 /** One labeled field row (`label` above, `value` below) — `value` falls
  * back to an em dash when blank/nullish, never a raw empty string. */
-function buildField(label, value) {
-  const wrapper = document.createElement('div');
-
-  const labelEl = document.createElement('div');
-  labelEl.className = 'gs-detail-field-label';
-  labelEl.textContent = label;
-
-  const valueEl = document.createElement('div');
-  valueEl.className = 'gs-detail-field-value';
-  valueEl.textContent = value || '—';
-
-  wrapper.append(labelEl, valueEl);
-  return wrapper;
-}
-
-function buildSubsection(heading, contentNodes) {
-  const section = document.createElement('div');
-  section.className = 'gs-detail-subsection';
-
-  const headingEl = document.createElement('h4');
-  headingEl.className = 'gs-detail-subsection-heading';
-  headingEl.textContent = heading;
-  section.appendChild(headingEl);
-
-  for (const node of contentNodes) {
-    section.appendChild(node);
-  }
-  return section;
-}
-
 function buildPhoto(photoUrl, displayName) {
   if (!photoUrl) {
     return null;
@@ -950,6 +923,15 @@ function buildCustomerProfileTabContent(profile) {
     wrapper.appendChild(photo);
   }
   wrapper.appendChild(buildField('Display name', profile.displayName));
+  // Boolean, not a free-text value — passed as an explicit 'Yes'/'No' string
+  // rather than the raw boolean, since `buildField` renders a falsy value
+  // (including `false`) as '—' via `value || '—'`.
+  wrapper.appendChild(
+    buildField(
+      'Location sharing',
+      profile.locationSharingEnabled ? 'Yes' : 'No',
+    ),
+  );
 
   wrapper.appendChild(
     buildSubsection('Address', [
@@ -982,6 +964,13 @@ function buildProfessionalProfileTabContent(profile) {
       profile.languages && profile.languages.length > 0
         ? profile.languages.join(', ')
         : null,
+    ),
+    // Boolean, not a free-text value — passed as an explicit 'Yes'/'No'
+    // string rather than the raw boolean, since `buildField` renders a
+    // falsy value (including `false`) as '—' via `value || '—'`.
+    buildField(
+      'Location sharing',
+      profile.locationSharingEnabled ? 'Yes' : 'No',
     ),
   );
 
@@ -1039,99 +1028,6 @@ function buildActivityTabContent() {
   placeholder.textContent =
     'Not shown here yet — see this user\'s service requests in the "Service Requests" grid (filter by their email). Quotes and engagements will appear here once those capabilities exist.';
   wrapper.appendChild(placeholder);
-  return wrapper;
-}
-
-/**
- * Builds a real, accessible tab strip (`role="tablist"`/`role="tab"`/
- * `role="tabpanel"`, Left/Right/Home/End keyboard navigation, roving
- * `tabIndex`) — the SAME ARIA APG tabs pattern `js/settings.js`'s
- * `renderRootTabs` already established for this panel's Configuración
- * section, generalized here for `tabs: { id, label, content }[]`. The
- * first tab is selected by default.
- */
-function renderDetailTabs(tabs) {
-  const wrapper = document.createDocumentFragment();
-  const lastIndex = tabs.length - 1;
-
-  const tablist = document.createElement('div');
-  tablist.className = 'nav nav-underline gs-detail-tablist';
-  tablist.setAttribute('role', 'tablist');
-  tablist.setAttribute('aria-label', 'User detail sections');
-
-  const panelsWrapper = document.createElement('div');
-
-  const tabButtons = [];
-  const panels = [];
-
-  function selectTab(index) {
-    tabButtons.forEach((button, buttonIndex) => {
-      const isSelected = buttonIndex === index;
-      button.setAttribute('aria-selected', String(isSelected));
-      button.classList.toggle('active', isSelected);
-      button.tabIndex = isSelected ? 0 : -1;
-      panels[buttonIndex].hidden = !isSelected;
-    });
-  }
-
-  tabs.forEach((tab, index) => {
-    const isSelected = index === 0;
-    const tabId = `usuarios-detail-tab-${tab.id}`;
-    const panelId = `usuarios-detail-panel-${tab.id}`;
-
-    const tabItem = document.createElement('div');
-    tabItem.className = 'nav-item';
-
-    const tabButton = document.createElement('button');
-    tabButton.type = 'button';
-    tabButton.id = tabId;
-    tabButton.className = 'nav-link';
-    tabButton.setAttribute('role', 'tab');
-    tabButton.setAttribute('aria-selected', String(isSelected));
-    tabButton.setAttribute('aria-controls', panelId);
-    tabButton.tabIndex = isSelected ? 0 : -1;
-    tabButton.textContent = tab.label;
-    if (isSelected) {
-      tabButton.classList.add('active');
-    }
-
-    tabButton.addEventListener('click', () => selectTab(index));
-    tabButton.addEventListener('keydown', (event) => {
-      let nextIndex = null;
-      if (event.key === 'ArrowRight') {
-        nextIndex = index === lastIndex ? 0 : index + 1;
-      } else if (event.key === 'ArrowLeft') {
-        nextIndex = index === 0 ? lastIndex : index - 1;
-      } else if (event.key === 'Home') {
-        nextIndex = 0;
-      } else if (event.key === 'End') {
-        nextIndex = lastIndex;
-      }
-      if (nextIndex !== null) {
-        event.preventDefault();
-        selectTab(nextIndex);
-        tabButtons[nextIndex].focus();
-      }
-    });
-
-    tabItem.appendChild(tabButton);
-    tablist.appendChild(tabItem);
-    tabButtons.push(tabButton);
-
-    const panel = document.createElement('div');
-    panel.id = panelId;
-    panel.className = 'gs-detail-tabpanel';
-    panel.setAttribute('role', 'tabpanel');
-    panel.setAttribute('aria-labelledby', tabId);
-    panel.tabIndex = 0;
-    panel.hidden = !isSelected;
-    panel.appendChild(tab.content);
-
-    panelsWrapper.appendChild(panel);
-    panels.push(panel);
-  });
-
-  wrapper.append(tablist, panelsWrapper);
   return wrapper;
 }
 
@@ -1196,7 +1092,12 @@ async function openUserDetailModal(rowData) {
       content: buildActivityTabContent(),
     });
 
-    detailContentEl.appendChild(renderDetailTabs(tabs));
+    detailContentEl.appendChild(
+      renderDetailTabs(tabs, {
+        idPrefix: 'usuarios-detail',
+        ariaLabel: 'User detail sections',
+      }),
+    );
   } catch (error) {
     showDetailError(
       error instanceof GraphQLNetworkError

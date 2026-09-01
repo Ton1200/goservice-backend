@@ -159,6 +159,18 @@ const ADMIN_ONLY_FIELDS = [
   'inviteAdminUser',
   'resendAdminInvite',
   'acceptAdminInvite',
+  // Editable transactional-email templates follow-up (2026-08-24) —
+  // `src/platform-admin/email-templates/`.
+  'emailTemplates',
+  'updateEmailTemplate',
+  'sendTestEmailTemplate',
+  // Shared email header/footer follow-up (2026-08-25) — same resolver
+  // (`AdminEmailTemplatesResolver`), same `EMAIL_TEMPLATES_READ`/`_WRITE`
+  // permissions.
+  'emailLayout',
+  'updateEmailLayout',
+  // Uploadable-logo follow-up (same day, same resolver/permissions).
+  'requestEmailLogoUploadUrl',
 ];
 
 // Fields that must NEVER appear on `/admin/graphql` — consumer-only
@@ -300,6 +312,21 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         // Administrators-tab follow-up (2026-08-20).
         'adminRoles',
         'adminUsers',
+        // Quote Negotiation admin audit surface follow-up (GOS-53,
+        // 2026-08-21) — this entry was already missing from this hardcoded
+        // list before GOS-46 touched this file at all (a pre-existing gap,
+        // not introduced by this change); added now alongside the
+        // GOS-46 entry below so this assertion is accurate again.
+        'adminQuoteNegotiationThread',
+        // Chat de Coordinación admin audit surface (GOS-46, 2026-08-21).
+        'adminEngagementChatThread',
+        // Appointment (Coordinación de Visita) admin audit surface (GOS-59,
+        // 2026-08-24).
+        'adminAppointmentsByEngagement',
+        // Editable transactional-email templates follow-up (2026-08-24).
+        'emailTemplates',
+        // Shared email header/footer follow-up (2026-08-25).
+        'emailLayout',
       ].sort(),
     );
     expect(
@@ -334,6 +361,13 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         'inviteAdminUser',
         'resendAdminInvite',
         'acceptAdminInvite',
+        // Editable transactional-email templates follow-up (2026-08-24).
+        'updateEmailTemplate',
+        'sendTestEmailTemplate',
+        // Shared email header/footer follow-up (2026-08-25).
+        'updateEmailLayout',
+        // Uploadable-logo follow-up (same day).
+        'requestEmailLogoUploadUrl',
       ].sort(),
     );
   });

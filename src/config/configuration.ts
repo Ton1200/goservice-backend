@@ -187,6 +187,22 @@ export interface AppConfig {
    * invite link sent will silently point at the wrong place.
    */
   adminPanelPublicUrl: string;
+  /**
+   * Local-dev-only email catcher (Mailpit), added as an alternative to
+   * Resend for local development — see `EmailProviderRouterAdapter`
+   * (`src/email/adapters/email-provider-router.adapter.ts`) and ADR 0004's
+   * dated update on this. Only consulted when the
+   * `notifications.email.provider` `PlatformSetting` is `MAILPIT` AND
+   * `NODE_ENV !== 'production'` — production always uses Resend regardless
+   * of these values. Not a secret — Mailpit's SMTP listener has no auth by
+   * design (a throwaway, Docker-only, local dev tool), same "protects
+   * nothing" reasoning already applied to `postgres_test`'s credentials in
+   * `docker-compose.yml`.
+   */
+  mailpit: {
+    smtpHost: string;
+    smtpPort: number;
+  };
 }
 
 function parsePort(value: string | undefined, fallback: number): number {
@@ -318,5 +334,9 @@ export default (): AppConfig => {
     adminPanelPublicUrl:
       process.env.ADMIN_PANEL_PUBLIC_URL ??
       `http://localhost:${port}${adminPanelPath}`,
+    mailpit: {
+      smtpHost: process.env.MAILPIT_SMTP_HOST ?? 'localhost',
+      smtpPort: parsePort(process.env.MAILPIT_SMTP_PORT, 1025),
+    },
   };
 };

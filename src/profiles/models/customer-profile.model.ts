@@ -32,6 +32,12 @@ export class CustomerProfile {
   @Field(() => String, { nullable: true })
   photoUrl?: string | null;
 
+  // GOS-62 — explicit opt-in location-sharing consent flag ONLY (no
+  // latitude/longitude, no real geolocation logic — see DEC-005, still
+  // status "Proposed"). Defaults `false`.
+  @Field(() => Boolean)
+  locationSharingEnabled!: boolean;
+
   @Field(() => GraphQLISODateTime)
   createdAt!: Date;
 

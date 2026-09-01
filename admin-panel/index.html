@@ -181,6 +181,17 @@
               </a>
             </li>
             <li class="nav-item">
+              <a class="nav-link" href="#marketing" data-nav-target="marketing-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+                    <path d="M3 7l9 6l9-6" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Marketing</span>
+              </a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link" href="#administradores" data-nav-target="administradores-section">
                 <span class="nav-link-icon d-md-none d-lg-inline-block">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -642,6 +653,138 @@
                 </div>
               </form>
             </dialog>
+          </section>
+
+          <!-- Marketing (2026-08-25 follow-up, human-requested) — top-level
+               grouping for outbound-communication channels, deliberately
+               named broader than "Email Templates" so a future channel
+               (e.g. push notifications) can join as a sibling sub-tab
+               without another top-level nav rename. SAME hand-rolled ARIA-
+               tablist pattern as `administradores-section` (see
+               js/administrators.js's own header comment for why: NOT the
+               static, dead `<nav class="gs-subtabs">` markup) — here owned
+               by js/marketing.js. Today only one sub-tab, "Email" (wraps
+               what used to be the whole "Email Templates" section verbatim
+               — js/emailTemplates.js itself is UNCHANGED, it only cares
+               about its own element ids, not which section/tab wraps them). -->
+          <section id="marketing-section" class="gs-section" hidden aria-labelledby="marketing-heading">
+            <div class="page-header d-print-none">
+              <h2 id="marketing-heading" class="page-title">Marketing</h2>
+            </div>
+
+            <div id="marketing-tablist" class="nav nav-underline mb-3" role="tablist" aria-label="Marketing subsections"></div>
+
+            <!-- Email panel — the entire former email-templates-section content, unchanged. -->
+            <div id="marketing-email-panel" role="tabpanel" aria-labelledby="marketing-tab-email">
+              <!-- Shared email header/footer (2026-08-25 follow-up) — a
+                   single card (this row is always exactly one), NOT a
+                   list/grid like the 3 template cards below. Applied
+                   automatically to every EmailTemplate at send-time — see
+                   js/emailLayout.js's own header comment. -->
+              <p id="email-layout-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="email-layout-success" class="alert alert-success" role="status" hidden></p>
+
+              <div id="email-layout-card" class="card mb-3" hidden>
+                <div class="card-body">
+                  <h3 class="card-title mb-1">Header y Footer</h3>
+                  <p class="text-secondary small mb-2">
+                    Se aplica automáticamente al principio y al final de los 3 templates de abajo.
+                    <code>{{greeting}}</code> es la única variable común a los 3 templates — cualquier otra
+                    variable (por ej. <code>{{code}}</code>) se muestra literal en los templates que no la definan.
+                  </p>
+                  <div id="email-layout-meta" class="text-secondary small mb-3"></div>
+                  <button type="button" id="email-layout-edit-button" class="btn btn-primary">Editar</button>
+
+                  <hr class="my-3">
+
+                  <!-- Uploadable-logo follow-up (2026-08-25) — visually its
+                       own section, independent from the Editar dialog's
+                       header/footer HTML textareas. Referenced from the
+                       header/footer HTML via {{logoUrl}}, same {{variable}}
+                       mechanism used everywhere else on this card. -->
+                  <h4 class="card-title mb-1" style="font-size:1rem;">Logo</h4>
+                  <p class="text-secondary small mb-2">
+                    Usado en el header/footer vía <code>{{logoUrl}}</code>. Solo PNG, JPEG o WEBP.
+                  </p>
+                  <div class="mb-2">
+                    <img id="email-layout-logo-preview" alt="Current email logo" width="48" height="48" style="width:48px; height:48px; object-fit:contain; display:block;" hidden>
+                    <span id="email-layout-logo-empty" class="text-secondary small">Sin logo cargado.</span>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input type="file" id="email-layout-logo-file" accept="image/png,image/jpeg,image/webp" class="form-control form-control-sm" style="max-width: 320px;">
+                    <button type="button" id="email-layout-logo-upload-button" class="btn btn-outline-primary btn-sm">Subir logo</button>
+                  </div>
+                </div>
+              </div>
+
+              <dialog id="email-layout-edit-dialog" class="gs-detail-dialog" aria-labelledby="email-layout-edit-heading">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                  <h3 id="email-layout-edit-heading" class="mb-0">Edit email header/footer</h3>
+                  <button type="button" id="email-layout-edit-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <p id="email-layout-edit-error" class="alert alert-danger" role="alert" hidden></p>
+                <p class="text-secondary small">
+                  Available variable: <code>{{greeting}}</code> (common to all 3 templates).
+                </p>
+                <form id="email-layout-edit-form">
+                  <div class="mb-3">
+                    <label for="email-layout-edit-header-html" class="form-label">Header HTML</label>
+                    <textarea id="email-layout-edit-header-html" rows="8" class="form-control" required></textarea>
+                  </div>
+                  <div class="mb-3">
+                    <label for="email-layout-edit-footer-html" class="form-label">Footer HTML</label>
+                    <textarea id="email-layout-edit-footer-html" rows="8" class="form-control" required></textarea>
+                  </div>
+                  <div class="mb-3">
+                    <label for="email-layout-edit-header-text" class="form-label">Header plain-text</label>
+                    <textarea id="email-layout-edit-header-text" rows="3" class="form-control"></textarea>
+                  </div>
+                  <div class="mb-3">
+                    <label for="email-layout-edit-footer-text" class="form-label">Footer plain-text</label>
+                    <textarea id="email-layout-edit-footer-text" rows="3" class="form-control"></textarea>
+                  </div>
+                  <div class="d-flex justify-content-end gap-2 mt-3">
+                    <button type="button" id="email-layout-edit-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button type="submit" id="email-layout-edit-submit" class="btn btn-primary">Save</button>
+                  </div>
+                </form>
+              </dialog>
+
+              <p id="email-templates-error" class="alert alert-danger" role="alert" hidden></p>
+              <p id="email-templates-success" class="alert alert-success" role="status" hidden></p>
+
+              <div id="email-templates-list" class="row row-cards"></div>
+
+              <!-- Shared edit dialog — js/emailTemplates.js decides WHICH
+                   template is being edited via its own in-memory state, never
+                   3 separate dialogs. -->
+              <dialog id="email-template-edit-dialog" class="gs-detail-dialog" aria-labelledby="email-template-edit-heading">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                  <h3 id="email-template-edit-heading" class="mb-0">Edit email template</h3>
+                  <button type="button" id="email-template-edit-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <p id="email-template-edit-error" class="alert alert-danger" role="alert" hidden></p>
+                <p id="email-template-edit-variables-hint" class="text-secondary small"></p>
+                <form id="email-template-edit-form">
+                  <div class="mb-3">
+                    <label for="email-template-edit-subject" class="form-label">Subject</label>
+                    <input id="email-template-edit-subject" type="text" class="form-control" required maxlength="200" />
+                  </div>
+                  <div class="mb-3">
+                    <label for="email-template-edit-html-body" class="form-label">HTML body</label>
+                    <textarea id="email-template-edit-html-body" rows="16" class="form-control" required></textarea>
+                  </div>
+                  <div class="mb-3">
+                    <label for="email-template-edit-text-body" class="form-label">Plain-text body</label>
+                    <textarea id="email-template-edit-text-body" rows="8" class="form-control" required></textarea>
+                  </div>
+                  <div class="d-flex justify-content-end gap-2 mt-3">
+                    <button type="button" id="email-template-edit-cancel" class="btn btn-outline-secondary">Cancel</button>
+                    <button type="submit" id="email-template-edit-submit" class="btn btn-primary">Save</button>
+                  </div>
+                </form>
+              </dialog>
+            </div>
           </section>
 
           <!-- Administradores (Administrators-tab follow-up, 2026-08-20) —

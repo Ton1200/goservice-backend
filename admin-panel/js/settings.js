@@ -162,6 +162,22 @@ const KNOWN_SETTING_SLOTS = [
     valueType: 'STRING',
     isEncrypted: false,
   },
+  // Added alongside Mailpit (local-dev-only email catcher, ADR 0004's dated
+  // update) — selects which channel actually delivers outgoing email:
+  // 'RESEND' (production-capable, default) or 'MAILPIT' (local dev only,
+  // NEVER honored server-side when NODE_ENV=production — see
+  // EmailProviderRouterAdapter). Same STRING-mode-selector shape as
+  // `identity.didit.mode` below, not a boolean, because it picks between
+  // more than an on/off pair conceptually (room for a third real provider
+  // later without reshaping this field).
+  {
+    key: 'notifications.email.provider',
+    description:
+      "Which channel delivers outgoing email: RESEND (production) or MAILPIT (local dev only — ignored if NODE_ENV=production).",
+    valueType: 'STRING',
+    isEncrypted: false,
+    defaultValue: 'RESEND',
+  },
   // 2026-08-11 follow-up — was ADMIN_SESSION_TTL_MINUTES, a boot-time env
   // var; now admin-configurable (human request: "de una vez lo deberíamos
   // dejar en un campo del admin"). `admin.session.*` is a new root-level
@@ -294,6 +310,12 @@ const KNOWN_SETTING_SLOTS = [
 const LEAF_BLOCK_DESCRIPTIONS = {
   Google: 'Google sign-in configuration.',
   Apple: 'Apple sign-in configuration.',
+  // "Email" (notifications.email.provider) is a MIXED node — see
+  // `renderGroupChildren`'s own comment: it renders as this leaf block
+  // (just the Provider selector) AND, right below it, the nested "Resend"
+  // collapsible group. Setting Provider to MAILPIT is local-dev-only —
+  // ignored server-side whenever NODE_ENV=production.
+  Email: 'Selects which channel actually delivers outgoing email.',
   Resend: 'Resend transactional email provider configuration.',
   Didit: 'Didit identity-verification provider configuration — credentials shown/edited below always match whichever Mode is currently selected.',
 };
@@ -843,6 +865,14 @@ async function handleSaveCredential(setting, inputEl, previewEl) {
 // worse than before, not just cosmetic.
 const SELECT_FIELD_OPTIONS = {
   'identity.didit.mode': ['SANDBOX', 'PRODUCTION'],
+  // Mailpit (local-dev-only email catcher, ADR 0004's dated update) — same
+  // "avoid a silent typo behaving like a different value" reasoning as
+  // `identity.didit.mode` above. Unlike that field, a typo here is already
+  // safe-by-default (EmailProviderRouterAdapter treats anything other than
+  // the literal 'MAILPIT' as 'RESEND'), but a real dropdown still avoids
+  // someone typing 'Mailpit'/'mailpit' and being confused why it's not
+  // taking effect.
+  'notifications.email.provider': ['RESEND', 'MAILPIT'],
 };
 
 /**

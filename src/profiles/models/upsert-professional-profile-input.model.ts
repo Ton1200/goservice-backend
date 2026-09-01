@@ -4,6 +4,7 @@ import {
   ArrayNotEmpty,
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsOptional,
   IsString,
@@ -96,4 +97,12 @@ export class UpsertProfessionalProfileInput {
   @ArrayUnique()
   @IsString({ each: true })
   languages?: string[];
+
+  // GOS-62 — same explicit opt-in location-sharing consent flag as
+  // `UpsertCustomerProfileInput.locationSharingEnabled` (see that field's
+  // own comment for the full rationale and partial-update semantics).
+  @Field(() => Boolean, { nullable: true })
+  @IsOptional()
+  @IsBoolean()
+  locationSharingEnabled?: boolean;
 }

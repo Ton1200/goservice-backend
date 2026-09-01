@@ -2,6 +2,9 @@
 // mutation ever creates/updates/deletes a Category; this is the ONLY place
 // Category rows are created. Run via `npm run prisma:seed`
 // (`prisma db seed`, wired in package.json's `prisma.seed` config).
+import { existsSync } from 'fs';
+import { copyFile, mkdir } from 'fs/promises';
+import { join } from 'path';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -115,6 +118,22 @@ const PLATFORM_SETTINGS: {
     value: 'GoService',
     isPublic: false,
   },
+  // Added alongside Mailpit (local-dev-only email catcher, ADR 0004's dated
+  // update) — selects which channel actually handles delivery:
+  // `RESEND`/`MAILPIT`. Seeded `'RESEND'` (the production-safe default,
+  // same choice `EmailProviderRouterAdapter` and
+  // `EnsureEmailDeliveryAvailableService` fall back to for a missing row)
+  // so a fresh environment behaves exactly as it did before this key
+  // existed — nothing changes unless an admin deliberately switches it to
+  // `MAILPIT` for local development. `isPublic: false` — backend-only,
+  // same reasoning as `notifications.email.resend.enabled` above.
+  {
+    key: 'notifications.email.provider',
+    description:
+      'Which channel delivers outgoing email: RESEND (production) or MAILPIT (local dev only).',
+    value: 'RESEND',
+    isPublic: false,
+  },
   // GOS-3x follow-up (2026-08-11) — was ADMIN_SESSION_TTL_MINUTES, a
   // boot-time env var (REMOVED, not deprecated); admin-configurable now,
   // matching the same env-var-to-PlatformSetting migration pattern as the
@@ -126,7 +145,8 @@ const PLATFORM_SETTINGS: {
   // app has no reason to ever read it.
   {
     key: 'admin.session.timeout-minutes',
-    description: 'How long an admin session stays valid after login, in minutes.',
+    description:
+      'How long an admin session stays valid after login, in minutes.',
     value: '30',
     isPublic: false,
     valueType: 'NUMBER',
@@ -185,8 +205,7 @@ const PLATFORM_SETTINGS: {
   // NEVER exposed to the client, even indirectly.
   {
     key: 'identity.didit.mode',
-    description:
-      'Which Didit credential set is active: SANDBOX or PRODUCTION.',
+    description: 'Which Didit credential set is active: SANDBOX or PRODUCTION.',
     value: 'SANDBOX',
     isPublic: false,
   },
@@ -205,6 +224,328 @@ const PLATFORM_SETTINGS: {
   // URL) was REMOVED entirely (2026-08-17, human-requested simplification)
   // — GOS-33 is backend-only, no mobile deep-link/screen exists yet to
   // point it at, and `createSession` never depended on it for correctness.
+
+  // GOS-53 — Quote Negotiation feature flags. The ticket's own "hardcoded
+  // fallback" values are seeded here as REAL, admin-toggleable
+  // `PlatformSetting` rows instead — see
+  // `src/quote-negotiation/quote-negotiation.module.ts`'s own header
+  // comment for the full "no FeatureFlagPort/FeatureFlagGroup exists, the
+  // real successor is PlatformSettingPort" investigation this decision is
+  // based on. All three read via `PlatformSettingPort.isEnabled(key)` —
+  // never a hardcoded TS constant.
+  //
+  // `quote-negotiation.general.enabled` — the GLOBAL kill switch for the
+  // whole capability (comments + price proposals). `isPublic: false`: this
+  // is a backend/admin-only gate, not something `goservice-mobile` needs to
+  // branch on ahead of time the way `identity.enabled` above does — the
+  // mobile client just calls the mutations/query and handles
+  // `QUOTE_NEGOTIATION_MODULE_DISABLED` like any other domain error.
+  {
+    key: 'quote-negotiation.general.enabled',
+    description:
+      'Global kill switch for the Quote Negotiation capability (postQuoteNegotiationMessage/acceptQuotePriceProposal/rejectQuotePriceProposal/quoteNegotiationMessages).',
+    value: 'true',
+    isPublic: false,
+  },
+  // `quote-negotiation.price-edit.customer-can-propose` /
+  // `.professional-can-propose` — independent, role-specific gates on
+  // whether that role may attach a `proposedPrice` to a negotiation
+  // message. Defaults match the ticket's own specified fallback: a
+  // Customer proposing a price is OFF by default, a Professional
+  // countering is ON by default. `isPublic: false` — same reasoning as
+  // `general.enabled` above.
+  {
+    key: 'quote-negotiation.price-edit.customer-can-propose',
+    description:
+      'Whether a Customer may attach a price proposal to a Quote Negotiation message.',
+    value: 'false',
+    isPublic: false,
+  },
+  {
+    key: 'quote-negotiation.price-edit.professional-can-propose',
+    description:
+      'Whether a Professional may attach a price proposal to a Quote Negotiation message.',
+    value: 'true',
+    isPublic: false,
+  },
+  // GOS-46 follow-up — Engagement Chat ("Chat de Coordinación") admin
+  // enable/disable toggle. Deliberately placed under the `customer.*` group
+  // (human-requested, in a NEW `chat` sub-group), NOT a top-level
+  // `engagement-chat.*` key like `quote-negotiation.general.enabled` above —
+  // same dot-namespaced convention `customer.social-login.<provider>
+  // .enabled` already establishes, so it automatically renders under
+  // Customer > "Chat" in the admin panel's settings tree with zero frontend
+  // code changes (`admin-panel/js/settings.js`'s `buildSettingsTree`/
+  // `humanizeSegment` derive the tree purely from a key's dot-path — no
+  // per-key special-casing exists or is needed). Read via
+  // `PlatformSettingPort.isEnabled(key)` by the new
+  // `EngagementChatModuleEnabledGuard` (`src/engagement-chat/guards/
+  // engagement-chat-module-enabled.guard.ts`) — never a hardcoded TS
+  // constant, same mechanism as `quote-negotiation.general.enabled` above.
+  //
+  // Renamed from `customer.engagement-chat.enabled` (2026-08-21 follow-up,
+  // human-requested): "Engagement Chat" read as unnecessarily verbose in the
+  // Settings tab next to the feature's actual name — just "Chat". Only the
+  // key/Settings-group label changed; every `EngagementChat*` TS/GraphQL
+  // identifier is unchanged. No real database row existed under the old key
+  // yet at rename time (confirmed: this seed entry had never been applied
+  // to `goservice_dev`), so this was a pure rename, not a data migration.
+  //
+  // `value: 'false'` (default OFF) — unlike `quote-negotiation.general.
+  // enabled`'s default-ON, per explicit instruction for this feature.
+  // `isPublic: false`: this is a backend/admin-only gate — `goservice-mobile`
+  // doesn't need to know ahead of time whether Engagement Chat is enabled
+  // via `platformConfig`; it just calls `sendEngagementMessage`/
+  // `engagementMessages` and handles `ENGAGEMENT_CHAT_MODULE_DISABLED` like
+  // any other domain error, same reasoning as the Quote Negotiation flags.
+  {
+    key: 'customer.chat.enabled',
+    description:
+      'Global kill switch for the Engagement Chat capability (sendEngagementMessage/engagementMessages). Does not gate adminEngagementChatThread.',
+    value: 'false',
+    isPublic: false,
+  },
+  // GOS-59 follow-up — Appointment ("Coordinación de Visita") admin
+  // enable/disable toggle. Placed under the same `customer.*` group AS A
+  // SIBLING of `customer.chat.enabled` above — NOT nested under it (`chat`
+  // and `appointments` are two independent capability sub-groups, both
+  // dot-namespaced under `customer.*`) — same convention, so this key
+  // automatically renders under Customer > "Appointments" in the admin
+  // panel's settings tree with zero frontend code changes
+  // (`admin-panel/js/settings.js`'s `buildSettingsTree`/`humanizeSegment`
+  // derive the tree purely from a key's dot-path — no per-key
+  // special-casing exists or is needed). Read via
+  // `PlatformSettingPort.isEnabled(key)` by the new
+  // `AppointmentsModuleEnabledGuard` (`src/appointments/guards/
+  // appointments-module-enabled.guard.ts`) — never a hardcoded TS constant,
+  // same mechanism as `customer.chat.enabled`/`quote-negotiation.general.
+  // enabled` above.
+  //
+  // `value: 'true'` (default ON) — UNLIKE `customer.chat.enabled`'s default
+  // OFF: Appointment is an already-shipped, working capability (GOS-59) as
+  // of this follow-up, not a new one being introduced gated-off; the point
+  // of this switch is letting an admin turn it OFF during an incident, not
+  // requiring an opt-in before it works at all (same "already-working
+  // feature" default-ON reasoning as `quote-negotiation.general.enabled`
+  // and the social-login flags above — `PlatformSettingPort.isEnabled`'s own
+  // doc comment on fail-open-when-missing documents the same trade-off for
+  // an unseeded/typo'd key).
+  // `isPublic: false`: this is a backend/admin-only gate — `goservice-mobile`
+  // doesn't need to know ahead of time whether Appointment is enabled via
+  // `platformConfig`; it just calls `proposeAppointment`/etc. and handles
+  // `APPOINTMENTS_MODULE_DISABLED` like any other domain error, same
+  // reasoning as the Engagement Chat/Quote Negotiation flags.
+  {
+    key: 'customer.appointments.enabled',
+    description:
+      'Global kill switch for the Appointment capability (proposeAppointment/acceptAppointment/cancelAppointment/appointmentsByEngagement).',
+    value: 'true',
+    isPublic: false,
+  },
+];
+
+// Editable transactional-email templates follow-up (2026-08-24) — seeds the
+// 3 fixed `EmailTemplate` rows (`verification_code`/`password_reset_code`/
+// `admin_invite`) with a hand-written, email-client-safe default HTML design
+// (outer `<table>` layout, every style INLINE via `style="..."`, no
+// flexbox/grid/`<style>` blocks, ~600px max-width) — REQUIRED for a fresh
+// environment to not be broken: without this, `EmailTemplatePort.getByKey`
+// returns `null` and every sender adapter
+// (`EmailQueueVerificationCodeSenderAdapter`/
+// `EmailQueuePasswordResetEmailSenderAdapter`/
+// `EmailQueueAdminInviteEmailSenderAdapter`) fails loudly with
+// `EMAIL_TEMPLATE_NOT_CONFIGURED` — same "required seed, not optional
+// decoration" precedent `notifications.email.resend.*` already establishes
+// above. See `src/platform-admin/email-templates/known-email-template-keys.constant.ts`
+// for the single source of truth on which `{{variableName}}` tokens each
+// template actually receives, and `src/email/templates/render-email-template.util.ts`
+// for how substitution works (HTML-escaped only when rendering into
+// `htmlBody`).
+//
+// Brand colors match `goservice-mobile`'s own design system exactly
+// (`goservice-mobile/src/design-system/theme/colors.light.ts`):
+// `brand.primary` (#12365E, the wordmark), `brand.primarySurface` (#DDE7F4,
+// the code display box background), `action.primary` (#2E6BE6, the
+// admin-invite button).
+//
+// Shared header/footer follow-up (2026-08-25) — the header/footer HTML that
+// used to be hand-embedded once per row via the `emailLayout()` helper
+// (DELETED — this comment documents its former existence for anyone
+// grepping history) now lives as the single seeded `EmailLayout` row below
+// (`EMAIL_LAYOUT`), applied automatically to every `EmailTemplate` at
+// send-time by `EmailTemplateRenderer`
+// (`src/email/templates/email-template-renderer.service.ts`) — NOT
+// re-embedded into each `EMAIL_TEMPLATES` entry's `htmlBody` anymore (see
+// each entry's own comment below). `headerHtml`/`footerHtml` below are the
+// EXACT, unchanged HTML the old helper used to splice around `bodyHtml` —
+// relocated, not redesigned.
+// Uploadable-logo follow-up (2026-08-25) — the ONE hardcoded, FIXED storage
+// key this seed writes the provisional monogram bytes to. Fixed (not
+// `randomBytes` per run) so re-seeding is idempotent and never creates
+// duplicate files — see `seedEmailLogo()` below. Must match
+// `LocalDevStorageAdapter.pathFor`'s own regex
+// (`/^[a-f0-9]{32}(\.[a-z]+)?$/`): 32 lowercase hex chars + a `.png`
+// extension, generated once via
+// `node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"`
+// and pasted here as a constant — never regenerated.
+const SEEDED_EMAIL_LOGO_KEY = 'a8f39a588b2aa735f59cd641bad81381.png';
+
+const EMAIL_LAYOUT = {
+  headerHtml:
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F6F6F8; padding:24px 0;">` +
+    `<tr><td align="center">` +
+    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#FFFFFF; border-radius:8px; overflow:hidden;">` +
+    `<tr><td style="padding:24px 32px; border-bottom:1px solid #F6F6F8;">` +
+    // Uploadable-logo follow-up (2026-08-25) — REPLACES the former plain
+    // text `<span>GoService</span>` wordmark with an `<img>` referencing
+    // the `{{logoUrl}}` token (the SAME `{{variableName}}` substitution
+    // mechanism every other layout variable already uses — see
+    // `EmailTemplateRenderer`'s own header comment). No other part of this
+    // header/footer design changes.
+    `<img src="{{logoUrl}}" alt="GoService" style="height:40px; display:block;">` +
+    `</td></tr>` +
+    `<tr><td style="padding:32px; font-family:Arial, Helvetica, sans-serif; font-size:15px; line-height:1.5; color:#1C2430;">`,
+  footerHtml:
+    `</td></tr>` +
+    `<tr><td style="padding:20px 32px; background-color:#F6F6F8; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:1.5; color:#8A94A6;">` +
+    `Este es un mensaje automático de GoService. Si no esperabas este correo, podés ignorarlo con seguridad.` +
+    `</td></tr>` +
+    `</table>` +
+    `</td></tr>` +
+    `</table>`,
+  // Today's `textBody` values have NO header/footer at all — every one of
+  // them starts directly with `{{greeting}}` — so there is nothing to
+  // prepend; an empty string keeps that behavior identical once
+  // `EmailTemplateRenderer` starts wrapping every template's text body too.
+  headerText: '',
+  footerText:
+    '\n\n---\nEste es un mensaje automático de GoService. Si no esperabas este correo, podés ignorarlo con seguridad.',
+};
+
+/**
+ * Uploadable-logo follow-up (2026-08-25) — a ONE-TIME, DELIBERATE seed-time
+ * convenience that copies the mobile app's own provisional monogram
+ * (`goservice-mobile/assets/branding/monogram-g-provisional.png`, the
+ * project's current, explicitly-provisional logo — see that file's own
+ * naming) directly into this backend's local upload storage
+ * (`var/uploads/`, the SAME directory `LocalDevStorageAdapter.writeFile`
+ * already uses), so the "uploadable logo" feature ships with a REAL working
+ * logo rather than an empty field.
+ *
+ * NOT a repeatable pattern — this is the ONLY place this backend ever
+ * reaches into `goservice-mobile/` for an asset, and it is NOT something
+ * that runs in a real production seed: a real admin uploads their own logo
+ * through the admin panel (`requestEmailLogoUploadUrl` +
+ * `updateEmailLayout`), exactly like any other content edit. This function
+ * exists purely so a FRESH local/e2e environment's `EmailLayout` singleton
+ * starts with a working, visible logo instead of a blank one.
+ *
+ * DEFENSIVE: if the source file is missing (e.g. the `goservice-mobile`
+ * submodule/checkout isn't present in whatever environment runs this seed),
+ * this logs a warning and returns `null` rather than failing the whole
+ * seed — `EMAIL_LAYOUT`'s `{{logoUrl}}` token then just renders as an empty
+ * string (see `EmailTemplateRenderer`'s own `?? ''` fallback), never a
+ * broken image tag pointing at a 404.
+ */
+async function seedEmailLogo(): Promise<string | null> {
+  const sourcePath = join(
+    __dirname,
+    '..',
+    '..',
+    'goservice-mobile',
+    'assets',
+    'branding',
+    'monogram-g-provisional.png',
+  );
+
+  if (!existsSync(sourcePath)) {
+    console.warn(
+      `seed: provisional logo source not found at ${sourcePath} — leaving EmailLayout.logoUrl unset on first seed. (This is expected if goservice-mobile isn't checked out alongside this repo.)`,
+    );
+    return null;
+  }
+
+  try {
+    const uploadsDir = join(process.cwd(), 'var', 'uploads');
+    await mkdir(uploadsDir, { recursive: true });
+    await copyFile(sourcePath, join(uploadsDir, SEEDED_EMAIL_LOGO_KEY));
+  } catch (error) {
+    console.warn(
+      `seed: failed to copy the provisional logo into var/uploads/ — leaving EmailLayout.logoUrl unset on first seed.`,
+      error,
+    );
+    return null;
+  }
+
+  const baseUrl = process.env.STORAGE_LOCAL_BASE_URL ?? 'http://localhost:3000';
+  return `${baseUrl}/uploads/${SEEDED_EMAIL_LOGO_KEY}`;
+}
+
+function codeDisplayBoxHtml(): string {
+  return (
+    `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:20px 0;">` +
+    `<tr><td style="background-color:#DDE7F4; border-radius:6px; padding:16px 24px; font-family:Arial, Helvetica, sans-serif; font-size:32px; font-weight:bold; letter-spacing:6px; color:#12365E;">{{code}}</td></tr>` +
+    `</table>`
+  );
+}
+
+const EMAIL_TEMPLATES: {
+  key: string;
+  subject: string;
+  htmlBody: string;
+  textBody: string;
+}[] = [
+  {
+    key: 'verification_code',
+    subject: 'Tu código de verificación de GoService',
+    // Bare inner body ONLY — no `emailLayout(...)` wrapper anymore (see
+    // `EMAIL_LAYOUT`'s own comment above): the shared header/footer is
+    // applied automatically at send-time by `EmailTemplateRenderer`, not
+    // baked into this row.
+    htmlBody:
+      `<p style="margin:0 0 16px 0;">{{greeting}}</p>` +
+      `<p style="margin:0 0 8px 0;">Tu código de verificación es:</p>` +
+      codeDisplayBoxHtml() +
+      `<p style="margin:16px 0 0 0;">Vence en {{ttlMinutes}} minutos y es válido para un solo uso. Si no solicitaste este código, podés ignorar este mensaje.</p>`,
+    textBody:
+      `{{greeting}}\n\n` +
+      `Tu código de verificación es: {{code}}\n\n` +
+      `Vence en {{ttlMinutes}} minutos y es válido para un solo uso. ` +
+      `Si no solicitaste este código, podés ignorar este mensaje.`,
+  },
+  {
+    key: 'password_reset_code',
+    subject: 'Tu código para restablecer tu contraseña de GoService',
+    // Bare inner body ONLY — see `verification_code`'s own comment above.
+    htmlBody:
+      `<p style="margin:0 0 16px 0;">{{greeting}}</p>` +
+      `<p style="margin:0 0 8px 0;">Tu código para restablecer tu contraseña es:</p>` +
+      codeDisplayBoxHtml() +
+      `<p style="margin:16px 0 0 0;">Vence en {{ttlMinutes}} minutos y es válido para un solo uso. Si no solicitaste este cambio, podés ignorar este mensaje: tu contraseña actual seguirá funcionando.</p>`,
+    textBody:
+      `{{greeting}}\n\n` +
+      `Tu código para restablecer tu contraseña es: {{code}}\n\n` +
+      `Vence en {{ttlMinutes}} minutos y es válido para un solo uso. ` +
+      `Si no solicitaste este cambio, podés ignorar este mensaje: tu contraseña actual seguirá funcionando.`,
+  },
+  {
+    key: 'admin_invite',
+    subject: 'Fuiste invitado al panel de administración de GoService',
+    // Bare inner body ONLY — see `verification_code`'s own comment above.
+    htmlBody:
+      `<p style="margin:0 0 16px 0;">{{greeting}}</p>` +
+      `<p style="margin:0 0 20px 0;">Fuiste invitado como administrador al panel de administración de GoService.</p>` +
+      `<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border-radius:6px; background-color:#2E6BE6;">` +
+      `<a href="{{inviteLink}}" style="background:#2E6BE6; color:#ffffff; padding:12px 24px; border-radius:6px; text-decoration:none; display:inline-block; font-family:Arial, Helvetica, sans-serif; font-size:15px; font-weight:bold;">Configurar mi contraseña</a>` +
+      `</td></tr></table>` +
+      `<p style="margin:20px 0 0 0;">Este enlace vence en {{ttlHours}} horas y solo puede usarse una vez. Si no esperabas esta invitación, podés ignorar este mensaje con seguridad.</p>`,
+    textBody:
+      `{{greeting}}\n\n` +
+      `Fuiste invitado como administrador al panel de administración de GoService.\n\n` +
+      `Configurá tu contraseña acá: {{inviteLink}}\n\n` +
+      `Este enlace vence en {{ttlHours}} horas y solo puede usarse una vez. ` +
+      `Si no esperabas esta invitación, podés ignorar este mensaje con seguridad.`,
+  },
 ];
 
 async function main(): Promise<void> {
@@ -242,6 +583,42 @@ async function main(): Promise<void> {
       },
     });
   }
+
+  for (const template of EMAIL_TEMPLATES) {
+    // update: {} — an already-admin-edited template's real content is never
+    // clobbered back to this default design by re-running the seed, same
+    // idempotent convention as `PLATFORM_SETTINGS` above.
+    await prisma.emailTemplate.upsert({
+      where: { key: template.key },
+      update: {},
+      create: {
+        key: template.key,
+        subject: template.subject,
+        htmlBody: template.htmlBody,
+        textBody: template.textBody,
+      },
+    });
+  }
+
+  // Shared header/footer follow-up (2026-08-25) — the single `EmailLayout`
+  // row (`id: 'singleton'`). `update: {}` — same idempotent-safe-against-
+  // admin-edits convention as `EMAIL_TEMPLATES`/`PLATFORM_SETTINGS` above: an
+  // already-admin-edited layout is never clobbered back to this default by
+  // re-running the seed. `logoUrl` is likewise only ever set on FIRST
+  // creation (`create`) — see `seedEmailLogo()`'s own header comment.
+  const seededLogoUrl = await seedEmailLogo();
+  await prisma.emailLayout.upsert({
+    where: { id: 'singleton' },
+    update: {},
+    create: {
+      id: 'singleton',
+      headerHtml: EMAIL_LAYOUT.headerHtml,
+      footerHtml: EMAIL_LAYOUT.footerHtml,
+      headerText: EMAIL_LAYOUT.headerText,
+      footerText: EMAIL_LAYOUT.footerText,
+      logoUrl: seededLogoUrl,
+    },
+  });
 }
 
 main()

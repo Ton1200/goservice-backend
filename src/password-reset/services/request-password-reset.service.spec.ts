@@ -180,6 +180,7 @@ describe('RequestPasswordResetService', () => {
       user: {
         id: 'u1',
         email: 'jane@example.com',
+        firstName: 'Jane',
         authProvider: AuthProvider.PASSWORD,
         passwordHash: 'h',
         accountStatus: UserAccountStatus.EMAIL_VERIFIED,
@@ -197,6 +198,7 @@ describe('RequestPasswordResetService', () => {
     expect(sendPasswordResetCode).toHaveBeenCalledWith(
       'jane@example.com',
       expect.stringMatching(/^\d{6}$/),
+      'Jane',
     );
   });
 

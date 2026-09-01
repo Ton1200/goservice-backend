@@ -92,6 +92,43 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // Quotes admin grid follow-up (2026-08-19) — quotes/quoteDetail,
       // read-only admin grid. SUPER_ADMIN gets every permission.
       Permission.QUOTES_READ,
+      // Quote Negotiation admin audit surface follow-up (GOS-53, 2026-08-21)
+      // — adminQuoteNegotiationThread, its own dedicated permission (NOT
+      // SERVICE_REQUESTS_READ/QUOTES_READ — see the Permission enum's own
+      // comment in schema.prisma). SUPER_ADMIN gets every permission.
+      Permission.QUOTE_NEGOTIATION_READ,
+      // Chat de Coordinación admin audit surface follow-up (GOS-46,
+      // 2026-08-21) — adminEngagementChatThread, its own dedicated
+      // permission (NOT SERVICE_REQUESTS_READ/QUOTE_NEGOTIATION_READ — see
+      // the Permission enum's own comment in schema.prisma). SUPER_ADMIN
+      // gets every permission.
+      Permission.ENGAGEMENT_CHAT_READ,
+      // Appointment (Coordinación de Visita) admin audit surface follow-up
+      // (GOS-59, 2026-08-24) — adminAppointmentsByEngagement, its own
+      // dedicated permission (NOT SERVICE_REQUESTS_READ/
+      // QUOTE_NEGOTIATION_READ/ENGAGEMENT_CHAT_READ — see the Permission
+      // enum's own comment in schema.prisma). SUPER_ADMIN gets every
+      // permission. FLAGGED FOR HUMAN REVIEW — same judgment-call posture
+      // already documented for ENGAGEMENT_CHAT_READ's own addition here:
+      // per this file's own "PERMISSIONS GUARANTEE — NARROWED" header
+      // comment, this bootstrap script only grants a brand-new Permission
+      // value automatically on a FRESH environment's first run; on an
+      // ALREADY-BOOTSTRAPPED environment it must be granted by hand through
+      // the Roles UI (`updateAdminRolePermissions`).
+      Permission.APPOINTMENTS_READ,
+      // Editable transactional-email templates follow-up (2026-08-24) —
+      // emailTemplates/updateEmailTemplate/sendTestEmailTemplate, its own
+      // dedicated permission pair (NOT FEATURE_FLAGS_WRITE — see the
+      // Permission enum's own comment in schema.prisma). SUPER_ADMIN gets
+      // every permission. FLAGGED FOR HUMAN REVIEW — same judgment-call
+      // posture already documented for APPOINTMENTS_READ's own addition
+      // here: per this file's own "PERMISSIONS GUARANTEE — NARROWED" header
+      // comment, this bootstrap script only grants a brand-new Permission
+      // value automatically on a FRESH environment's first run; on an
+      // ALREADY-BOOTSTRAPPED environment it must be granted by hand through
+      // the Roles UI (`updateAdminRolePermissions`).
+      Permission.EMAIL_TEMPLATES_READ,
+      Permission.EMAIL_TEMPLATES_WRITE,
     ],
   },
   {
@@ -126,6 +163,18 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // CONFIG_MANAGER-and-above can view Quotes, mirroring
       // SERVICE_REQUESTS_READ/CATEGORIES_READ's own presence on this role.
       Permission.QUOTES_READ,
+      // Quote Negotiation admin audit surface follow-up (GOS-53, 2026-08-21)
+      // — explicit human decision: CONFIG_MANAGER-and-above can audit a
+      // Quote's negotiation thread, mirroring QUOTES_READ's own presence on
+      // this role.
+      Permission.QUOTE_NEGOTIATION_READ,
+      // Editable transactional-email templates follow-up (2026-08-24) —
+      // explicit human decision: CONFIG_MANAGER-and-above can edit
+      // transactional-email content, same "full read/write config
+      // capability" bucket as FEATURE_FLAGS_READ/WRITE/CATEGORIES_READ/WRITE
+      // on this role.
+      Permission.EMAIL_TEMPLATES_READ,
+      Permission.EMAIL_TEMPLATES_WRITE,
     ],
   },
   {
@@ -147,6 +196,14 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // semantics; this role can view Quotes but there is no write
       // capability to withhold anyway (no QUOTES_WRITE exists).
       Permission.QUOTES_READ,
+      // Quote Negotiation admin audit surface follow-up (GOS-53, 2026-08-21)
+      // — same read-only semantics; mirrors QUOTES_READ's own presence on
+      // this role.
+      Permission.QUOTE_NEGOTIATION_READ,
+      // Editable transactional-email templates follow-up (2026-08-24) —
+      // same read-only semantics: this role can VIEW the current
+      // subject/HTML body/text body but never edit or send a test email.
+      Permission.EMAIL_TEMPLATES_READ,
     ],
   },
 ];

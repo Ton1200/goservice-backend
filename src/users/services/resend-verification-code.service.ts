@@ -89,7 +89,11 @@ export class ResendVerificationCodeService {
       codeHash,
       expiresAt,
     });
-    await this.verificationCodeSender.sendVerificationCode(user.email, code);
+    await this.verificationCodeSender.sendVerificationCode(
+      user.email,
+      code,
+      user.firstName,
+    );
 
     this.logger.log({
       event: 'resend_verification_code_attempt',

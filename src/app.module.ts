@@ -24,7 +24,11 @@ import { PlatformAdminModule } from './platform-admin/platform-admin.module';
 import { PlatformPublicSettingsModule } from './platform-admin/platform-settings/public/platform-public-settings.module';
 import { EngagementsModule } from './engagements/engagements.module';
 import { QuotesModule } from './quotes/quotes.module';
+import { QuoteNegotiationModule } from './quote-negotiation/quote-negotiation.module';
 import { ServiceRequestsModule } from './service-requests/service-requests.module';
+import { StorageModule } from './service-requests/storage.module';
+import { EngagementChatModule } from './engagement-chat/engagement-chat.module';
+import { AppointmentsModule } from './appointments/appointments.module';
 import type { AppConfig } from './config/configuration';
 
 @Module({
@@ -71,7 +75,10 @@ import type { AppConfig } from './config/configuration';
           IdentityVerificationModule,
           ServiceRequestsModule,
           QuotesModule,
+          QuoteNegotiationModule,
           EngagementsModule,
+          EngagementChatModule,
+          AppointmentsModule,
         ],
         sortSchema: true,
         // GOS-8 acceptance criterion #11: error responses must never include
@@ -230,6 +237,12 @@ import type { AppConfig } from './config/configuration';
       },
     }),
     PrismaModule,
+    // Uploadable-logo follow-up (2026-08-25) — `@Global()`, imported once
+    // here, mirroring `PrismaModule` immediately above (see
+    // `StorageModule`'s own header comment for why it must be a single,
+    // process-wide instance now that both `ServiceRequestsModule` and
+    // `PlatformAdminModule` need `StoragePort`).
+    StorageModule,
     SystemStatusModule,
     UsersModule,
     AuthModule,
@@ -240,7 +253,10 @@ import type { AppConfig } from './config/configuration';
     IdentityVerificationModule,
     ServiceRequestsModule,
     QuotesModule,
+    QuoteNegotiationModule,
     EngagementsModule,
+    EngagementChatModule,
+    AppointmentsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },

@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
-import { join } from 'path';
+import { extname, join } from 'path';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../../config/configuration';
@@ -19,6 +19,28 @@ const CONTENT_TYPE_EXTENSIONS: Readonly<Record<string, string>> = {
   'image/webp': '.webp',
   'application/pdf': '.pdf',
 };
+
+/**
+ * The exact inverse of `CONTENT_TYPE_EXTENSIONS` above — used by
+ * `UploadsController.get` to answer the response with the real
+ * `Content-Type` instead of Express's `res.send(Buffer)` default
+ * (`application/octet-stream`). Bug found 2026-08-25 (uploadable-logo
+ * follow-up): with the wrong content-type, `GET /uploads/:key` still
+ * returns the correct bytes (a raw byte-count check like `curl` never
+ * notices), but a BROWSER refuses to treat the response as an image —
+ * `<img src="...">` tags render broken, exactly what surfaced as a missing
+ * logo in a real sent email. `X-Content-Type-Options: nosniff` (set
+ * globally by Helmet — see `apply-security-middleware.ts`) makes this
+ * strict, not just a Chrome heuristic quirk: the browser is told not to
+ * guess, so an honest, correct header is required, not optional.
+ */
+const EXTENSION_CONTENT_TYPES: Readonly<Record<string, string>> =
+  Object.fromEntries(
+    Object.entries(CONTENT_TYPE_EXTENSIONS).map(([contentType, ext]) => [
+      ext,
+      contentType,
+    ]),
+  );
 
 /**
  * LOCAL DEV/TEST ONLY placeholder implementation of `StoragePort` — writes
@@ -108,6 +130,17 @@ export class LocalDevStorageAdapter implements StoragePort {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Used by `UploadsController.get` to set the real `Content-Type` response
+   * header — see `EXTENSION_CONTENT_TYPES`'s own comment above for why this
+   * is a correctness fix, not cosmetic. Falls back to
+   * `application/octet-stream` (Express's own default) for any extension
+   * outside the allow-list this adapter itself ever writes.
+   */
+  getContentType(key: string): string {
+    return EXTENSION_CONTENT_TYPES[extname(key)] ?? 'application/octet-stream';
   }
 
   private pathFor(key: string): string {

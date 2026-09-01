@@ -18,7 +18,11 @@ describe('RegisterUserService', () => {
       .mockResolvedValue(overrides?.existingUser ?? null);
     const createPasswordUser = jest.fn((data: Record<string, unknown>) => {
       void data; // referenced only so the mock's arg type is inferred
-      return Promise.resolve({ id: 'user-1', email: 'jane@example.com' });
+      return Promise.resolve({
+        id: 'user-1',
+        email: 'jane@example.com',
+        firstName: 'Jane',
+      });
     });
     const createEmailVerificationCode = jest
       .fn()
@@ -113,6 +117,7 @@ describe('RegisterUserService', () => {
     expect(sendVerificationCode).toHaveBeenCalledWith(
       'jane@example.com',
       expect.stringMatching(/^\d{6}$/),
+      'Jane',
     );
   });
 

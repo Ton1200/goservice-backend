@@ -65,7 +65,11 @@ export class ForceUserAccountPasswordResetService {
       throw userAccountNotFound(userId);
     }
 
-    await this.issuePasswordResetCodeService.issueForUser(user.id, user.email);
+    await this.issuePasswordResetCodeService.issueForUser(
+      user.id,
+      user.email,
+      user.firstName,
+    );
 
     await this.prisma.$transaction(async (tx) => {
       await this.auditLogRepository.write(tx, {

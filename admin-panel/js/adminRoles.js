@@ -96,6 +96,42 @@ const PERMISSION_GROUPS = [
     write: 'CATEGORIES_WRITE',
   },
   { label: 'Quotes', read: 'QUOTES_READ' },
+  // GOS-53 (2026-08-21) — added here 2026-08-21 follow-up: this row was
+  // missing from the very start (the resource × action matrix above wasn't
+  // updated when `QUOTE_NEGOTIATION_READ` was added to the `Permission`
+  // enum), which meant no admin could ever be granted this permission
+  // through the panel at all. Same fix pattern as `Engagement Chat` below.
+  { label: 'Quote Negotiation', read: 'QUOTE_NEGOTIATION_READ' },
+  // GOS-46 (2026-08-21) — same "row missing from the matrix" gap as
+  // `Quote Negotiation` above: `ENGAGEMENT_CHAT_READ` existed on the
+  // `Permission` enum with no way to grant/revoke it from this panel.
+  { label: 'Engagement Chat', read: 'ENGAGEMENT_CHAT_READ' },
+  // GOS-59 (2026-08-24) — same "row missing from the matrix" gap as
+  // `Quote Negotiation`/`Engagement Chat` above: `APPOINTMENTS_READ` existed
+  // on the `Permission` enum (gates `adminAppointmentsByEngagement`) with no
+  // way to grant/revoke it from this panel. Human-reported: a real
+  // already-bootstrapped SUPER_ADMIN saw "You don't have permission to view
+  // this engagement's appointments." with no checkbox anywhere to fix it —
+  // `bootstrap-super-admin.ts`'s `seedRoles()` deliberately never resets an
+  // EXISTING role's permissions (see that script's own header comment), so
+  // this panel's Roles screen is the only recovery path on a machine that
+  // was already bootstrapped before this permission existed.
+  { label: 'Appointments', read: 'APPOINTMENTS_READ' },
+  // Editable transactional-email templates follow-up (2026-08-24) — same
+  // "row missing from the matrix" gap as every entry above it: this repo's
+  // own bootstrap script (`scripts/bootstrap-super-admin.ts`) deliberately
+  // never resets an EXISTING role's permissions once seeded (see that
+  // file's "PERMISSIONS GUARANTEE — NARROWED" comment), so on any
+  // already-bootstrapped environment this Roles screen is the ONLY way to
+  // grant EMAIL_TEMPLATES_READ/WRITE to a role — without this row there was
+  // no checkbox anywhere to do that, which is exactly the failure a real
+  // admin hit ("You do not have permission to view email templates" with no
+  // way to fix it from the panel).
+  {
+    label: 'Email Templates',
+    read: 'EMAIL_TEMPLATES_READ',
+    write: 'EMAIL_TEMPLATES_WRITE',
+  },
 ];
 
 const ACTION_COLUMNS = [

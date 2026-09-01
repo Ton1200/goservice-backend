@@ -5,9 +5,6 @@ import { IdentityVerificationModule } from '../identity-verification/identity-ve
 import { ProfilesModule } from '../profiles/profiles.module';
 import { QuotesRepository } from '../quotes/quotes.repository';
 import { UsersModule } from '../users/users.module';
-import { LocalDevStorageAdapter } from './adapters/local-dev-storage.adapter';
-import { UploadsController } from './controllers/uploads.controller';
-import { StoragePort } from './ports/storage.port';
 import { ServiceRequestFieldResolver } from './service-request-field.resolver';
 import { CancelServiceRequestService } from './services/cancel-service-request.service';
 import { ListCompatibleServiceRequestsService } from './services/list-compatible-service-requests.service';
@@ -39,19 +36,19 @@ import { ServiceRequestsResolver } from './service-requests.resolver';
  * failure (`Nest can't resolve dependencies of the AccountApprovedGuard`)
  * without this import.
  *
- * `LocalDevStorageAdapter` is registered as itself (a concrete provider,
- * needed directly by `UploadsController`) AND aliased to the abstract
- * `StoragePort` token via `useExisting` — same pattern
- * `IdentityVerificationModule` already uses for
- * `DiditIdentityVerificationAdapter`/`IdentityVerificationPort` — so both
- * consumers share the exact same singleton instance. Swapping in a real
- * object-storage adapter later is a new class + changing this one
- * `useExisting` target, no resolver/service/schema change.
- *
- * `UploadsController` is this module's REST controller (the codebase's
- * second, after `DiditWebhookController`) — registered via `controllers`,
- * not `providers`; NOT part of either GraphQL schema's `include` array
- * (see `app.module.ts`).
+ * `StoragePort`/`LocalDevStorageAdapter`/`UploadsController` moved OUT of
+ * this module (uploadable-logo follow-up, 2026-08-25) into the new
+ * `@Global()` `StorageModule` (`src/service-requests/storage.module.ts`,
+ * imported once at `AppModule` root, mirroring `PrismaModule`'s own
+ * pattern) — see that module's own header comment for WHY this had to
+ * become a single, process-wide singleton once `PlatformAdminModule` also
+ * started needing `StoragePort` (a genuine correctness fix, not just a
+ * refactor: two independent `LocalDevStorageAdapter` instances would each
+ * generate a DIFFERENT random signing secret whenever
+ * `STORAGE_LOCAL_SIGNING_SECRET` is unset, breaking upload-token
+ * verification across modules). `RequestServiceRequestAttachmentUploadUrlService`
+ * below still injects `StoragePort` exactly as before — nothing about ITS
+ * behavior changed, only where the provider is declared.
  *
  * GOS-41 follow-up — `ServiceRequestFieldResolver`
  * (`acceptedQuote`/`engagement`) needs `QuotesRepository`/
@@ -71,15 +68,12 @@ import { ServiceRequestsResolver } from './service-requests.resolver';
     ProfilesModule,
     UsersModule,
   ],
-  controllers: [UploadsController],
   providers: [
     ServiceRequestsResolver,
     ServiceRequestsRepository,
     ServiceRequestFieldResolver,
     QuotesRepository,
     EngagementsRepository,
-    LocalDevStorageAdapter,
-    { provide: StoragePort, useExisting: LocalDevStorageAdapter },
     PublishServiceRequestService,
     CancelServiceRequestService,
     ListMyServiceRequestsService,

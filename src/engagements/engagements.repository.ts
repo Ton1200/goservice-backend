@@ -30,6 +30,20 @@ export class EngagementsRepository {
     return tx.engagement.create({ data });
   }
 
+  /**
+   * GOS-46 — Engagement Chat's own party-resolution lookup
+   * (`EngagementChatAccessService.resolveParty`) needs to look an
+   * `Engagement` up by its OWN id (the `engagementId` GraphQL argument),
+   * unlike the two ID-of-a-different-entity lookups below. Reused as a
+   * concrete provider directly (this class is already `exports`-ed from
+   * `EngagementsModule` for exactly this "future Chat/Notifications module"
+   * reuse — see this class's own header comment and
+   * `EngagementsModule`'s).
+   */
+  findById(id: string): Promise<Engagement | null> {
+    return this.prisma.engagement.findUnique({ where: { id } });
+  }
+
   findByServiceRequestId(serviceRequestId: string): Promise<Engagement | null> {
     return this.prisma.engagement.findUnique({ where: { serviceRequestId } });
   }

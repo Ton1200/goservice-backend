@@ -151,7 +151,11 @@ describe('InviteAdminUserService', () => {
       displayName: created.displayName,
       roleId: role.id,
     });
-    expect(issueForAdminUser).toHaveBeenCalledWith(created.id, created.email);
+    expect(issueForAdminUser).toHaveBeenCalledWith(
+      created.id,
+      created.email,
+      created.displayName,
+    );
     expect(write).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

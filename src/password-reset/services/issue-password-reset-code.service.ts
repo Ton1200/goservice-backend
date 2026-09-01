@@ -61,6 +61,7 @@ export class IssuePasswordResetCodeService {
   async issueForUser(
     userId: string,
     email: string,
+    firstName: string | null,
   ): Promise<{ issued: boolean }> {
     const { codeTtlMinutes, resendCooldownSeconds } = this.configService.get(
       'passwordReset',
@@ -86,7 +87,11 @@ export class IssuePasswordResetCodeService {
       codeHash,
       expiresAt,
     });
-    await this.passwordResetEmailSender.sendPasswordResetCode(email, code);
+    await this.passwordResetEmailSender.sendPasswordResetCode(
+      email,
+      code,
+      firstName,
+    );
 
     return { issued: true };
   }

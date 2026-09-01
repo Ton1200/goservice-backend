@@ -79,6 +79,29 @@ const ADMIN_SERVICE_REQUEST_DETAIL_SELECT = {
     select: { id: true, url: true, createdAt: true },
     orderBy: { order: 'asc' as const },
   },
+  // GOS-53 (Quote Negotiation) admin follow-up — every Quote ever submitted
+  // against this ServiceRequest, newest first, for the redesigned detail
+  // popup's "Cotizaciones" tab. Deliberately lean (no `message`/
+  // `serviceRequest` back-reference — see `AdminServiceRequestQuoteModel`'s
+  // own header comment) — same `_count` trick `ADMIN_QUOTE_SELECT` already
+  // uses for a cheap negotiation-activity signal.
+  quotes: {
+    select: {
+      id: true,
+      price: true,
+      negotiatedPrice: true,
+      status: true,
+      createdAt: true,
+      professionalProfile: {
+        select: {
+          displayName: true,
+          user: { select: { email: true } },
+        },
+      },
+      _count: { select: { negotiationMessages: true } },
+    },
+    orderBy: { createdAt: 'desc' as const },
+  },
 } satisfies Prisma.ServiceRequestSelect;
 
 export type AdminServiceRequestDetailRow = Prisma.ServiceRequestGetPayload<{

@@ -26,6 +26,15 @@ export class AdminQuoteDetailModel {
   @Field(() => Int)
   price!: number;
 
+  // GOS-53 (Quote Negotiation) admin follow-up — see
+  // `AdminQuoteModel.negotiatedPrice`'s own comment.
+  @Field(() => Int, { nullable: true })
+  negotiatedPrice?: number | null;
+
+  // GOS-53 follow-up — see `AdminQuoteModel.finalPrice`'s own comment.
+  @Field(() => Int)
+  finalPrice!: number;
+
   @Field()
   message!: string;
 
@@ -37,6 +46,11 @@ export class AdminQuoteDetailModel {
 
   @Field(() => AdminQuoteProfessionalModel)
   professional!: AdminQuoteProfessionalModel;
+
+  // GOS-53 admin follow-up — see `AdminQuoteModel.negotiationMessageCount`'s
+  // own comment.
+  @Field(() => Int)
+  negotiationMessageCount!: number;
 
   @Field(() => AdminQuoteEngagementModel, { nullable: true })
   engagement!: AdminQuoteEngagementModel | null;

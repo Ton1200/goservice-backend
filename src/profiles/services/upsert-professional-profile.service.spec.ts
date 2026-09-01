@@ -140,6 +140,33 @@ describe('UpsertProfessionalProfileService', () => {
     expect(callArg.languages).toBeUndefined();
   });
 
+  it('passes locationSharingEnabled through to the repository when provided', async () => {
+    const { service, upsertProfessionalProfile } = makeService();
+
+    await service.upsertProfessionalProfile(
+      'user-1',
+      validInput({ locationSharingEnabled: true }),
+    );
+
+    expect(upsertProfessionalProfile).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ locationSharingEnabled: true }),
+    );
+  });
+
+  it('passes locationSharingEnabled through as undefined (not a wipe/reset-to-false value) when omitted', async () => {
+    const { service, upsertProfessionalProfile } = makeService();
+
+    await service.upsertProfessionalProfile('user-1', validInput());
+
+    const callArg = (
+      upsertProfessionalProfile.mock.calls as unknown[][]
+    )[0][1] as {
+      locationSharingEnabled?: boolean;
+    };
+    expect(callArg.locationSharingEnabled).toBeUndefined();
+  });
+
   it('passes specializations through to the repository unchanged, in submission order', async () => {
     const { service, upsertProfessionalProfile } = makeService({
       existingCategoryIds: ['cat-1', 'cat-2'],

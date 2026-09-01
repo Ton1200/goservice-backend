@@ -65,6 +65,13 @@ export class UploadsController {
     if (!bytes) {
       throw new NotFoundException();
     }
+    // Bug fix (2026-08-25, uploadable-logo follow-up) — without this,
+    // `res.send(Buffer)` defaults to `Content-Type: application/octet-stream`,
+    // and `X-Content-Type-Options: nosniff` (Helmet, global) stops a browser
+    // from guessing otherwise: every `<img src="...">` pointing here
+    // rendered broken, invisibly, since a raw byte-count check (e.g. curl)
+    // never notices the wrong header. See `getContentType`'s own comment.
+    res.type(this.storageAdapter.getContentType(key));
     res.send(bytes);
   }
 

@@ -14,6 +14,11 @@ import '../service-requests/models/service-request-status.enum'; // GraphQL enum
 import '../service-requests/models/service-request-urgency.enum'; // GraphQL enum registration side effect
 import '../quotes/models/quote-status.enum'; // GraphQL enum registration side effect
 import '../engagements/models/engagement-status.enum'; // GraphQL enum registration side effect
+import '../quote-negotiation/models/quote-negotiation-party.enum'; // GraphQL enum registration side effect
+import '../quote-negotiation/models/quote-price-proposal-status.enum'; // GraphQL enum registration side effect
+import '../engagement-chat/models/engagement-chat-party.enum'; // GraphQL enum registration side effect
+import '../appointments/models/appointment-status.enum'; // GraphQL enum registration side effect
+import '../appointments/models/appointment-party.enum'; // GraphQL enum registration side effect
 import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
@@ -57,6 +62,17 @@ import { QuotesRepository } from '../quotes/quotes.repository';
 import { AdminQuotesResolver } from './quotes/admin-quotes.resolver';
 import { ListAdminQuotesService } from './quotes/services/list-admin-quotes.service';
 import { GetAdminQuoteDetailService } from './quotes/services/get-admin-quote-detail.service';
+import { QuoteNegotiationRepository } from '../quote-negotiation/quote-negotiation.repository';
+import { QuoteNegotiationModuleEnabledGuard } from '../quote-negotiation/guards/quote-negotiation-module-enabled.guard';
+import { AdminQuoteNegotiationResolver } from './quote-negotiation/admin-quote-negotiation.resolver';
+import { GetAdminQuoteNegotiationThreadService } from './quote-negotiation/services/get-admin-quote-negotiation-thread.service';
+import { EngagementsRepository } from '../engagements/engagements.repository';
+import { EngagementChatRepository } from '../engagement-chat/engagement-chat.repository';
+import { AdminEngagementChatResolver } from './engagement-chat/admin-engagement-chat.resolver';
+import { GetAdminEngagementChatThreadService } from './engagement-chat/services/get-admin-engagement-chat-thread.service';
+import { AppointmentsRepository } from '../appointments/appointments.repository';
+import { AdminAppointmentsResolver } from './appointments/admin-appointments.resolver';
+import { GetAdminAppointmentsByEngagementService } from './appointments/services/get-admin-appointments-by-engagement.service';
 import { AdminLockoutGuardService } from './admin-rbac/services/admin-lockout-guard.service';
 import { AdminRolesResolver } from './admin-roles/admin-roles.resolver';
 import { ListAdminRolesService } from './admin-roles/services/list-admin-roles.service';
@@ -76,6 +92,13 @@ import { AdminInvitesResolver } from './admin-invites/admin-invites.resolver';
 import { AcceptAdminInviteResolver } from './admin-invites/accept-admin-invite.resolver';
 import { AdminInviteEmailSenderPort } from './admin-invites/ports/admin-invite-email-sender.port';
 import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapters/email-queue-admin-invite-email-sender.adapter';
+import { AdminEmailTemplatesResolver } from './email-templates/admin-email-templates.resolver';
+import { ListEmailTemplatesService } from './email-templates/services/list-email-templates.service';
+import { UpdateEmailTemplateService } from './email-templates/services/update-email-template.service';
+import { SendTestEmailTemplateService } from './email-templates/services/send-test-email-template.service';
+import { GetEmailLayoutService } from './email-templates/services/get-email-layout.service';
+import { UpdateEmailLayoutService } from './email-templates/services/update-email-layout.service';
+import { RequestEmailLogoUploadUrlService } from './email-templates/services/request-email-logo-upload-url.service';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -350,6 +373,73 @@ import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapter
     ListAdminQuotesService,
     GetAdminQuoteDetailService,
 
+    // quote-negotiation (GOS-53, 2026-08-21; permission/flag follow-up same
+    // day) — `adminQuoteNegotiationThread`, READ-ONLY, gated by its own
+    // dedicated `Permission.QUOTE_NEGOTIATION_READ` (REPLACES the first
+    // round's `Permission.SERVICE_REQUESTS_READ` — see
+    // `AdminQuoteNegotiationResolver`'s own header comment) AND by
+    // `quote-negotiation.general.enabled` via `QuoteNegotiationModuleEnabledGuard`
+    // (REVERSES the first round's "not gated by the flag" choice, same
+    // guard INSTANCE the consumer `QuoteNegotiationResolver` already
+    // applies — its constructor dependency, `PlatformSettingPort`, resolves
+    // fine here since `PlatformSettingsModule` is already imported above
+    // for other purposes, so no new module import was needed).
+    // `QuoteNegotiationRepository` is reused CONCRETE CLASS from
+    // `src/quote-negotiation/` — same "never import the resolver-bearing
+    // module" pattern as `QuotesRepository` above;
+    // `QuoteNegotiationModule` itself is never imported here (it has its
+    // own `QuoteNegotiationResolver`, the same leak class documented
+    // throughout this file). Reuses `QuoteNegotiationMessageModel`/
+    // `QuotePriceProposalModel` directly as this query's return type — see
+    // `GetAdminQuoteNegotiationThreadService`'s own header comment for why
+    // no separate `AdminQuoteNegotiationMessage`-named duplicate type was
+    // created.
+    QuoteNegotiationRepository,
+    QuoteNegotiationModuleEnabledGuard,
+    AdminQuoteNegotiationResolver,
+    GetAdminQuoteNegotiationThreadService,
+
+    // engagement-chat (GOS-46, 2026-08-21) — `adminEngagementChatThread`,
+    // READ-ONLY, gated by its own dedicated `Permission.ENGAGEMENT_CHAT_READ`
+    // (deliberately NOT `SERVICE_REQUESTS_READ`/`QUOTE_NEGOTIATION_READ` —
+    // see `AdminEngagementChatResolver`'s own header comment). No
+    // module-enabled kill switch — Engagement Chat has no admin-configurable
+    // feature flag. `EngagementsRepository`/`EngagementChatRepository` are
+    // reused CONCRETE classes from `src/engagements/`/`src/engagement-chat/`
+    // — same "never import the resolver-bearing module" pattern as
+    // `QuoteNegotiationRepository` above; neither `EngagementsModule` nor
+    // `EngagementChatModule` themselves are ever imported here (each has its
+    // own consumer-facing resolver, the same leak class documented
+    // throughout this file). Reuses `EngagementMessageModel` directly as
+    // this query's return type — same "orphaned type made reachable"
+    // reasoning as the quote-negotiation admin surface above.
+    EngagementsRepository,
+    EngagementChatRepository,
+    AdminEngagementChatResolver,
+    GetAdminEngagementChatThreadService,
+
+    // Appointment (Coordinación de Visita) admin audit surface (GOS-59,
+    // 2026-08-24) — `adminAppointmentsByEngagement`, READ-ONLY, gated by
+    // its own dedicated `Permission.APPOINTMENTS_READ` (deliberately NOT
+    // `SERVICE_REQUESTS_READ`/`QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ`
+    // — see `AdminAppointmentsResolver`'s own header comment). No
+    // module-enabled kill switch — Appointment has no admin-configurable
+    // feature flag. `EngagementsRepository` is already a provider above
+    // (reused, not duplicated). `AppointmentsRepository` is reused CONCRETE
+    // class from `src/appointments/` — same "never import the
+    // resolver-bearing module" pattern as `EngagementChatRepository` above;
+    // `AppointmentsModule` itself is never imported here (it has its own
+    // `AppointmentsResolver`, the same leak class documented throughout
+    // this file). Reuses `AppointmentModel` directly as this query's return
+    // type — same "orphaned type made reachable" reasoning as the
+    // engagement-chat admin surface above. Also reuses the SAME
+    // `adminEngagementNotFound()` error `AdminEngagementChatResolver`'s own
+    // service already defines (see
+    // `GetAdminAppointmentsByEngagementService`'s own header comment).
+    AppointmentsRepository,
+    AdminAppointmentsResolver,
+    GetAdminAppointmentsByEngagementService,
+
     // admin-rbac / admin-roles / admin-users / admin-invites (Administrators
     // tab follow-up, 2026-08-20) — role/permission management + admin-user
     // invite/manage capability. `AdminRolesRepository`/`AdminUsersRepository`
@@ -387,6 +477,51 @@ import { EmailQueueAdminInviteEmailSenderAdapter } from './admin-invites/adapter
     // class from `AdminInvitesResolver` above, never merged into it.
     AcceptAdminInviteService,
     AcceptAdminInviteResolver,
+
+    // email-templates (editable transactional-email templates follow-up,
+    // 2026-08-24) — `emailTemplates`/`updateEmailTemplate`/
+    // `sendTestEmailTemplate`. `EmailTemplatesRepository`/`EmailTemplatePort`
+    // are NOT redeclared here — they come from the already-imported
+    // `EmailModule`, which imports AND RE-EXPORTS the resolver-free
+    // `EmailTemplatesModule` (see both modules' own header comments), the
+    // same "reuse the concrete repository via a resolver-free module,
+    // never import a resolver-bearing one" pattern as
+    // `PlatformSettingsRepository` above. `EnsureEmailDeliveryAvailableService`/
+    // `EmailQueueService` (needed by `SendTestEmailTemplateService`) also
+    // already come from `EmailModule`.
+    AdminEmailTemplatesResolver,
+    ListEmailTemplatesService,
+    UpdateEmailTemplateService,
+    SendTestEmailTemplateService,
+
+    // shared email header/footer (2026-08-25 follow-up) — `emailLayout`/
+    // `updateEmailLayout`, registered on the SAME `AdminEmailTemplatesResolver`
+    // above (see that resolver's own header comment for why). Same
+    // "EmailLayoutRepository/EmailLayoutPort come from the already-imported
+    // EmailModule -> EmailTemplatesModule chain, never redeclared here"
+    // pattern as `EmailTemplatesRepository`/`EmailTemplatePort` immediately
+    // above.
+    GetEmailLayoutService,
+    UpdateEmailLayoutService,
+
+    // uploadable email logo (2026-08-25 follow-up) — `requestEmailLogoUploadUrl`.
+    // Reuses the EXISTING GOS-38 `StoragePort` seam
+    // (`src/service-requests/ports/storage.port.ts`) rather than building
+    // new storage plumbing — `RequestEmailLogoUploadUrlService` injects
+    // `StoragePort` directly, resolvable here WITHOUT importing
+    // `ServiceRequestsModule` (same "never import a resolver-bearing
+    // module" leak-avoidance pattern documented throughout this file — that
+    // module owns its own `ServiceRequestsResolver`) and WITHOUT
+    // re-declaring `LocalDevStorageAdapter`/`StoragePort` as local providers
+    // here either: both now come from the `@Global()` `StorageModule`
+    // (`src/service-requests/storage.module.ts`, imported once at
+    // `AppModule` root, mirroring `PrismaModule`'s own pattern) — see that
+    // module's own header comment for why a single, process-wide instance
+    // is REQUIRED here, not just a style choice (two independent
+    // `LocalDevStorageAdapter` instances would each generate a DIFFERENT
+    // random signing secret whenever `STORAGE_LOCAL_SIGNING_SECRET` is
+    // unset, breaking upload-token verification across modules).
+    RequestEmailLogoUploadUrlService,
   ],
 })
 export class PlatformAdminModule {}
