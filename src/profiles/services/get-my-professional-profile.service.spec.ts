@@ -24,7 +24,9 @@ describe('GetMyProfessionalProfileService', () => {
   it('returns the repository value unchanged when a profile exists', async () => {
     const profile = {
       id: 'profile-1',
-      displayName: 'Juan Perez',
+      firstName: 'Juan',
+      lastName: 'Perez',
+      displayName: null,
       specializations: [],
     };
     const { service, findProfessionalProfileByUserId } = makeService(profile);

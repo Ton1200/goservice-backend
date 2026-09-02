@@ -10,7 +10,8 @@ describe('UpsertCustomerProfileService', () => {
   }) {
     const profile = {
       id: 'profile-1',
-      displayName: 'Jane Doe',
+      firstName: 'Jane',
+      lastName: 'Doe',
       addressLine: 'Av. Siempreviva 742',
       city: 'CABA',
       province: 'Buenos Aires',
@@ -36,7 +37,8 @@ describe('UpsertCustomerProfileService', () => {
     overrides?: Partial<UpsertCustomerProfileInput>,
   ): UpsertCustomerProfileInput {
     return {
-      displayName: 'Jane Doe',
+      firstName: 'Jane',
+      lastName: 'Doe',
       addressLine: 'Av. Siempreviva 742',
       city: 'CABA',
       province: 'Buenos Aires',
@@ -61,7 +63,8 @@ describe('UpsertCustomerProfileService', () => {
 
     expect(result).toBe(profile);
     expect(upsertCustomerProfile).toHaveBeenCalledWith('user-1', {
-      displayName: 'Jane Doe',
+      firstName: 'Jane',
+      lastName: 'Doe',
       addressLine: 'Av. Siempreviva 742',
       city: 'CABA',
       province: 'Buenos Aires',
@@ -214,7 +217,7 @@ describe('UpsertCustomerProfileService', () => {
     expect(events).not.toContain('customer_profile_updated');
   });
 
-  it('never logs PII field values (displayName/addressLine/city/province/country/photoUrl)', async () => {
+  it('never logs PII field values (firstName/lastName/addressLine/city/province/country/photoUrl)', async () => {
     const { service } = makeService();
 
     await service.upsertCustomerProfile(
@@ -224,7 +227,8 @@ describe('UpsertCustomerProfileService', () => {
 
     for (const call of logSpy.mock.calls as unknown[][]) {
       const payload = JSON.stringify(call[0]);
-      expect(payload).not.toContain('Jane Doe');
+      expect(payload).not.toContain('Jane');
+      expect(payload).not.toContain('Doe');
       expect(payload).not.toContain('Siempreviva');
       expect(payload).not.toContain('CABA');
       expect(payload).not.toContain('cdn.example.com');

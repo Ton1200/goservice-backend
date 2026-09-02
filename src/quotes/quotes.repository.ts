@@ -63,18 +63,20 @@ const ADMIN_QUOTE_SELECT = {
       // (createdAt/updatedAt included), same "orphaned type made reachable"
       // pattern `ADMIN_SERVICE_REQUEST_SELECT` already establishes.
       category: true,
-      // Includes user.firstName/lastName (beyond the bare minimum needed to
-      // just "identify" the request) specifically so this can reuse
+      // The customer's real name (nombre / apellido) now lives on the
+      // `CustomerProfile` itself, so this can still reuse
       // `AdminServiceRequestCustomerModel` verbatim — same type, same
-      // name+email formatter fallback pattern the Service Requests grid's
-      // own customer column already uses — rather than inventing a
-      // near-duplicate, narrower admin-only type.
+      // name+email column the Service Requests grid's own customer column
+      // uses — rather than inventing a near-duplicate, narrower admin-only
+      // type. The owning `User`'s own `firstName`/`lastName` are a separate
+      // identity-level name and no longer read here.
       customerProfile: {
         select: {
           id: true,
-          displayName: true,
+          firstName: true,
+          lastName: true,
           user: {
-            select: { id: true, email: true, firstName: true, lastName: true },
+            select: { id: true, email: true },
           },
         },
       },
@@ -83,9 +85,12 @@ const ADMIN_QUOTE_SELECT = {
   professionalProfile: {
     select: {
       id: true,
+      firstName: true,
+      lastName: true,
+      // Optional "nombre comercial" — may be null.
       displayName: true,
       user: {
-        select: { id: true, email: true, firstName: true, lastName: true },
+        select: { id: true, email: true },
       },
     },
   },

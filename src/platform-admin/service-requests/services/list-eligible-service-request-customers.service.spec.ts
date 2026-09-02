@@ -4,12 +4,11 @@ import { ListEligibleServiceRequestCustomersService } from './list-eligible-serv
 describe('ListEligibleServiceRequestCustomersService', () => {
   const row = {
     id: 'customer-profile-1',
-    displayName: 'Juan Perez',
+    firstName: 'Juan',
+    lastName: 'Perez',
     user: {
       id: 'user-1',
       email: 'juan@example.com',
-      firstName: 'Juan',
-      lastName: 'Perez',
     },
   };
 
@@ -37,7 +36,6 @@ describe('ListEligibleServiceRequestCustomersService', () => {
       {
         id: 'customer-profile-1',
         userId: 'user-1',
-        displayName: 'Juan Perez',
         email: 'juan@example.com',
         firstName: 'Juan',
         lastName: 'Perez',

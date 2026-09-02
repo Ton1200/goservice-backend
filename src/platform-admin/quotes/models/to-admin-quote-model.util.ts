@@ -15,10 +15,9 @@ function toCustomerModel(
   const model = new AdminServiceRequestCustomerModel();
   model.id = customerProfile.id;
   model.userId = customerProfile.user.id;
-  model.displayName = customerProfile.displayName;
   model.email = customerProfile.user.email;
-  model.firstName = customerProfile.user.firstName;
-  model.lastName = customerProfile.user.lastName;
+  model.firstName = customerProfile.firstName;
+  model.lastName = customerProfile.lastName;
   return model;
 }
 
@@ -40,10 +39,10 @@ function toProfessionalModel(
   const model = new AdminQuoteProfessionalModel();
   model.id = professionalProfile.id;
   model.userId = professionalProfile.user.id;
-  model.displayName = professionalProfile.displayName;
   model.email = professionalProfile.user.email;
-  model.firstName = professionalProfile.user.firstName;
-  model.lastName = professionalProfile.user.lastName;
+  model.firstName = professionalProfile.firstName;
+  model.lastName = professionalProfile.lastName;
+  model.displayName = professionalProfile.displayName;
   return model;
 }
 

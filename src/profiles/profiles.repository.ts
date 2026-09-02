@@ -283,7 +283,7 @@ export class ProfilesRepository {
    * `CustomerProfile`s whose owning `User` is `APPROVED` (this project's
    * "identity validated" state — see `UserAccountStatus`'s own schema
    * comment), optionally narrowed by a case-insensitive substring match on
-   * `displayName` or the owner's `email`. Powers
+   * `firstName`, `lastName`, or the owner's `email`. Powers
    * `eligibleServiceRequestCustomers` — an admin can only create a
    * `ServiceRequest` on behalf of a customer this method actually returns;
    * `CreateServiceRequestForCustomerService` re-checks both conditions
@@ -292,12 +292,10 @@ export class ProfilesRepository {
    * full listing.
    */
   findApprovedCustomerProfilesForAdmin(search?: string): Promise<
-    (Pick<CustomerProfile, 'id' | 'displayName'> & {
+    (Pick<CustomerProfile, 'id' | 'firstName' | 'lastName'> & {
       user: {
         id: string;
         email: string;
-        firstName: string | null;
-        lastName: string | null;
       };
     })[]
   > {
@@ -305,7 +303,8 @@ export class ProfilesRepository {
     const searchFilter: Prisma.CustomerProfileWhereInput = trimmedSearch
       ? {
           OR: [
-            { displayName: { contains: trimmedSearch, mode: 'insensitive' } },
+            { firstName: { contains: trimmedSearch, mode: 'insensitive' } },
+            { lastName: { contains: trimmedSearch, mode: 'insensitive' } },
             {
               user: {
                 email: { contains: trimmedSearch, mode: 'insensitive' },
@@ -322,12 +321,13 @@ export class ProfilesRepository {
       },
       select: {
         id: true,
-        displayName: true,
+        firstName: true,
+        lastName: true,
         user: {
-          select: { id: true, email: true, firstName: true, lastName: true },
+          select: { id: true, email: true },
         },
       },
-      orderBy: { displayName: 'asc' },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       take: 20,
     });
   }
@@ -352,7 +352,8 @@ export class ProfilesRepository {
   async upsertCustomerProfile(
     userId: string,
     data: {
-      displayName: string;
+      firstName: string;
+      lastName: string;
       addressLine: string;
       city: string;
       province: string;
@@ -411,11 +412,19 @@ export class ProfilesRepository {
    * `locationSharingEnabled` (GOS-62) follows the exact same optional,
    * partial-update convention as `upsertCustomerProfile`'s own field of the
    * same name above — see that method's own comment.
+   *
+   * `displayName` (the optional "nombre comercial") extends that same
+   * convention with explicit-null support: `undefined` is dropped by
+   * Prisma (leaves the persisted value untouched on an edit, falls back to
+   * the column's `NULL` default on create), whereas an explicit `null`
+   * clears it.
    */
   async upsertProfessionalProfile(
     userId: string,
     data: {
-      displayName: string;
+      firstName: string;
+      lastName: string;
+      displayName?: string | null;
       city: string;
       country: CountryCode;
       serviceAreaDescription: string;

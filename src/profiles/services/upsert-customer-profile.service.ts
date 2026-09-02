@@ -16,8 +16,8 @@ const DEFAULT_COUNTRY = CountryCode.AR;
  * — this service only decides what to log based on the repository's
  * result, it never re-derives or re-checks the transition itself.
  *
- * Never logs `displayName`/`addressLine`/`city`/`province`/`country`/
- * `photoUrl` — only IDs, booleans, and status values.
+ * Never logs `firstName`/`lastName`/`addressLine`/`city`/`province`/
+ * `country`/`photoUrl` — only IDs, booleans, and status values.
  *
  * `locationSharingEnabled` (GOS-62) is passed through exactly like
  * `photoUrl` below — `undefined` when omitted, never coerced to `false` —
@@ -42,7 +42,8 @@ export class UpsertCustomerProfileService {
   ): Promise<CustomerProfile> {
     const { profile, wasCreated, accountStatusTransitioned } =
       await this.profilesRepository.upsertCustomerProfile(userId, {
-        displayName: input.displayName,
+        firstName: input.firstName,
+        lastName: input.lastName,
         addressLine: input.addressLine,
         city: input.city,
         province: input.province,

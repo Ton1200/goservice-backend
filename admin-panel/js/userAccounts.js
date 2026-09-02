@@ -125,7 +125,8 @@ const USER_ACCOUNT_DETAIL_QUERY = `
       hasCustomerProfile
       hasProfessionalProfile
       customerProfile {
-        displayName
+        firstName
+        lastName
         addressLine
         city
         province
@@ -134,6 +135,8 @@ const USER_ACCOUNT_DETAIL_QUERY = `
         locationSharingEnabled
       }
       professionalProfile {
+        firstName
+        lastName
         displayName
         bio
         city
@@ -877,14 +880,14 @@ function showDetailError(message) {
 
 /** One labeled field row (`label` above, `value` below) — `value` falls
  * back to an em dash when blank/nullish, never a raw empty string. */
-function buildPhoto(photoUrl, displayName) {
+function buildPhoto(photoUrl, name) {
   if (!photoUrl) {
     return null;
   }
   const img = document.createElement('img');
   img.className = 'gs-detail-photo';
   img.src = photoUrl;
-  img.alt = `${displayName}'s photo`;
+  img.alt = `${name}'s photo`;
   return img;
 }
 
@@ -918,11 +921,15 @@ function buildAccountTabContent(detail) {
 function buildCustomerProfileTabContent(profile) {
   const wrapper = document.createElement('div');
 
-  const photo = buildPhoto(profile.photoUrl, profile.displayName);
+  const photo = buildPhoto(
+    profile.photoUrl,
+    `${profile.firstName} ${profile.lastName}`,
+  );
   if (photo) {
     wrapper.appendChild(photo);
   }
-  wrapper.appendChild(buildField('Display name', profile.displayName));
+  wrapper.appendChild(buildField('First name', profile.firstName));
+  wrapper.appendChild(buildField('Last name', profile.lastName));
   // Boolean, not a free-text value — passed as an explicit 'Yes'/'No' string
   // rather than the raw boolean, since `buildField` renders a falsy value
   // (including `false`) as '—' via `value || '—'`.
@@ -951,12 +958,17 @@ function buildCustomerProfileTabContent(profile) {
 function buildProfessionalProfileTabContent(profile) {
   const wrapper = document.createElement('div');
 
-  const photo = buildPhoto(profile.photoUrl, profile.displayName);
+  const photo = buildPhoto(
+    profile.photoUrl,
+    `${profile.firstName} ${profile.lastName}`,
+  );
   if (photo) {
     wrapper.appendChild(photo);
   }
   wrapper.append(
-    buildField('Display name', profile.displayName),
+    buildField('First name', profile.firstName),
+    buildField('Last name', profile.lastName),
+    buildField('Nombre comercial', profile.displayName),
     buildField('Bio', profile.bio),
     buildField('Verification status', profile.verificationStatus),
     buildField(

@@ -30,11 +30,32 @@ import { UpsertProfessionalSpecializationInput } from './upsert-professional-spe
  */
 @InputType()
 export class UpsertProfessionalProfileInput {
+  // The professional's real name, split into two fields (nombre / apellido)
+  // — same `@MaxLength(80)` rationale as `UpsertCustomerProfileInput`.
   @Field()
   @IsString()
   @MinLength(1)
+  @MaxLength(80)
+  firstName!: string;
+
+  @Field()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  lastName!: string;
+
+  // Optional public-facing "nombre comercial", DISTINCT from
+  // `firstName`/`lastName`. Partial-update semantics, same as `photoUrl`
+  // below but with explicit-null support: omitted => left unchanged on an
+  // edit; explicit `null` => cleared. `@IsOptional()` skips `@MinLength`/
+  // `@MaxLength` for both `null` and `undefined`, but an empty string `""`
+  // is still rejected.
+  @Field(() => String, { nullable: true })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
   @MaxLength(120)
-  displayName!: string;
+  displayName?: string | null;
 
   // Full-replace-set semantics: each call replaces the professional's
   // entire specialization list with exactly this set — see
