@@ -6,6 +6,9 @@ import { CountryCode } from './country-code.enum';
  * here: `myCustomerProfile` is always implicitly "mine" via
  * `@CurrentUser()`, and nothing in this story needs the raw FK
  * client-side. Adding it later is a purely additive, non-breaking field.
+ *
+ * `firstName`/`lastName` are the person's real name (nombre / apellido),
+ * split out of the former single `displayName` field.
  */
 @ObjectType()
 export class CustomerProfile {
@@ -13,7 +16,10 @@ export class CustomerProfile {
   id!: string;
 
   @Field()
-  displayName!: string;
+  firstName!: string;
+
+  @Field()
+  lastName!: string;
 
   @Field()
   addressLine!: string;

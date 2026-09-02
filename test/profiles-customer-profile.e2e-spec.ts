@@ -21,14 +21,14 @@ const LOGIN_MUTATION = `
 
 const MY_CUSTOMER_PROFILE_QUERY = `
   query MyCustomerProfile {
-    myCustomerProfile { id displayName addressLine city province country photoUrl locationSharingEnabled }
+    myCustomerProfile { id firstName lastName addressLine city province country photoUrl locationSharingEnabled }
   }
 `;
 
 const UPSERT_CUSTOMER_PROFILE_MUTATION = `
   mutation UpsertCustomerProfile($input: UpsertCustomerProfileInput!) {
     upsertCustomerProfile(input: $input) {
-      id displayName addressLine city province country photoUrl locationSharingEnabled
+      id firstName lastName addressLine city province country photoUrl locationSharingEnabled
     }
   }
 `;
@@ -46,7 +46,8 @@ interface MyCustomerProfileResponseBody {
   data: {
     myCustomerProfile: {
       id: string;
-      displayName: string;
+      firstName: string;
+      lastName: string;
       addressLine: string;
       city: string;
       province: string;
@@ -62,7 +63,8 @@ interface UpsertCustomerProfileResponseBody {
   data: {
     upsertCustomerProfile: {
       id: string;
-      displayName: string;
+      firstName: string;
+      lastName: string;
       addressLine: string;
       city: string;
       province: string;
@@ -175,7 +177,8 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
   }
 
   const VALID_INPUT = {
-    displayName: 'Jane Doe',
+    firstName: 'Jane',
+    lastName: 'Doe',
     addressLine: 'Av. Siempreviva 742',
     city: 'CABA',
     province: 'Buenos Aires',

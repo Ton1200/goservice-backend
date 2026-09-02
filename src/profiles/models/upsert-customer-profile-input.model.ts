@@ -18,11 +18,22 @@ import { CountryCode } from './country-code.enum';
  */
 @InputType()
 export class UpsertCustomerProfileInput {
+  // The person's real name, split into two fields (nombre / apellido) —
+  // replaced the former single free-text `displayName`. `@MaxLength(80)`
+  // each: the old combined field was 1..120, so 80 + 80 comfortably covers
+  // any real name that used to fit. No `@Transform`/trim — no other field
+  // in this DTO trims either.
   @Field()
   @IsString()
   @MinLength(1)
-  @MaxLength(120)
-  displayName!: string;
+  @MaxLength(80)
+  firstName!: string;
+
+  @Field()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  lastName!: string;
 
   @Field()
   @IsString()

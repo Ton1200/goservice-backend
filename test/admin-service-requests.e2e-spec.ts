@@ -41,7 +41,7 @@ const SERVICE_REQUESTS_QUERY = `
         status
         attachmentsCount
         category { id name }
-        customer { id userId displayName email firstName lastName }
+        customer { id userId email firstName lastName }
       }
     }
   }
@@ -58,7 +58,8 @@ const ELIGIBLE_CUSTOMERS_QUERY = `
     eligibleServiceRequestCustomers(search: $search) {
       id
       userId
-      displayName
+      firstName
+      lastName
       email
     }
   }
@@ -85,7 +86,7 @@ const SERVICE_REQUEST_DETAIL_QUERY = `
       indicativeBudgetMin
       indicativeBudgetMax
       category { id name }
-      customer { id userId displayName email firstName lastName }
+      customer { id userId email firstName lastName }
       attachments { id url createdAt }
     }
   }
@@ -230,7 +231,8 @@ describe('GraphQL /admin/graphql — serviceRequests/serviceRequestDetail (e2e)'
     const customerProfile = await prisma.customerProfile.create({
       data: {
         userId: user.id,
-        displayName: 'Juan Perez',
+        firstName: 'Juan',
+        lastName: 'Perez',
         addressLine: 'Calle Falsa 123',
         city: 'CABA',
         province: 'Buenos Aires',
@@ -281,7 +283,8 @@ describe('GraphQL /admin/graphql — serviceRequests/serviceRequestDetail (e2e)'
       await prisma.customerProfile.create({
         data: {
           userId: user.id,
-          displayName: 'Ana Gomez',
+          firstName: 'Ana',
+          lastName: 'Gomez',
           addressLine: 'Calle Falsa 456',
           city: 'CABA',
           province: 'Buenos Aires',

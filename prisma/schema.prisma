@@ -247,7 +247,15 @@ model CustomerProfile {
   id          String      @id @default(uuid()) @db.Uuid
   userId      String      @unique @db.Uuid
   user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  displayName String
+  // The person's real name, split into two fields (nombre / apellido).
+  // Replaced the former single free-text `displayName` column — see
+  // `prisma/migrations/*_split_profile_name_into_first_last/migration.sql`'s
+  // own header comment for the naive split-on-first-space backfill this
+  // retroactive change used (demo/seed data only). Both NOT NULL, same as
+  // the column they replace. `User.firstName`/`User.lastName` are a
+  // separate identity-level name and deliberately not reused here.
+  firstName   String
+  lastName    String
   addressLine String
   city        String
   province    String
@@ -310,7 +318,20 @@ model ProfessionalProfile {
   id                     String                         @id @default(uuid()) @db.Uuid
   userId                 String                         @unique @db.Uuid
   user                   User                           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  displayName            String
+  // The person's real name, split into two fields (nombre / apellido) —
+  // same retroactive change and backfill as `CustomerProfile.firstName`/
+  // `lastName` above (see that field's comment). Both NOT NULL.
+  firstName              String
+  lastName               String
+  // Optional public-facing "nombre comercial" (e.g.
+  // "Diego Torres - Limpieza y Electricidad"), DISTINCT from the person's
+  // real name (`firstName`/`lastName` above). Nullable: a professional who
+  // trades under their own name simply leaves it unset. Partial-update
+  // semantics on `upsertProfessionalProfile`, same as `photoUrl` below but
+  // with explicit-null support: omitted => left unchanged, explicit `null`
+  // => cleared. Was a required `String` before the name split — see
+  // `*_split_profile_name_into_first_last/migration.sql`.
+  displayName            String?
   // Structured city/country (as opposed to only the free-text
   // serviceAreaDescription below) anticipates Professional Discovery
   // needing to filter/index by category+city without a future migration.

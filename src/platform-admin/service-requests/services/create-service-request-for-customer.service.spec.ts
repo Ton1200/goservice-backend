@@ -28,12 +28,11 @@ describe('CreateServiceRequestForCustomerService', () => {
     },
     customerProfile: {
       id: customerProfile.id,
-      displayName: 'Juan Perez',
+      firstName: 'Juan',
+      lastName: 'Perez',
       user: {
         id: 'user-1',
         email: 'juan@example.com',
-        firstName: 'Juan',
-        lastName: 'Perez',
       },
     },
     _count: { attachments: 0 },

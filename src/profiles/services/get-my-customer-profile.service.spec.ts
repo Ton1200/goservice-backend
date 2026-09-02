@@ -22,7 +22,7 @@ describe('GetMyCustomerProfileService', () => {
   });
 
   it('returns the repository value unchanged when a profile exists', async () => {
-    const profile = { id: 'profile-1', displayName: 'Jane Doe' };
+    const profile = { id: 'profile-1', firstName: 'Jane', lastName: 'Doe' };
     const { service, findCustomerProfileByUserId } = makeService(profile);
 
     const result = await service.getMyCustomerProfile('user-1');

@@ -15,6 +15,10 @@ import { ProfessionalVerificationStatus } from './professional-verification-stat
  * can have very different experience in their primary trade vs. a
  * secondary one. `bio` remains a general "about me," distinct from each
  * specialization's own `description`.
+ *
+ * `firstName`/`lastName` are the person's real name (nombre / apellido).
+ * `displayName` is a SEPARATE, optional public "nombre comercial" (may be
+ * `null`) — it is no longer the person's name.
  */
 @ObjectType()
 export class ProfessionalProfile {
@@ -22,7 +26,13 @@ export class ProfessionalProfile {
   id!: string;
 
   @Field()
-  displayName!: string;
+  firstName!: string;
+
+  @Field()
+  lastName!: string;
+
+  @Field(() => String, { nullable: true })
+  displayName?: string | null;
 
   // Ordered by `order` ascending — the PRIMARY specialization is not
   // guaranteed to be first in this list by position; check each item's

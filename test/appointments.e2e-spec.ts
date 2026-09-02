@@ -229,7 +229,8 @@ describe('GraphQL Appointment (GOS-59, e2e)', () => {
     const customerProfile = await prisma.customerProfile.create({
       data: {
         userId,
-        displayName: 'Cliente de Prueba',
+        firstName: 'Cliente',
+        lastName: 'de Prueba',
         addressLine: 'Calle Falsa 123',
         city: 'CABA',
         province: 'Buenos Aires',
@@ -247,7 +248,8 @@ describe('GraphQL Appointment (GOS-59, e2e)', () => {
     const professionalProfile = await prisma.professionalProfile.create({
       data: {
         userId,
-        displayName: 'Profesional de Prueba',
+        firstName: 'Profesional',
+        lastName: 'de Prueba',
         city: 'CABA',
         country: CountryCode.AR,
         serviceAreaDescription: 'CABA y GBA',

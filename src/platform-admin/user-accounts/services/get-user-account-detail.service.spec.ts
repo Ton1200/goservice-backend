@@ -43,7 +43,8 @@ describe('GetUserAccountDetailService', () => {
     const customerProfile = {
       id: 'cp1',
       userId: 'u1',
-      displayName: 'Jane D.',
+      firstName: 'Jane',
+      lastName: 'D.',
       addressLine: 'Av. Siempre Viva 742',
       city: 'Buenos Aires',
       province: 'CABA',
@@ -55,6 +56,9 @@ describe('GetUserAccountDetailService', () => {
     const professionalProfile = {
       id: 'pp1',
       userId: 'u1',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      // Optional "nombre comercial".
       displayName: 'Jane the Plumber',
       city: 'Buenos Aires',
       country: 'AR',

@@ -550,7 +550,8 @@ describe('GraphQL /admin/graphql — Category CRUD + hierarchy (e2e)', () => {
     const customerProfile = await prisma.customerProfile.create({
       data: {
         userId: user.id,
-        displayName: 'Juan Perez',
+        firstName: 'Juan',
+        lastName: 'Perez',
         addressLine: 'Calle Falsa 123',
         city: 'CABA',
         province: 'Buenos Aires',
@@ -597,7 +598,8 @@ describe('GraphQL /admin/graphql — Category CRUD + hierarchy (e2e)', () => {
     const professionalProfile = await prisma.professionalProfile.create({
       data: {
         userId: user.id,
-        displayName: 'Ana Gomez',
+        firstName: 'Ana',
+        lastName: 'Gomez',
         city: 'CABA',
         country: CountryCode.AR,
         serviceAreaDescription: 'CABA',

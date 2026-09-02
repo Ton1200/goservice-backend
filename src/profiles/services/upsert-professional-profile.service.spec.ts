@@ -13,7 +13,9 @@ describe('UpsertProfessionalProfileService', () => {
   }) {
     const profile = {
       id: 'profile-1',
-      displayName: 'Juan Perez',
+      firstName: 'Juan',
+      lastName: 'Perez',
+      displayName: null,
       city: 'CABA',
       country: 'AR',
       serviceAreaDescription: 'CABA y GBA Norte',
@@ -58,7 +60,8 @@ describe('UpsertProfessionalProfileService', () => {
     overrides?: Partial<UpsertProfessionalProfileInput>,
   ): UpsertProfessionalProfileInput {
     return {
-      displayName: 'Juan Perez',
+      firstName: 'Juan',
+      lastName: 'Perez',
       specializations: [
         {
           categoryId: 'cat-1',
@@ -165,6 +168,45 @@ describe('UpsertProfessionalProfileService', () => {
       locationSharingEnabled?: boolean;
     };
     expect(callArg.locationSharingEnabled).toBeUndefined();
+  });
+
+  it('passes the optional displayName ("nombre comercial") through when provided', async () => {
+    const { service, upsertProfessionalProfile } = makeService();
+
+    await service.upsertProfessionalProfile(
+      'user-1',
+      validInput({ displayName: 'Juan Perez - Plomería 24h' }),
+    );
+
+    expect(upsertProfessionalProfile).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ displayName: 'Juan Perez - Plomería 24h' }),
+    );
+  });
+
+  it('passes displayName through as undefined (leave unchanged) when omitted', async () => {
+    const { service, upsertProfessionalProfile } = makeService();
+
+    await service.upsertProfessionalProfile('user-1', validInput());
+
+    const callArg = (
+      upsertProfessionalProfile.mock.calls as unknown[][]
+    )[0][1] as { displayName?: string | null };
+    expect(callArg.displayName).toBeUndefined();
+  });
+
+  it('passes an explicit null displayName through (clears the nombre comercial)', async () => {
+    const { service, upsertProfessionalProfile } = makeService();
+
+    await service.upsertProfessionalProfile(
+      'user-1',
+      validInput({ displayName: null }),
+    );
+
+    const callArg = (
+      upsertProfessionalProfile.mock.calls as unknown[][]
+    )[0][1] as { displayName?: string | null };
+    expect(callArg.displayName).toBeNull();
   });
 
   it('passes specializations through to the repository unchanged, in submission order', async () => {
@@ -371,12 +413,13 @@ describe('UpsertProfessionalProfileService', () => {
     expect(createdLog?.specializationCount).toBe(1);
   });
 
-  it('never logs PII field values (displayName/city/country/serviceAreaDescription/bio/photoUrl/languages/specialization description)', async () => {
+  it('never logs PII field values (firstName/lastName/displayName/city/country/serviceAreaDescription/bio/photoUrl/languages/specialization description)', async () => {
     const { service } = makeService();
 
     await service.upsertProfessionalProfile(
       'user-1',
       validInput({
+        displayName: 'Juan Perez - Plomería 24h',
         photoUrl: 'https://cdn.example.com/pro.jpg',
         languages: ['es', 'en'],
       }),
@@ -384,7 +427,8 @@ describe('UpsertProfessionalProfileService', () => {
 
     for (const call of logSpy.mock.calls as unknown[][]) {
       const payload = JSON.stringify(call[0]);
-      expect(payload).not.toContain('Juan Perez');
+      expect(payload).not.toContain('Juan');
+      expect(payload).not.toContain('Perez');
       expect(payload).not.toContain('GBA Norte');
       expect(payload).not.toContain('experiencia');
       expect(payload).not.toContain('cdn.example.com');

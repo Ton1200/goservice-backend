@@ -152,7 +152,8 @@ async function createUser(data: {
 function createCustomerProfile(
   userId: string,
   data: {
-    displayName: string;
+    firstName: string;
+    lastName: string;
     addressLine: string;
     city: string;
     province: string;
@@ -165,7 +166,12 @@ function createCustomerProfile(
 async function createProfessionalProfile(
   userId: string,
   data: {
-    displayName: string;
+    firstName: string;
+    lastName: string;
+    // Optional "nombre comercial" — most demo professionals trade under
+    // their own name and leave it unset; a couple set it to exercise the
+    // now-nullable column.
+    displayName?: string;
     city: string;
     country: CountryCode;
     serviceAreaDescription: string;
@@ -183,7 +189,9 @@ async function createProfessionalProfile(
   const profile = await prisma.professionalProfile.create({
     data: {
       userId,
-      displayName: data.displayName,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      displayName: data.displayName ?? null,
       city: data.city,
       country: data.country,
       serviceAreaDescription: data.serviceAreaDescription,
@@ -473,7 +481,8 @@ async function main(): Promise<void> {
     passwordHash,
   });
   const mariaProfile = await createCustomerProfile(maria.id, {
-    displayName: 'María Fernández',
+    firstName: 'María',
+    lastName: 'Fernández',
     addressLine: 'Av. Corrientes 1234',
     city: 'Buenos Aires',
     province: 'Buenos Aires',
@@ -490,7 +499,8 @@ async function main(): Promise<void> {
     passwordHash,
   });
   const carlosProfile = await createCustomerProfile(carlos.id, {
-    displayName: 'Carlos Gómez',
+    firstName: 'Carlos',
+    lastName: 'Gómez',
     addressLine: 'Bv. San Juan 567',
     city: 'Córdoba',
     province: 'Córdoba',
@@ -507,7 +517,8 @@ async function main(): Promise<void> {
     passwordHash,
   });
   const lauraProfile = await createCustomerProfile(laura.id, {
-    displayName: 'Laura Ramírez',
+    firstName: 'Laura',
+    lastName: 'Ramírez',
     addressLine: 'Calle 85 #12-34',
     city: 'Bogotá',
     province: 'Bogotá D.C.',
@@ -525,7 +536,8 @@ async function main(): Promise<void> {
     passwordHash,
   });
   const pedroProfile = await createProfessionalProfile(pedro.id, {
-    displayName: 'Pedro Suárez',
+    firstName: 'Pedro',
+    lastName: 'Suárez',
     city: 'Buenos Aires',
     country: CountryCode.AR,
     serviceAreaDescription: 'Zona Capital Federal y GBA Norte',
@@ -552,7 +564,8 @@ async function main(): Promise<void> {
     passwordHash,
   });
   const anaProfile = await createProfessionalProfile(ana.id, {
-    displayName: 'Ana López',
+    firstName: 'Ana',
+    lastName: 'López',
     city: 'Rosario',
     country: CountryCode.AR,
     serviceAreaDescription: 'Rosario y alrededores',
@@ -585,7 +598,8 @@ async function main(): Promise<void> {
     passwordHash,
   });
   const jorgeProfile = await createProfessionalProfile(jorge.id, {
-    displayName: 'Jorge Martínez',
+    firstName: 'Jorge',
+    lastName: 'Martínez',
     city: 'Mendoza',
     country: CountryCode.AR,
     serviceAreaDescription: 'Ciudad de Mendoza y Godoy Cruz',
@@ -618,7 +632,8 @@ async function main(): Promise<void> {
     passwordHash,
   });
   const sofiaProfile = await createProfessionalProfile(sofia.id, {
-    displayName: 'Sofía Castro',
+    firstName: 'Sofía',
+    lastName: 'Castro',
     city: 'Medellín',
     country: CountryCode.CO,
     serviceAreaDescription: 'Medellín y área metropolitana',
@@ -652,13 +667,17 @@ async function main(): Promise<void> {
     passwordHash,
   });
   await createCustomerProfile(diego.id, {
-    displayName: 'Diego Torres',
+    firstName: 'Diego',
+    lastName: 'Torres',
     addressLine: 'Av. Rivadavia 4500',
     city: 'Buenos Aires',
     province: 'Buenos Aires',
     country: CountryCode.AR,
   });
   const diegoProProfile = await createProfessionalProfile(diego.id, {
+    firstName: 'Diego',
+    lastName: 'Torres',
+    // Optional "nombre comercial" — one of two demo professionals that set it.
     displayName: 'Diego Torres - Limpieza y Electricidad',
     city: 'Buenos Aires',
     country: CountryCode.AR,
@@ -692,13 +711,17 @@ async function main(): Promise<void> {
     passwordHash,
   });
   await createCustomerProfile(valentina.id, {
-    displayName: 'Valentina Ríos',
+    firstName: 'Valentina',
+    lastName: 'Ríos',
     addressLine: 'Cra 45 #26-85',
     city: 'Bogotá',
     province: 'Bogotá D.C.',
     country: CountryCode.CO,
   });
   const valentinaProProfile = await createProfessionalProfile(valentina.id, {
+    firstName: 'Valentina',
+    lastName: 'Ríos',
+    // Optional "nombre comercial" — one of two demo professionals that set it.
     displayName: 'Valentina Ríos - Electrodomésticos',
     city: 'Bogotá',
     country: CountryCode.CO,
@@ -746,7 +769,8 @@ async function main(): Promise<void> {
     passwordHash,
   });
   await createCustomerProfile(pendiente.id, {
-    displayName: 'Pendiente Aprobación',
+    firstName: 'Pendiente',
+    lastName: 'Aprobación',
     addressLine: 'Calle Falsa 123',
     city: 'Rosario',
     province: 'Santa Fe',

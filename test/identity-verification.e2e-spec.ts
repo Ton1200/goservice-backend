@@ -73,7 +73,8 @@ function uniqueEmail(): string {
 }
 
 const CUSTOMER_INPUT = {
-  displayName: 'Jane Doe',
+  firstName: 'Jane',
+  lastName: 'Doe',
   addressLine: 'Av. Siempreviva 742',
   city: 'CABA',
   province: 'Buenos Aires',
