@@ -1,4 +1,4 @@
-import { Field, InputType } from '@nestjs/graphql';
+import { Field, ID, InputType } from '@nestjs/graphql';
 import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
@@ -8,7 +8,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
-  IsUrl,
+  IsUUID,
   MaxLength,
   MinLength,
   ValidateNested,
@@ -45,11 +45,10 @@ export class UpsertProfessionalProfileInput {
   lastName!: string;
 
   // Optional public-facing "nombre comercial", DISTINCT from
-  // `firstName`/`lastName`. Partial-update semantics, same as `photoUrl`
-  // below but with explicit-null support: omitted => left unchanged on an
-  // edit; explicit `null` => cleared. `@IsOptional()` skips `@MinLength`/
-  // `@MaxLength` for both `null` and `undefined`, but an empty string `""`
-  // is still rejected.
+  // `firstName`/`lastName`. Partial-update semantics with explicit-null
+  // support: omitted => left unchanged on an edit; explicit `null` =>
+  // cleared. `@IsOptional()` skips `@MinLength`/`@MaxLength` for both
+  // `null` and `undefined`, but an empty string `""` is still rejected.
   @Field(() => String, { nullable: true })
   @IsOptional()
   @IsString()
@@ -104,13 +103,13 @@ export class UpsertProfessionalProfileInput {
   @MinLength(1)
   bio!: string;
 
-  // No object-storage provider is decided yet (see infrastructure.md) — a
-  // client must upload the image elsewhere itself and pass the resulting
-  // URL here; this field only validates shape, it never handles the upload.
-  @Field({ nullable: true })
+  // GOS-70 — the ONLY way to set a profile photo. See
+  // `UpsertCustomerProfileInput.photoUploadRef` for the full flow. The
+  // former free `photoUrl` string field was removed (breaking).
+  @Field(() => ID, { nullable: true })
   @IsOptional()
-  @IsUrl()
-  photoUrl?: string;
+  @IsUUID()
+  photoUploadRef?: string;
 
   @Field(() => [String], { nullable: true })
   @IsOptional()

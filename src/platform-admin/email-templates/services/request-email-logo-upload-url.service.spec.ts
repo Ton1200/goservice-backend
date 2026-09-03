@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { StoragePort } from '../../../service-requests/ports/storage.port';
+import { StoragePort } from '../../../storage/ports/storage.port';
 import { RequestEmailLogoUploadUrlService } from './request-email-logo-upload-url.service';
 
 describe('RequestEmailLogoUploadUrlService', () => {

@@ -1,7 +1,17 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Global, Module } from '@nestjs/common';
+import { PlatformSettingsModule } from '../platform-admin/platform-settings/platform-settings.module';
 import { LocalDevStorageAdapter } from './adapters/local-dev-storage.adapter';
 import { UploadsController } from './controllers/uploads.controller';
+import { ImageProcessor } from './image/image-processor';
 import { StoragePort } from './ports/storage.port';
+import {
+  IMAGE_PROCESSING_DEFAULT_JOB_OPTIONS,
+  IMAGE_PROCESSING_QUEUE_NAME,
+} from './queue/image-processing.constants';
+import { ImageProcessingProcessor } from './queue/image-processing.processor';
+import { ImageProcessingService } from './queue/image-processing.service';
+import { StorageUploadsDirInitializer } from './storage-uploads-dir.initializer';
 
 /**
  * `@Global()` — mirrors `PrismaModule` (`src/prisma/`) exactly: imported
@@ -9,6 +19,12 @@ import { StoragePort } from './ports/storage.port';
  * injectable from any module's own injector without that module needing to
  * import this one explicitly (see `PrismaModule`'s own header comment for
  * the same rationale).
+ *
+ * Relocated to its own top-level `src/storage/` module (GOS-70,
+ * 2026-09-02) and given server-side image processing (`ImageProcessor` +
+ * the BullMQ `image-processing` queue) plus a boot-time writable-directory
+ * check (`StorageUploadsDirInitializer`). Still `@Global()`, still imported
+ * exactly once at `AppModule` root.
  *
  * EXTRACTED from `ServiceRequestsModule` (uploadable-logo follow-up,
  * 2026-08-25) specifically BECAUSE more than one module now needs
@@ -45,11 +61,34 @@ import { StoragePort } from './ports/storage.port';
  */
 @Global()
 @Module({
+  imports: [
+    // Resolver-free (see its header comment) — safe to import from this
+    // `@Global()` module for `PlatformSettingPort` (image size/quality live
+    // in admin-managed `storage.image-processing.*` settings).
+    PlatformSettingsModule,
+    // BullMQ connection itself is registered once in `app.module.ts`
+    // (`BullModule.forRootAsync`); this only declares the queue.
+    BullModule.registerQueue({
+      name: IMAGE_PROCESSING_QUEUE_NAME,
+      defaultJobOptions: IMAGE_PROCESSING_DEFAULT_JOB_OPTIONS,
+    }),
+  ],
   controllers: [UploadsController],
   providers: [
     LocalDevStorageAdapter,
     { provide: StoragePort, useExisting: LocalDevStorageAdapter },
+    ImageProcessor,
+    ImageProcessingService,
+    ImageProcessingProcessor,
+    StorageUploadsDirInitializer,
   ],
-  exports: [LocalDevStorageAdapter, StoragePort],
+  // `ImageProcessor` / `ImageProcessingService` are exported so GOS-72
+  // (Quote attachments) can reuse the exact same processing pipeline.
+  exports: [
+    LocalDevStorageAdapter,
+    StoragePort,
+    ImageProcessor,
+    ImageProcessingService,
+  ],
 })
 export class StorageModule {}

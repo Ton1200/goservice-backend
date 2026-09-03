@@ -594,10 +594,12 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
         withoutThemBody.data?.upsertProfessionalProfile.displayName,
       ).toBeNull();
 
+      // GOS-70 — `photoUrl` is no longer a string input (see
+      // `test/profiles-photo-upload.e2e-spec.ts` for the real upload flow);
+      // this case just keeps exercising languages + displayName.
       const withThem = await upsertProfessionalProfileRequest(
         {
           ...baseInput([primarySpecialization(categoryId)]),
-          photoUrl: 'https://cdn.example.com/pro.jpg',
           languages: ['es', 'en'],
           displayName: 'Juan Perez - Plomería 24h',
         },
@@ -606,7 +608,7 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
       const withThemBody =
         withThem.body as UpsertProfessionalProfileResponseBody;
       expect(withThemBody.data?.upsertProfessionalProfile).toMatchObject({
-        photoUrl: 'https://cdn.example.com/pro.jpg',
+        photoUrl: null,
         languages: ['es', 'en'],
         displayName: 'Juan Perez - Plomería 24h',
       });

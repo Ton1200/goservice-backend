@@ -1,3 +1,4 @@
+import { extname } from 'path';
 import {
   Controller,
   Get,
@@ -11,6 +12,8 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { LocalDevStorageAdapter } from '../adapters/local-dev-storage.adapter';
+import { sniffImageFormat } from '../image/sniff-image-format';
+import { ImageProcessingService } from '../queue/image-processing.service';
 
 /**
  * The second REST (non-GraphQL) endpoint in this backend, after
@@ -34,7 +37,10 @@ import { LocalDevStorageAdapter } from '../adapters/local-dev-storage.adapter';
  */
 @Controller('uploads')
 export class UploadsController {
-  constructor(private readonly storageAdapter: LocalDevStorageAdapter) {}
+  constructor(
+    private readonly storageAdapter: LocalDevStorageAdapter,
+    private readonly imageProcessingService: ImageProcessingService,
+  ) {}
 
   @Put(':key')
   async put(
@@ -42,7 +48,7 @@ export class UploadsController {
     @Query('token') token: string | undefined,
     @Query('expires') expires: string | undefined,
     @Req() req: Request,
-  ): Promise<{ stored: boolean }> {
+  ): Promise<{ stored: boolean; processing: boolean }> {
     const expiresAtMillis = Number(expires);
     if (
       !token ||
@@ -55,8 +61,22 @@ export class UploadsController {
     }
 
     const bytes = await this.readRawBody(req);
+
+    // GOS-70: an image key (`*.webp`, assigned by `createUploadUrl` for any
+    // `image/*` content-type) — validate the REAL format from the bytes
+    // (throws 415 `UNSUPPORTED_IMAGE_FORMAT`, nothing written), park the
+    // raw bytes in staging, and hand off the resize + WebP re-encode to the
+    // async worker. A `GET` before the worker finishes 404s (accepted
+    // window). Non-image keys (`*.pdf`) are still stored verbatim.
+    if (extname(key) === '.webp') {
+      await sniffImageFormat(bytes);
+      await this.storageAdapter.writeStagingFile(key, bytes);
+      await this.imageProcessingService.enqueue({ storageKey: key });
+      return { stored: true, processing: true };
+    }
+
     await this.storageAdapter.writeFile(key, bytes);
-    return { stored: true };
+    return { stored: true, processing: false };
   }
 
   @Get(':key')

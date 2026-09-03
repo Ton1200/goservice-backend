@@ -9,9 +9,11 @@ import {
 } from '@prisma/client';
 import * as argon2 from 'argon2';
 import Redis from 'ioredis';
+import sharp from 'sharp';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import type { AppConfig } from '../src/config/configuration';
+import { waitForUpload } from './support/wait-for-upload';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
   cleanProfilesData,
@@ -747,32 +749,42 @@ describe('GraphQL ServiceRequest (GOS-38, e2e)', () => {
     );
   });
 
-  // Full attachment round-trip: request an upload slot, PUT real bytes to
-  // the returned uploadUrl, then publish referencing it, and confirm the
-  // resulting ServiceRequestAttachment.url is fetchable and returns the
-  // same bytes — exercises the real LocalDevStorageAdapter/UploadsController,
-  // not a mock.
-  it('requestServiceRequestAttachmentUploadUrl + publishServiceRequest round-trips a real file', async () => {
+  // Full attachment round-trip: request an upload slot, PUT real image
+  // bytes, then publish referencing it. GOS-70: the image is processed
+  // asynchronously to WebP, so the resulting ServiceRequestAttachment.url
+  // is fetchable only after the worker runs and always serves image/webp,
+  // never the original bytes.
+  it('requestServiceRequestAttachmentUploadUrl + publishServiceRequest round-trips an image (stored as WebP)', async () => {
     const { email } = await seedApprovedCustomer();
     const sessionToken = await loginSessionToken(email);
     const [categoryId] = await seedCategories(1);
 
     const uploadUrlResponse = await gqlRequest(
       REQUEST_UPLOAD_URL_MUTATION,
-      { input: { fileName: 'foto.jpg', contentType: 'image/jpeg' } },
+      { input: { fileName: 'foto.png', contentType: 'image/png' } },
       sessionToken,
     ).expect(200);
     const uploadUrlBody = uploadUrlResponse.body as UploadUrlResponseBody;
     expect(uploadUrlBody.errors).toBeUndefined();
     const { ref, uploadUrl, fileUrl } =
       uploadUrlBody.data!.requestServiceRequestAttachmentUploadUrl;
+    expect(fileUrl).toMatch(/\.webp$/);
 
-    const fileBytes = Buffer.from('fake-jpeg-bytes');
+    const pngBytes = await sharp({
+      create: {
+        width: 24,
+        height: 24,
+        channels: 3,
+        background: { r: 10, g: 120, b: 200 },
+      },
+    })
+      .png()
+      .toBuffer();
     const uploadPath = uploadUrl.replace(/^https?:\/\/[^/]+/, '');
     await request(app.getHttpServer())
       .put(uploadPath)
-      .set('Content-Type', 'image/jpeg')
-      .send(fileBytes)
+      .set('Content-Type', 'image/png')
+      .send(pngBytes)
       .expect(200);
 
     const published = await gqlRequest(
@@ -788,10 +800,67 @@ describe('GraphQL ServiceRequest (GOS-38, e2e)', () => {
     ]);
 
     const fetchPath = fileUrl.replace(/^https?:\/\/[^/]+/, '');
-    const getResponse = await request(app.getHttpServer())
-      .get(fetchPath)
+    const getResponse = await waitForUpload(app.getHttpServer(), fetchPath);
+    expect(getResponse.headers['content-type']).toContain('image/webp');
+    expect((await sharp(getResponse.body as Buffer).metadata()).format).toBe(
+      'webp',
+    );
+  });
+
+  it('a PDF attachment is stored byte-exact (not processed)', async () => {
+    const { email } = await seedApprovedCustomer();
+    const sessionToken = await loginSessionToken(email);
+
+    const uploadUrlResponse = await gqlRequest(
+      REQUEST_UPLOAD_URL_MUTATION,
+      {
+        input: { fileName: 'presupuesto.pdf', contentType: 'application/pdf' },
+      },
+      sessionToken,
+    ).expect(200);
+    const uploadUrlBody = uploadUrlResponse.body as UploadUrlResponseBody;
+    const { uploadUrl, fileUrl } =
+      uploadUrlBody.data!.requestServiceRequestAttachmentUploadUrl;
+    expect(fileUrl).toMatch(/\.pdf$/);
+
+    const pdfBytes = Buffer.from('%PDF-1.7\n1 0 obj<<>>endobj\n%%EOF');
+    await request(app.getHttpServer())
+      .put(uploadUrl.replace(/^https?:\/\/[^/]+/, ''))
+      .set('Content-Type', 'application/pdf')
+      .send(pdfBytes)
       .expect(200);
-    expect(Buffer.compare(getResponse.body as Buffer, fileBytes)).toBe(0);
+
+    const getResponse = await request(app.getHttpServer())
+      .get(fileUrl.replace(/^https?:\/\/[^/]+/, ''))
+      .expect(200);
+    expect(Buffer.compare(getResponse.body as Buffer, pdfBytes)).toBe(0);
+  });
+
+  it('PUT of non-image bytes to an image key -> 415 UNSUPPORTED_IMAGE_FORMAT, nothing fetchable', async () => {
+    const { email } = await seedApprovedCustomer();
+    const sessionToken = await loginSessionToken(email);
+
+    const uploadUrlResponse = await gqlRequest(
+      REQUEST_UPLOAD_URL_MUTATION,
+      { input: { fileName: 'not-really.png', contentType: 'image/png' } },
+      sessionToken,
+    ).expect(200);
+    const uploadUrlBody = uploadUrlResponse.body as UploadUrlResponseBody;
+    const { uploadUrl, fileUrl } =
+      uploadUrlBody.data!.requestServiceRequestAttachmentUploadUrl;
+
+    const putResponse = await request(app.getHttpServer())
+      .put(uploadUrl.replace(/^https?:\/\/[^/]+/, ''))
+      .set('Content-Type', 'image/png')
+      .send(Buffer.from('this is definitely not an image'));
+    expect(putResponse.status).toBe(415);
+    expect(JSON.stringify(putResponse.body)).toContain(
+      'UNSUPPORTED_IMAGE_FORMAT',
+    );
+
+    await request(app.getHttpServer())
+      .get(fileUrl.replace(/^https?:\/\/[^/]+/, ''))
+      .expect(404);
   });
 
   it('publishServiceRequest without an Authorization header -> UNAUTHENTICATED', async () => {

@@ -91,6 +91,34 @@ const SET_PLATFORM_SETTING_MUTATION = `
   }
 `;
 
+// GOS-70 — the DEDICATED storage/image-processing settings surface. These
+// `storage.*` rows are deliberately excluded from `platformSettings`/
+// `setPlatformSetting` above (which reject the prefix) so they carry their
+// OWN `STORAGE_SETTINGS_*` admin permission. Fetched in parallel with
+// `SETTINGS_QUERY`; the "Storage" tab renders even for a role that has
+// `STORAGE_SETTINGS_READ` but not `FEATURE_FLAGS_READ`.
+const STORAGE_SETTINGS_QUERY = `
+  query StorageSettings {
+    storageSettings {
+      profilePhotoUploadEnabled
+      imageMaxDimensionPx
+      imageWebpQuality
+    }
+  }
+`;
+
+const UPDATE_STORAGE_SETTINGS_MUTATION = `
+  mutation UpdateStorageSettings($input: UpdateStorageSettingsInput!) {
+    updateStorageSettings(input: $input) {
+      profilePhotoUploadEnabled
+      imageMaxDimensionPx
+      imageWebpQuality
+    }
+  }
+`;
+
+const STORAGE_IMAGE_MAX_DIMENSION_CHOICES = [512, 1024, 2048];
+
 // Setting slots the panel always offers a field for, whether or not a
 // `PlatformSetting` row exists yet. Without this, a key that's never been
 // saved has NO entry in `platformSettings`, so `buildSettingsTree` would
@@ -1407,9 +1435,157 @@ function renderRootTabPanelContent(node, headingLevel) {
  * whole point is to already be structurally ready for more root groups
  * appearing later.
  */
-function renderRootTabs(root, headingLevel) {
-  const rootEntries = sortedEntries(root.children);
-  const lastIndex = rootEntries.length - 1;
+/**
+ * GOS-70 — the hand-built "Storage" tab panel. Not derived from the setting
+ * key tree: it talks to the dedicated `storageSettings`/`updateStorageSettings`
+ * surface (permission `STORAGE_SETTINGS_*`). Full-state update on Save,
+ * matching `SetPlatformSettingInput`'s convention.
+ */
+function buildStoragePanel(storage) {
+  const panel = document.createDocumentFragment();
+
+  const intro = document.createElement('p');
+  intro.className = 'text-secondary small';
+  intro.textContent =
+    'Controls the profile-photo upload flow and how every uploaded image is resized/compressed. Changes take effect on the next upload — no restart.';
+  panel.appendChild(intro);
+
+  const state = {
+    profilePhotoUploadEnabled: storage.profilePhotoUploadEnabled,
+    imageMaxDimensionPx: storage.imageMaxDimensionPx,
+    imageWebpQuality: storage.imageWebpQuality,
+  };
+
+  // --- Toggle: profile-photo upload enabled ---
+  const toggleWrap = document.createElement('div');
+  toggleWrap.className = 'form-check form-switch mb-3';
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.className = 'form-check-input';
+  toggle.id = 'storage-profile-photo-enabled';
+  toggle.setAttribute('role', 'switch');
+  toggle.checked = state.profilePhotoUploadEnabled;
+  toggle.addEventListener('change', () => {
+    state.profilePhotoUploadEnabled = toggle.checked;
+  });
+  const toggleLabel = document.createElement('label');
+  toggleLabel.className = 'form-check-label';
+  toggleLabel.setAttribute('for', toggle.id);
+  toggleLabel.textContent =
+    'Profile photo upload enabled (does not affect ServiceRequest attachments or the email logo)';
+  toggleWrap.append(toggle, toggleLabel);
+  panel.appendChild(toggleWrap);
+
+  // --- Select: max dimension ---
+  const dimWrap = document.createElement('div');
+  dimWrap.className = 'mb-3';
+  const dimLabel = document.createElement('label');
+  dimLabel.className = 'form-label';
+  dimLabel.setAttribute('for', 'storage-image-max-dimension');
+  dimLabel.textContent = 'Processed image max dimension (px, longest edge)';
+  const dimSelect = document.createElement('select');
+  dimSelect.className = 'form-select';
+  dimSelect.id = 'storage-image-max-dimension';
+  dimSelect.style.maxWidth = '200px';
+  for (const choice of STORAGE_IMAGE_MAX_DIMENSION_CHOICES) {
+    const option = document.createElement('option');
+    option.value = String(choice);
+    option.textContent = String(choice);
+    dimSelect.appendChild(option);
+  }
+  dimSelect.value = String(state.imageMaxDimensionPx);
+  dimSelect.addEventListener('change', () => {
+    state.imageMaxDimensionPx = Number(dimSelect.value);
+  });
+  dimWrap.append(dimLabel, dimSelect);
+  panel.appendChild(dimWrap);
+
+  // --- Number: WebP quality ---
+  const qualWrap = document.createElement('div');
+  qualWrap.className = 'mb-3';
+  const qualLabel = document.createElement('label');
+  qualLabel.className = 'form-label';
+  qualLabel.setAttribute('for', 'storage-image-webp-quality');
+  qualLabel.textContent = 'WebP quality (1–100)';
+  const qualInput = document.createElement('input');
+  qualInput.type = 'number';
+  qualInput.className = 'form-control';
+  qualInput.id = 'storage-image-webp-quality';
+  qualInput.style.maxWidth = '120px';
+  qualInput.min = '1';
+  qualInput.max = '100';
+  qualInput.value = String(state.imageWebpQuality);
+  qualInput.addEventListener('change', () => {
+    state.imageWebpQuality = Number(qualInput.value);
+  });
+  qualWrap.append(qualLabel, qualInput);
+  panel.appendChild(qualWrap);
+
+  // --- Save ---
+  const saveButton = document.createElement('button');
+  saveButton.type = 'button';
+  saveButton.className = 'btn btn-primary';
+  saveButton.textContent = 'Save';
+  saveButton.addEventListener('click', async () => {
+    showError('');
+    const quality = Number(state.imageWebpQuality);
+    if (!Number.isInteger(quality) || quality < 1 || quality > 100) {
+      showError('WebP quality must be a whole number between 1 and 100.');
+      return;
+    }
+    saveButton.disabled = true;
+    try {
+      const body = await graphqlRequest(UPDATE_STORAGE_SETTINGS_MUTATION, {
+        input: {
+          profilePhotoUploadEnabled: state.profilePhotoUploadEnabled,
+          imageMaxDimensionPx: state.imageMaxDimensionPx,
+          imageWebpQuality: quality,
+        },
+      });
+      if (body.errors && body.errors.length > 0) {
+        if (handleAdminUnauthenticated(body)) {
+          return;
+        }
+        const code = body.errors[0]?.extensions?.code;
+        showError(
+          code === 'ADMIN_FORBIDDEN'
+            ? 'You do not have permission to change storage settings.'
+            : 'Could not save storage settings.',
+        );
+        return;
+      }
+      showError('Storage settings saved.');
+    } catch (error) {
+      showError(
+        error instanceof GraphQLNetworkError
+          ? error.message
+          : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      saveButton.disabled = false;
+    }
+  });
+  panel.appendChild(saveButton);
+
+  return panel;
+}
+
+function renderRootTabs(root, headingLevel, extraTabs = []) {
+  // Generic setting-tree tabs first, then any hand-built extras (GOS-70:
+  // the "Storage" tab, which talks to its own GraphQL surface).
+  const tabDefs = [
+    ...sortedEntries(root.children).map(([key, child]) => ({
+      key,
+      label: child.label,
+      buildPanel: () => renderRootTabPanelContent(child, headingLevel),
+    })),
+    ...extraTabs.map((extra) => ({
+      key: extra.key,
+      label: extra.label,
+      buildPanel: extra.buildPanel,
+    })),
+  ];
+  const lastIndex = tabDefs.length - 1;
 
   const wrapper = document.createDocumentFragment();
 
@@ -1434,7 +1610,7 @@ function renderRootTabs(root, headingLevel) {
     });
   }
 
-  rootEntries.forEach(([key, child], index) => {
+  tabDefs.forEach(({ key, buildPanel }, index) => {
     const isSelected = index === 0;
     const tabId = `gs-settings-tab-${key}`;
     const panelId = `gs-settings-panel-${key}`;
@@ -1450,7 +1626,7 @@ function renderRootTabs(root, headingLevel) {
     tabButton.setAttribute('aria-selected', String(isSelected));
     tabButton.setAttribute('aria-controls', panelId);
     tabButton.tabIndex = isSelected ? 0 : -1;
-    tabButton.textContent = child.label;
+    tabButton.textContent = tabDefs[index].label;
     if (isSelected) {
       tabButton.classList.add('active');
     }
@@ -1485,7 +1661,7 @@ function renderRootTabs(root, headingLevel) {
     panel.setAttribute('aria-labelledby', tabId);
     panel.tabIndex = 0;
     panel.hidden = !isSelected;
-    panel.appendChild(renderRootTabPanelContent(child, headingLevel));
+    panel.appendChild(buildPanel());
 
     panelsWrapper.appendChild(panel);
     panels.push(panel);
@@ -1500,26 +1676,55 @@ export async function loadSettings() {
   contentEl.textContent = 'Loading…';
 
   try {
-    const body = await graphqlRequest(SETTINGS_QUERY);
+    // GOS-70 — fetch the generic settings AND the dedicated storage
+    // settings in parallel; each is permission-gated independently, so a
+    // role with only STORAGE_SETTINGS_READ still gets its "Storage" tab
+    // even when `platformSettings` returns ADMIN_FORBIDDEN.
+    const [body, storageBody] = await Promise.all([
+      graphqlRequest(SETTINGS_QUERY),
+      graphqlRequest(STORAGE_SETTINGS_QUERY),
+    ]);
 
-    if (body.errors && body.errors.length > 0) {
-      if (handleAdminUnauthenticated(body)) {
-        return;
-      }
+    if (handleAdminUnauthenticated(body) || handleAdminUnauthenticated(storageBody)) {
+      return;
+    }
+
+    const genericFailed = body.errors && body.errors.length > 0;
+    const storageFailed = storageBody.errors && storageBody.errors.length > 0;
+
+    if (genericFailed && storageFailed) {
       contentEl.textContent = '';
       showError('Could not load settings.');
       return;
     }
 
+    const extraTabs = storageFailed
+      ? []
+      : [
+          {
+            key: 'storage',
+            label: 'Storage',
+            buildPanel: () => buildStoragePanel(storageBody.data.storageSettings),
+          },
+        ];
+
     contentEl.textContent = '';
-    const tree = buildSettingsTree(body.data.platformSettings);
     // The root node's direct children (e.g. "Customer") render as a
     // horizontal tab strip, not as headings — see `renderRootTabs`. `2` is
     // the same baseline used before this round (one level below the
     // page's own, now visually-hidden, <h2> "Configuración" landmark); see
     // `renderRootTabPanelContent` for how that baseline carries into each
     // tab panel's own heading numbering.
-    contentEl.appendChild(renderRootTabs(tree, 2));
+    const tree = genericFailed
+      ? { label: null, children: {}, fields: {} }
+      : buildSettingsTree(body.data.platformSettings);
+    contentEl.appendChild(renderRootTabs(tree, 2, extraTabs));
+
+    if (genericFailed) {
+      showError(
+        'You do not have permission to view the general settings; only Storage is shown.',
+      );
+    }
   } catch (error) {
     contentEl.textContent = '';
     showError(

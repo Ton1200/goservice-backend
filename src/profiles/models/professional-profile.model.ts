@@ -52,8 +52,11 @@ export class ProfessionalProfile {
   @Field()
   bio!: string;
 
-  // No object-storage provider is decided yet — see infrastructure.md —
-  // so this is just a URL string, nullable until a real upload flow exists.
+  // GOS-70 — a real upload flow now backs this: set only by consuming a
+  // `photoUploadRef` on `upsertProfessionalProfile`, always a
+  // server-processed WebP. Still nullable. The underlying object-storage
+  // provider remains a `LocalDevStorageAdapter` placeholder — see
+  // infrastructure.md.
   @Field(() => String, { nullable: true })
   photoUrl?: string | null;
 

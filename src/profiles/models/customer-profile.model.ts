@@ -33,8 +33,12 @@ export class CustomerProfile {
   @Field(() => CountryCode)
   country!: CountryCode;
 
-  // No object-storage provider is decided yet — see infrastructure.md —
-  // so this is just a URL string, nullable until a real upload flow exists.
+  // GOS-70 — a real upload flow now backs this: it is set only by
+  // consuming a `photoUploadRef` on `upsertCustomerProfile` (see
+  // `UpsertCustomerProfileInput.photoUploadRef`), and always points at a
+  // server-processed WebP served by `UploadsController`. Still nullable
+  // (a profile may have no photo). The underlying object-storage provider
+  // remains a `LocalDevStorageAdapter` placeholder — see infrastructure.md.
   @Field(() => String, { nullable: true })
   photoUrl?: string | null;
 

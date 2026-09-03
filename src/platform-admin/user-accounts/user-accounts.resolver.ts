@@ -12,11 +12,19 @@ import { UpdateUserAccountInput } from './models/update-user-account.input';
 import { UserAccountDetailModel } from './models/user-account-detail.model';
 import { UserAccountModel } from './models/user-account.model';
 import { UserAccountsPageModel } from './models/user-accounts-page.model';
+import {
+  RemoveUserProfilePhotoInput,
+  RequestUserProfilePhotoUploadUrlInput,
+  SetUserProfilePhotoInput,
+} from './models/user-profile-photo.input';
+import { UserProfilePhotoUploadUrlModel } from './models/user-profile-photo-upload-url.model';
 import { BulkDeleteUserAccountsService } from './services/bulk-delete-user-accounts.service';
 import { DeleteUserAccountService } from './services/delete-user-account.service';
 import { ForceUserAccountPasswordResetService } from './services/force-user-account-password-reset.service';
 import { GetUserAccountDetailService } from './services/get-user-account-detail.service';
 import { ListUserAccountsService } from './services/list-user-accounts.service';
+import { ManageUserProfilePhotoService } from './services/manage-user-profile-photo.service';
+import { RequestUserProfilePhotoUploadUrlService } from './services/request-user-profile-photo-upload-url.service';
 import { UpdateUserAccountService } from './services/update-user-account.service';
 
 /**
@@ -57,6 +65,8 @@ export class UserAccountsResolver {
     private readonly deleteUserAccountService: DeleteUserAccountService,
     private readonly bulkDeleteUserAccountsService: BulkDeleteUserAccountsService,
     private readonly getUserAccountDetailService: GetUserAccountDetailService,
+    private readonly requestUserProfilePhotoUploadUrlService: RequestUserProfilePhotoUploadUrlService,
+    private readonly manageUserProfilePhotoService: ManageUserProfilePhotoService,
   ) {}
 
   @RequireAdminPermissions(Permission.USER_ACCOUNTS_READ)
@@ -138,6 +148,54 @@ export class UserAccountsResolver {
     return this.bulkDeleteUserAccountsService.bulkDeleteUserAccounts(
       adminUserId,
       ids,
+    );
+  }
+
+  // GOS-70 — admin management of a consumer profile's photo (upload / change
+  // / remove). Same `USER_ACCOUNTS_WRITE` permission as `updateUserAccount`:
+  // it's the "admin edits a consumer account" capability. The photo is
+  // uploaded and processed through the same shared pipeline as the consumer
+  // flow; only the "attach the processed URL to the profile" step is
+  // admin-specific.
+
+  @RequireAdminPermissions(Permission.USER_ACCOUNTS_WRITE)
+  @Mutation(() => UserProfilePhotoUploadUrlModel, {
+    description:
+      'Issues a short-lived signed URL to upload a profile photo the admin will then attach to a consumer profile via setUserProfilePhoto. The bytes are resized + re-encoded to WebP server-side (async).',
+  })
+  requestUserProfilePhotoUploadUrl(
+    @Args('input') input: RequestUserProfilePhotoUploadUrlInput,
+  ): Promise<UserProfilePhotoUploadUrlModel> {
+    return this.requestUserProfilePhotoUploadUrlService.requestUploadUrl(input);
+  }
+
+  @RequireAdminPermissions(Permission.USER_ACCOUNTS_WRITE)
+  @Mutation(() => UserAccountDetailModel, {
+    description:
+      "Attaches an already-uploaded, processed photo (a publicUrl from requestUserProfilePhotoUploadUrl) to the given user's CustomerProfile or ProfessionalProfile, writing an AdminAuditLog row in the same transaction. Rejects a URL not issued by this backend's own storage, or a profile that doesn't exist. Returns the refreshed account detail.",
+  })
+  setUserProfilePhoto(
+    @CurrentAdminUser() adminUserId: string,
+    @Args('input') input: SetUserProfilePhotoInput,
+  ): Promise<UserAccountDetailModel> {
+    return this.manageUserProfilePhotoService.setUserProfilePhoto(
+      adminUserId,
+      input,
+    );
+  }
+
+  @RequireAdminPermissions(Permission.USER_ACCOUNTS_WRITE)
+  @Mutation(() => UserAccountDetailModel, {
+    description:
+      "Clears the photo (sets photoUrl to null) on the given user's CustomerProfile or ProfessionalProfile, writing an AdminAuditLog row in the same transaction. Returns the refreshed account detail.",
+  })
+  removeUserProfilePhoto(
+    @CurrentAdminUser() adminUserId: string,
+    @Args('input') input: RemoveUserProfilePhotoInput,
+  ): Promise<UserAccountDetailModel> {
+    return this.manageUserProfilePhotoService.removeUserProfilePhoto(
+      adminUserId,
+      input,
     );
   }
 }

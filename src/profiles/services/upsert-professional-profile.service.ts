@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DomainException } from '../../common/errors/domain-exception';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
+import { STORAGE_SETTING_KEYS } from '../../storage/storage-setting-keys.constants';
+import { invalidProfilePhotoUploadRef } from '../errors/invalid-profile-photo-upload-ref.error';
+import { profilePhotoUploadDisabled } from '../errors/profile-photo-upload-disabled.error';
 import { CountryCode } from '../models/country-code.enum';
 import { ProfessionalProfile } from '../models/professional-profile.model';
 import { SpecializationRole } from '../models/specialization-role.enum';
@@ -44,7 +48,10 @@ const DEFAULT_COUNTRY = CountryCode.AR;
 export class UpsertProfessionalProfileService {
   private readonly logger = new Logger(UpsertProfessionalProfileService.name);
 
-  constructor(private readonly profilesRepository: ProfilesRepository) {}
+  constructor(
+    private readonly profilesRepository: ProfilesRepository,
+    private readonly platformSettingPort: PlatformSettingPort,
+  ) {}
 
   async upsertProfessionalProfile(
     userId: string,
@@ -53,6 +60,11 @@ export class UpsertProfessionalProfileService {
     this.assertExactlyOnePrimary(input.specializations);
     await this.assertCategoriesExist(
       input.specializations.map((s) => s.categoryId),
+    );
+
+    const { photoUrl, photoUploadRefId } = await this.resolvePhotoUploadRef(
+      userId,
+      input.photoUploadRef,
     );
 
     const { profile, wasCreated, accountStatusTransitioned } =
@@ -64,7 +76,8 @@ export class UpsertProfessionalProfileService {
         country: input.country ?? DEFAULT_COUNTRY,
         serviceAreaDescription: input.serviceAreaDescription,
         bio: input.bio,
-        photoUrl: input.photoUrl,
+        photoUrl,
+        photoUploadRefId,
         languages: input.languages,
         specializations: input.specializations,
         locationSharingEnabled: input.locationSharingEnabled,
@@ -74,6 +87,7 @@ export class UpsertProfessionalProfileService {
       event: 'profile_upserted',
       profileType: 'PROFESSIONAL',
       wasCreated,
+      photoUploadRefUsed: photoUploadRefId != null,
     });
     this.logger.log({
       event: wasCreated
@@ -90,6 +104,34 @@ export class UpsertProfessionalProfileService {
     }
 
     return profile;
+  }
+
+  /**
+   * GOS-70 — see `UpsertCustomerProfileService.resolvePhotoUploadRef` for
+   * the rationale; identical behaviour for the professional profile.
+   */
+  private async resolvePhotoUploadRef(
+    userId: string,
+    photoUploadRef: string | undefined,
+  ): Promise<{ photoUrl?: string; photoUploadRefId?: string }> {
+    if (photoUploadRef == null) {
+      return {};
+    }
+    if (
+      !(await this.platformSettingPort.isEnabled(
+        STORAGE_SETTING_KEYS.profilePhotoUploadEnabled,
+      ))
+    ) {
+      throw profilePhotoUploadDisabled();
+    }
+    const ref = await this.profilesRepository.findUsablePendingPhotoUploadRef(
+      userId,
+      photoUploadRef,
+    );
+    if (!ref) {
+      throw invalidProfilePhotoUploadRef();
+    }
+    return { photoUrl: ref.fileUrl, photoUploadRefId: ref.id };
   }
 
   private assertExactlyOnePrimary(

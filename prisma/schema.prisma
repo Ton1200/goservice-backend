@@ -99,6 +99,9 @@ model User {
   // ServiceRequestAttachmentUploadRef below). Purely additive, no new
   // column on this table.
   serviceRequestAttachmentUploadRefs ServiceRequestAttachmentUploadRef[]
+  // GOS-70 — pre-reserved profile-photo upload slots (see
+  // ProfilePhotoUploadRef below). Purely additive.
+  profilePhotoUploadRefs             ProfilePhotoUploadRef[]
 
   // Non-unique: real uniqueness is enforced by the `email` unique
   // constraint above. This index only speeds up the socialLogin fast-path
@@ -970,6 +973,35 @@ model ServiceRequestAttachmentUploadRef {
   @@index([userId, status])
 }
 
+// GOS-70 — pre-reserved upload slot for a CustomerProfile/ProfessionalProfile
+// photo. The "ref" a client receives from requestProfilePhotoUploadUrl and
+// later resubmits as UpsertCustomer/ProfessionalProfileInput.photoUploadRef.
+// A dedicated model, NOT a generalization of ServiceRequestAttachmentUploadRef
+// above, to keep GOS-70's blast radius small — GOS-72 (Quote attachments) may
+// generalize later. Same single-use/ownership/expiry guarantees; no
+// serviceRequest link (nothing to point at — the ref is consumed straight
+// into a profile's photoUrl).
+enum ProfilePhotoUploadRefStatus {
+  PENDING
+  CONSUMED
+}
+
+model ProfilePhotoUploadRef {
+  id         String                      @id @default(uuid()) @db.Uuid
+  userId     String                      @db.Uuid
+  user       User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storageKey String
+  fileUrl    String
+  status     ProfilePhotoUploadRefStatus @default(PENDING)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime                    @default(now())
+
+  // Supports the ownership+status check upsertCustomer/ProfessionalProfile
+  // does for a submitted ref, and a future cleanup job for stale PENDING refs.
+  @@index([userId, status])
+}
+
 // Identity Verification (Didit integration) — DEC-006's own "open question"
 // (automated KYC). See `src/identity-verification/` for the full
 // Port/Registry/Adapter design. `User.accountStatus` (PENDING_APPROVAL ->
@@ -1171,6 +1203,19 @@ enum Permission {
   // higher-impact capability, same "its own dedicated permission" reasoning
   // already established throughout this enum.
   EMAIL_TEMPLATES_WRITE
+  // GOS-70 — gates the `storageSettings` query
+  // (`src/platform-admin/storage-settings/`): reading the on/off toggle for
+  // the profile-photo upload flow and the image-processing size/quality
+  // knobs. Read-only, mirroring every other `*_READ`-only surface.
+  STORAGE_SETTINGS_READ
+  // GOS-70 — gates `updateStorageSettings`. A genuinely NEW, dedicated
+  // permission — deliberately NOT `FEATURE_FLAGS_WRITE` (the generic
+  // platform-settings gate): these `storage.*` `PlatformSetting` rows are
+  // deliberately isolated from the generic settings surface so a role can
+  // be granted storage-config access without full feature-flag/credential
+  // access. Same "its own dedicated permission" reasoning as
+  // `EMAIL_TEMPLATES_WRITE` above.
+  STORAGE_SETTINGS_WRITE
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see

@@ -100,6 +100,13 @@ export async function createTestApp(options?: {
   socialAuthProviderConfig?: SocialAuthProviderConfigMap;
   graphqlIntrospectionEnabled?: boolean;
   adminPanelPath?: string;
+  /**
+   * GOS-70 — overrides `STORAGE_LOCAL_UPLOADS_DIR` for this app instance
+   * only (same restore-after-`compile()` pattern as `adminPanelPath`).
+   * Used by the boot-failure test to point the uploads dir at an unusable
+   * path and assert `StorageUploadsDirInitializer` fails startup.
+   */
+  storageLocalUploadsDir?: string;
 }): Promise<TestAppContext> {
   const previousIntrospectionEnv = process.env.GRAPHQL_INTROSPECTION_ENABLED;
   if (options?.graphqlIntrospectionEnabled !== undefined) {
@@ -111,6 +118,11 @@ export async function createTestApp(options?: {
   const previousAdminPanelPathEnv = process.env.ADMIN_PANEL_PATH;
   if (options?.adminPanelPath !== undefined) {
     process.env.ADMIN_PANEL_PATH = options.adminPanelPath;
+  }
+
+  const previousUploadsDirEnv = process.env.STORAGE_LOCAL_UPLOADS_DIR;
+  if (options?.storageLocalUploadsDir !== undefined) {
+    process.env.STORAGE_LOCAL_UPLOADS_DIR = options.storageLocalUploadsDir;
   }
 
   try {
@@ -162,6 +174,13 @@ export async function createTestApp(options?: {
         process.env.ADMIN_PANEL_PATH = previousAdminPanelPathEnv;
       }
     }
+    if (options?.storageLocalUploadsDir !== undefined) {
+      if (previousUploadsDirEnv === undefined) {
+        delete process.env.STORAGE_LOCAL_UPLOADS_DIR;
+      } else {
+        process.env.STORAGE_LOCAL_UPLOADS_DIR = previousUploadsDirEnv;
+      }
+    }
   }
 }
 
@@ -181,6 +200,10 @@ export async function cleanUsersData(prisma: PrismaService): Promise<void> {
  * `ProfessionalProfile` FK.
  */
 export async function cleanProfilesData(prisma: PrismaService): Promise<void> {
+  // GOS-70 — `ProfilePhotoUploadRef` is a child of `User` (not of the
+  // profile rows); sweep it here so `cleanUsersData`'s `user.deleteMany()`
+  // doesn't trip its FK.
+  await prisma.profilePhotoUploadRef.deleteMany();
   await prisma.professionalSpecialization.deleteMany();
   await prisma.professionalProfile.deleteMany();
   await prisma.customerProfile.deleteMany();

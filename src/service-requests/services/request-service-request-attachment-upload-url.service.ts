@@ -2,14 +2,24 @@ import { Injectable, Logger } from '@nestjs/common';
 import { unsupportedAttachmentContentType } from '../errors/unsupported-attachment-content-type.error';
 import { DocumentUploadUrlModel } from '../models/document-upload-url.model';
 import { RequestServiceRequestAttachmentUploadUrlInput } from '../models/request-service-request-attachment-upload-url-input.model';
-import { StoragePort } from '../ports/storage.port';
+import { StoragePort } from '../../storage/ports/storage.port';
 import { ServiceRequestsRepository } from '../service-requests.repository';
 
-/** Small, deliberate allow-list — see `unsupportedAttachmentContentType()`. */
+/**
+ * Declared-content-type allow-list — a cheap early gate only. GOS-70: every
+ * image is normalized to a resized WebP by the shared storage layer
+ * regardless of the input format, and `UploadsController.put` re-derives
+ * the real format from the bytes, so this list only needs to be broad
+ * enough to cover common camera/gallery output. `application/pdf` stays
+ * (documents are stored verbatim).
+ */
 export const ALLOWED_ATTACHMENT_CONTENT_TYPES: ReadonlySet<string> = new Set([
   'image/jpeg',
   'image/png',
   'image/webp',
+  'image/gif',
+  'image/heic',
+  'image/heif',
   'application/pdf',
 ]);
 

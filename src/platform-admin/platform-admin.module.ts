@@ -36,6 +36,9 @@ import { PlatformSettingsResolver } from './platform-settings/platform-settings.
 import { PlatformSettingFieldResolver } from './platform-settings/platform-setting-field.resolver';
 import { ListPlatformSettingsService } from './platform-settings/services/list-platform-settings.service';
 import { SetPlatformSettingService } from './platform-settings/services/set-platform-setting.service';
+import { AdminStorageSettingsResolver } from './storage-settings/admin-storage-settings.resolver';
+import { GetStorageSettingsService } from './storage-settings/services/get-storage-settings.service';
+import { UpdateStorageSettingsService } from './storage-settings/services/update-storage-settings.service';
 import { AuditLogRepository } from './audit-log/audit-log.repository';
 import { UserAccountsResolver } from './user-accounts/user-accounts.resolver';
 import { ListUserAccountsService } from './user-accounts/services/list-user-accounts.service';
@@ -44,6 +47,8 @@ import { ForceUserAccountPasswordResetService } from './user-accounts/services/f
 import { DeleteUserAccountService } from './user-accounts/services/delete-user-account.service';
 import { BulkDeleteUserAccountsService } from './user-accounts/services/bulk-delete-user-accounts.service';
 import { GetUserAccountDetailService } from './user-accounts/services/get-user-account-detail.service';
+import { RequestUserProfilePhotoUploadUrlService } from './user-accounts/services/request-user-profile-photo-upload-url.service';
+import { ManageUserProfilePhotoService } from './user-accounts/services/manage-user-profile-photo.service';
 import { ServiceRequestsRepository } from '../service-requests/service-requests.repository';
 import { ProfilesRepository } from '../profiles/profiles.repository';
 import { ListCategoriesService } from '../profiles/services/list-categories.service';
@@ -265,6 +270,14 @@ import { RequestEmailLogoUploadUrlService } from './email-templates/services/req
     ListPlatformSettingsService,
     SetPlatformSettingService,
 
+    // storage-settings (GOS-70) — a dedicated `storage.*` PlatformSetting
+    // surface with its own `STORAGE_SETTINGS_*` permission, isolated from
+    // the generic settings resolver above. Reuses `PlatformSettingsRepository`
+    // (imported `PlatformSettingsModule`) + `AuditLogRepository` below.
+    AdminStorageSettingsResolver,
+    GetStorageSettingsService,
+    UpdateStorageSettingsService,
+
     // audit-log (write path only — Slice 1)
     AuditLogRepository,
 
@@ -299,6 +312,12 @@ import { RequestEmailLogoUploadUrlService } from './email-templates/services/req
     // leak class documented above), since only the TYPE, never a service
     // from it, is needed here.
     GetUserAccountDetailService,
+    // GOS-70 — admin profile-photo management (upload/change/remove) on the
+    // same `UserAccountsResolver`, gated by `USER_ACCOUNTS_WRITE`. Reuses
+    // `StoragePort` (global), `ProfilesRepository` + `AuditLogRepository`
+    // (already providers here), and `GetUserAccountDetailService` above.
+    RequestUserProfilePhotoUploadUrlService,
+    ManageUserProfilePhotoService,
 
     // service-requests (GOS-38 follow-up, 2026-08-18) — `serviceRequests`/
     // `serviceRequestDetail`, read-only. `ServiceRequestsRepository` is
@@ -506,7 +525,7 @@ import { RequestEmailLogoUploadUrlService } from './email-templates/services/req
 
     // uploadable email logo (2026-08-25 follow-up) — `requestEmailLogoUploadUrl`.
     // Reuses the EXISTING GOS-38 `StoragePort` seam
-    // (`src/service-requests/ports/storage.port.ts`) rather than building
+    // (`src/storage/ports/storage.port.ts`) rather than building
     // new storage plumbing — `RequestEmailLogoUploadUrlService` injects
     // `StoragePort` directly, resolvable here WITHOUT importing
     // `ServiceRequestsModule` (same "never import a resolver-bearing
@@ -514,7 +533,7 @@ import { RequestEmailLogoUploadUrlService } from './email-templates/services/req
     // module owns its own `ServiceRequestsResolver`) and WITHOUT
     // re-declaring `LocalDevStorageAdapter`/`StoragePort` as local providers
     // here either: both now come from the `@Global()` `StorageModule`
-    // (`src/service-requests/storage.module.ts`, imported once at
+    // (`src/storage/storage.module.ts`, imported once at
     // `AppModule` root, mirroring `PrismaModule`'s own pattern) — see that
     // module's own header comment for why a single, process-wide instance
     // is REQUIRED here, not just a style choice (two independent

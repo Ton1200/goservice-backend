@@ -118,6 +118,11 @@ const ADMIN_ONLY_FIELDS = [
   // deactivateUserAccount/reactivateUserAccount/bulkDeactivateUserAccounts.
   'deleteUserAccount',
   'bulkDeleteUserAccounts',
+  // GOS-70 — admin management of a consumer profile's photo, same
+  // USER_ACCOUNTS_WRITE permission as updateUserAccount.
+  'requestUserProfilePhotoUploadUrl',
+  'setUserProfilePhoto',
+  'removeUserProfilePhoto',
   // GOS-38 follow-up (2026-08-18) — the admin panel's Service Requests
   // grid (read-only) and its "create on behalf of an approved customer"
   // flow. `serviceRequestCategories` is deliberately named distinctly from
@@ -171,6 +176,10 @@ const ADMIN_ONLY_FIELDS = [
   'updateEmailLayout',
   // Uploadable-logo follow-up (same day, same resolver/permissions).
   'requestEmailLogoUploadUrl',
+  // Storage settings (GOS-70, 2026-09-02) — `src/platform-admin/storage-settings/`,
+  // `STORAGE_SETTINGS_READ`/`_WRITE`.
+  'storageSettings',
+  'updateStorageSettings',
 ];
 
 // Fields that must NEVER appear on `/admin/graphql` — consumer-only
@@ -190,6 +199,7 @@ const CONSUMER_ONLY_FIELDS = [
   'myProfessionalProfile',
   'upsertCustomerProfile',
   'upsertProfessionalProfile',
+  'requestProfilePhotoUploadUrl',
   'platformConfig',
 ];
 
