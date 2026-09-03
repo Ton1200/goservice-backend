@@ -106,6 +106,26 @@ const BULK_DELETE_MUTATION = `
   }
 `;
 
+// GOS-70 — admin management of a consumer profile's photo (upload / change /
+// remove). Same USER_ACCOUNTS_WRITE permission as updateUserAccount.
+const REQUEST_PROFILE_PHOTO_UPLOAD_URL_MUTATION = `
+  mutation RequestUserProfilePhotoUploadUrl($input: RequestUserProfilePhotoUploadUrlInput!) {
+    requestUserProfilePhotoUploadUrl(input: $input) { uploadUrl publicUrl expiresAt }
+  }
+`;
+
+const SET_PROFILE_PHOTO_MUTATION = `
+  mutation SetUserProfilePhoto($input: SetUserProfilePhotoInput!) {
+    setUserProfilePhoto(input: $input) { id }
+  }
+`;
+
+const REMOVE_PROFILE_PHOTO_MUTATION = `
+  mutation RemoveUserProfilePhoto($input: RemoveUserProfilePhotoInput!) {
+    removeUserProfilePhoto(input: $input) { id }
+  }
+`;
+
 // "View" row action (GOS-3x follow-up, 2026-08-11) — fetched lazily, on
 // demand, when the detail modal opens; never pre-loaded alongside the
 // grid's own lightweight `USER_ACCOUNTS_QUERY` above.
@@ -891,6 +911,189 @@ function buildPhoto(photoUrl, name) {
   return img;
 }
 
+/**
+ * GOS-70 — polls a just-uploaded image URL until it 200s, since profile
+ * photos are resized/re-encoded to WebP by an async worker and the URL
+ * 404s until that finishes. Resolves regardless after the timeout (the
+ * caller still attaches the URL; the image just renders once ready).
+ */
+async function waitForProcessedImage(url, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+      if (res.ok) {
+        return;
+      }
+    } catch {
+      // network hiccup — keep polling
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+/**
+ * GOS-70 — the photo upload/change/remove widget shown at the top of the
+ * "Customer profile" / "Professional profile" detail tabs. `profileKind` is
+ * `CUSTOMER` or `PROFESSIONAL`; `onChanged` re-opens the detail modal so
+ * every tab reflects the new state.
+ */
+function buildProfilePhotoManager(profileKind, userId, photoUrl, name, onChanged) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'mb-3';
+
+  const preview = buildPhoto(photoUrl, name);
+  if (preview) {
+    wrapper.appendChild(preview);
+  } else {
+    const empty = document.createElement('p');
+    empty.className = 'text-secondary small mb-1';
+    empty.textContent = 'No photo.';
+    wrapper.appendChild(empty);
+  }
+
+  const controls = document.createElement('div');
+  controls.className = 'd-flex align-items-center gap-2 mt-1';
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*';
+  fileInput.className = 'form-control form-control-sm';
+  fileInput.style.maxWidth = '260px';
+
+  const uploadButton = document.createElement('button');
+  uploadButton.type = 'button';
+  uploadButton.className = 'btn btn-outline-primary btn-sm';
+  uploadButton.textContent = photoUrl ? 'Replace photo' : 'Upload photo';
+
+  const removeButton = document.createElement('button');
+  removeButton.type = 'button';
+  removeButton.className = 'btn btn-outline-danger btn-sm';
+  removeButton.textContent = 'Remove photo';
+  removeButton.hidden = !photoUrl;
+
+  const status = document.createElement('span');
+  status.className = 'text-secondary small';
+
+  function setBusy(busy, message) {
+    uploadButton.disabled = busy;
+    removeButton.disabled = busy;
+    fileInput.disabled = busy;
+    status.textContent = message || '';
+  }
+
+  function reportError(body, fallback) {
+    if (handleAdminUnauthenticated(body)) {
+      return;
+    }
+    const firstError = body?.errors?.[0];
+    const code = firstError?.extensions?.code;
+    const map = {
+      ADMIN_FORBIDDEN: 'You do not have permission to change this photo.',
+      UNSUPPORTED_PROFILE_PHOTO_CONTENT_TYPE:
+        'That file type is not a supported image.',
+      UNSUPPORTED_IMAGE_FORMAT: 'That file is not a valid image.',
+      CUSTOMER_PROFILE_NOT_FOUND: 'This user has no customer profile.',
+      PROFESSIONAL_PROFILE_NOT_FOUND: 'This user has no professional profile.',
+      INVALID_PROFILE_PHOTO_URL:
+        'The processed image could not be found — the image worker may not have run yet (check that Redis is running). Try again in a moment.',
+      USER_ACCOUNT_NOT_FOUND: 'This user account no longer exists.',
+    };
+    // Fall back to the raw code/message so an unexpected error is
+    // debuggable from the panel instead of a bare "could not…".
+    const detail = code
+      ? ` (${code})`
+      : firstError?.message
+        ? ` (${firstError.message})`
+        : '';
+    showDetailError((map[code] || fallback) + detail);
+  }
+
+  uploadButton.addEventListener('click', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) {
+      showDetailError('Choose an image file first.');
+      return;
+    }
+    showDetailError('');
+    setBusy(true, 'Uploading…');
+    try {
+      const reqBody = await graphqlRequest(
+        REQUEST_PROFILE_PHOTO_UPLOAD_URL_MUTATION,
+        { input: { fileName: file.name, contentType: file.type } },
+      );
+      if (reqBody.errors && reqBody.errors.length > 0) {
+        reportError(reqBody, 'Could not start the upload.');
+        return;
+      }
+      const { uploadUrl, publicUrl } =
+        reqBody.data.requestUserProfilePhotoUploadUrl;
+
+      const put = await fetch(uploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type },
+      });
+      if (!put.ok) {
+        const text = await put.text().catch(() => '');
+        showDetailError(
+          text.includes('UNSUPPORTED_IMAGE_FORMAT')
+            ? 'That file is not a valid image.'
+            : 'Could not upload the file. Please try again.',
+        );
+        return;
+      }
+
+      setBusy(true, 'Processing…');
+      await waitForProcessedImage(publicUrl);
+
+      const setBody = await graphqlRequest(SET_PROFILE_PHOTO_MUTATION, {
+        input: { userId, profileKind, photoUrl: publicUrl },
+      });
+      if (setBody.errors && setBody.errors.length > 0) {
+        reportError(setBody, 'Could not attach the photo.');
+        return;
+      }
+      await onChanged();
+    } catch (error) {
+      showDetailError(
+        error instanceof GraphQLNetworkError
+          ? error.message
+          : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  removeButton.addEventListener('click', async () => {
+    showDetailError('');
+    setBusy(true, 'Removing…');
+    try {
+      const body = await graphqlRequest(REMOVE_PROFILE_PHOTO_MUTATION, {
+        input: { userId, profileKind },
+      });
+      if (body.errors && body.errors.length > 0) {
+        reportError(body, 'Could not remove the photo.');
+        return;
+      }
+      await onChanged();
+    } catch (error) {
+      showDetailError(
+        error instanceof GraphQLNetworkError
+          ? error.message
+          : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  controls.append(fileInput, uploadButton, removeButton, status);
+  wrapper.appendChild(controls);
+  return wrapper;
+}
+
 /** "Account" tab — always present, base identity fields only (same set
  * `UserAccountModel`/the grid already exposes, plus the two timestamps). */
 function buildAccountTabContent(detail) {
@@ -918,16 +1121,18 @@ function buildAccountTabContent(detail) {
  * is true (see `openUserDetailModal`). A "Address" sub-section groups
  * addressLine/city/province/country, visually separated per the human's
  * explicit requirement. */
-function buildCustomerProfileTabContent(profile) {
+function buildCustomerProfileTabContent(profile, userId, onChanged) {
   const wrapper = document.createElement('div');
 
-  const photo = buildPhoto(
-    profile.photoUrl,
-    `${profile.firstName} ${profile.lastName}`,
+  wrapper.appendChild(
+    buildProfilePhotoManager(
+      'CUSTOMER',
+      userId,
+      profile.photoUrl,
+      `${profile.firstName} ${profile.lastName}`,
+      onChanged,
+    ),
   );
-  if (photo) {
-    wrapper.appendChild(photo);
-  }
   wrapper.appendChild(buildField('First name', profile.firstName));
   wrapper.appendChild(buildField('Last name', profile.lastName));
   // Boolean, not a free-text value — passed as an explicit 'Yes'/'No' string
@@ -955,16 +1160,18 @@ function buildCustomerProfileTabContent(profile) {
 /** "Professional profile" tab — only rendered/added when
  * `hasProfessionalProfile` is true. "Service area" and "Specializations"
  * sub-sections, visually separated, per the human's explicit requirement. */
-function buildProfessionalProfileTabContent(profile) {
+function buildProfessionalProfileTabContent(profile, userId, onChanged) {
   const wrapper = document.createElement('div');
 
-  const photo = buildPhoto(
-    profile.photoUrl,
-    `${profile.firstName} ${profile.lastName}`,
+  wrapper.appendChild(
+    buildProfilePhotoManager(
+      'PROFESSIONAL',
+      userId,
+      profile.photoUrl,
+      `${profile.firstName} ${profile.lastName}`,
+      onChanged,
+    ),
   );
-  if (photo) {
-    wrapper.appendChild(photo);
-  }
   wrapper.append(
     buildField('First name', profile.firstName),
     buildField('Last name', profile.lastName),
@@ -1077,6 +1284,9 @@ async function openUserDetailModal(rowData) {
     }
 
     const detail = body.data.userAccountDetail;
+    // GOS-70 — re-open the modal after a profile-photo change so every tab
+    // reflects the new state.
+    const onProfilePhotoChanged = () => openUserDetailModal(rowData);
     const tabs = [
       {
         id: 'account',
@@ -1088,14 +1298,22 @@ async function openUserDetailModal(rowData) {
       tabs.push({
         id: 'customer',
         label: 'Customer profile',
-        content: buildCustomerProfileTabContent(detail.customerProfile),
+        content: buildCustomerProfileTabContent(
+          detail.customerProfile,
+          detail.id,
+          onProfilePhotoChanged,
+        ),
       });
     }
     if (detail.hasProfessionalProfile && detail.professionalProfile) {
       tabs.push({
         id: 'professional',
         label: 'Professional profile',
-        content: buildProfessionalProfileTabContent(detail.professionalProfile),
+        content: buildProfessionalProfileTabContent(
+          detail.professionalProfile,
+          detail.id,
+          onProfilePhotoChanged,
+        ),
       });
     }
     tabs.push({

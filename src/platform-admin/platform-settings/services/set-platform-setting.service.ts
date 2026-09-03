@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PlatformSettingValueType } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { STORAGE_SETTING_KEY_PREFIX } from '../../../storage/storage-setting-keys.constants';
 import { AuditLogRepository } from '../../audit-log/audit-log.repository';
 import { PlatformSettingsRepository } from '../platform-settings.repository';
 import { CredentialEncryptionPort } from '../ports/credential-encryption.port';
@@ -10,6 +11,7 @@ import { toPlatformSettingModel } from '../models/to-platform-setting-model.util
 import {
   invalidPlatformSettingValue,
   platformSettingEncryptedCannotBePublic,
+  platformSettingKeyReserved,
   platformSettingValueRequired,
 } from '../errors/invalid-platform-setting-value.error';
 
@@ -54,6 +56,12 @@ export class SetPlatformSettingService {
     adminUserId: string,
     input: SetPlatformSettingInput,
   ): Promise<PlatformSettingModel> {
+    if (input.key.startsWith(STORAGE_SETTING_KEY_PREFIX)) {
+      // GOS-70 — `storage.*` rows are owned by `updateStorageSettings`
+      // (permission `STORAGE_SETTINGS_WRITE`), never this generic surface.
+      throw platformSettingKeyReserved();
+    }
+
     if (input.isEncrypted && input.isPublic) {
       throw platformSettingEncryptedCannotBePublic();
     }

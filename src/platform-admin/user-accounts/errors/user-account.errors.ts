@@ -2,6 +2,9 @@ import { DomainException } from '../../../common/errors/domain-exception';
 
 const NOT_FOUND_CODE = 'USER_ACCOUNT_NOT_FOUND';
 const EMAIL_TAKEN_CODE = 'USER_ACCOUNT_EMAIL_TAKEN';
+const CUSTOMER_PROFILE_NOT_FOUND_CODE = 'CUSTOMER_PROFILE_NOT_FOUND';
+const PROFESSIONAL_PROFILE_NOT_FOUND_CODE = 'PROFESSIONAL_PROFILE_NOT_FOUND';
+const INVALID_PROFILE_PHOTO_URL_CODE = 'INVALID_PROFILE_PHOTO_URL';
 
 /**
  * Thrown by `UpdateUserAccountService`/`ForceUserAccountPasswordResetService`/
@@ -33,5 +36,40 @@ export function userAccountEmailTaken(): DomainException {
   return new DomainException(
     EMAIL_TAKEN_CODE,
     'That email address is already in use by a different user account.',
+  );
+}
+
+/**
+ * GOS-70 — thrown by the admin profile-photo mutations
+ * (`setUserProfilePhoto`/`removeUserProfilePhoto`) when the target user has
+ * no CustomerProfile / ProfessionalProfile yet. Managing a photo is not a
+ * way to CREATE a profile (that needs a full set of fields the admin panel
+ * doesn't collect here).
+ */
+export function customerProfileNotFound(userId: string): DomainException {
+  return new DomainException(
+    CUSTOMER_PROFILE_NOT_FOUND_CODE,
+    `User "${userId}" has no CustomerProfile.`,
+  );
+}
+
+export function professionalProfileNotFound(userId: string): DomainException {
+  return new DomainException(
+    PROFESSIONAL_PROFILE_NOT_FOUND_CODE,
+    `User "${userId}" has no ProfessionalProfile.`,
+  );
+}
+
+/**
+ * GOS-70 — thrown by `setUserProfilePhoto` when the submitted `photoUrl` is
+ * not a URL this backend's own storage issued (must be
+ * `<STORAGE_LOCAL_BASE_URL>/uploads/<key>.webp`). An admin can only attach a
+ * photo that went through `requestUserProfilePhotoUploadUrl` + the real
+ * upload/processing pipeline, never an arbitrary external URL.
+ */
+export function invalidProfilePhotoUrl(): DomainException {
+  return new DomainException(
+    INVALID_PROFILE_PHOTO_URL_CODE,
+    "photoUrl must be a URL issued by requestUserProfilePhotoUploadUrl (a processed image in this backend's own storage).",
   );
 }

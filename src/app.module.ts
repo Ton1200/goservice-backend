@@ -26,7 +26,7 @@ import { EngagementsModule } from './engagements/engagements.module';
 import { QuotesModule } from './quotes/quotes.module';
 import { QuoteNegotiationModule } from './quote-negotiation/quote-negotiation.module';
 import { ServiceRequestsModule } from './service-requests/service-requests.module';
-import { StorageModule } from './service-requests/storage.module';
+import { StorageModule } from './storage/storage.module';
 import { EngagementChatModule } from './engagement-chat/engagement-chat.module';
 import { AppointmentsModule } from './appointments/appointments.module';
 import type { AppConfig } from './config/configuration';

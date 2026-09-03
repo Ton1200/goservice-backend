@@ -1,10 +1,10 @@
-import { Field, InputType } from '@nestjs/graphql';
+import { Field, ID, InputType } from '@nestjs/graphql';
 import {
   IsBoolean,
   IsEnum,
   IsOptional,
   IsString,
-  IsUrl,
+  IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -61,21 +61,25 @@ export class UpsertCustomerProfileInput {
   @IsEnum(CountryCode)
   country?: CountryCode;
 
-  // No object-storage provider is decided yet (see infrastructure.md) — a
-  // client must upload the image elsewhere itself and pass the resulting
-  // URL here; this field only validates shape, it never handles the upload.
-  @Field({ nullable: true })
+  // GOS-70 — the ONLY way to set a profile photo. The client first calls
+  // `requestProfilePhotoUploadUrl`, PUTs the image bytes to the signed
+  // `uploadUrl` (server-side resized + re-encoded to WebP), then passes the
+  // returned `ref` here. When present the server sets `photoUrl` to the
+  // processed WebP URL and marks the ref consumed in the same transaction.
+  // Omitting it on an edit leaves the currently persisted photo unchanged.
+  // The former free `photoUrl` string field was removed (breaking) — an
+  // arbitrary client-supplied URL is no longer accepted.
+  @Field(() => ID, { nullable: true })
   @IsOptional()
-  @IsUrl()
-  photoUrl?: string;
+  @IsUUID()
+  photoUploadRef?: string;
 
   // GOS-62 — explicit opt-in location-sharing consent flag ONLY (no
   // latitude/longitude, no real geolocation logic — see DEC-005, still
-  // status "Proposed"). Optional/partial-update semantics, same convention
-  // as `photoUrl` above: when omitted on an edit, the currently persisted
-  // value is left unchanged (see `upsert-customer-profile.service.ts`) —
-  // it is NOT reset to `false`. Only an explicit `true`/`false` in the
-  // request body changes it.
+  // status "Proposed"). Optional/partial-update semantics: when omitted on
+  // an edit, the currently persisted value is left unchanged (see
+  // `upsert-customer-profile.service.ts`) — it is NOT reset to `false`.
+  // Only an explicit `true`/`false` in the request body changes it.
   @Field(() => Boolean, { nullable: true })
   @IsOptional()
   @IsBoolean()

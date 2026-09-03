@@ -1,25 +1,30 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { StoragePort } from '../../../service-requests/ports/storage.port';
+import { StoragePort } from '../../../storage/ports/storage.port';
 import { unsupportedEmailLogoContentType } from '../errors/email-layout.errors';
 import { EmailLogoUploadUrlModel } from '../models/email-logo-upload-url.model';
 import { RequestEmailLogoUploadUrlInput } from '../models/request-email-logo-upload-url.input';
 
 /**
- * Small, deliberate allow-list — image only, no PDF (unlike
+ * Declared-content-type allow-list — image only, no PDF (unlike
  * `ALLOWED_ATTACHMENT_CONTENT_TYPES` in
  * `src/service-requests/services/request-service-request-attachment-upload-url.service.ts`,
- * which this otherwise mirrors): a logo is always an image.
+ * which this otherwise mirrors): a logo is always an image. GOS-70: a cheap
+ * early gate only — the bytes are re-encoded to WebP by the shared storage
+ * layer and their real format is checked at `PUT /uploads/:key`.
  */
 export const ALLOWED_EMAIL_LOGO_CONTENT_TYPES: ReadonlySet<string> = new Set([
   'image/jpeg',
   'image/png',
   'image/webp',
+  'image/gif',
+  'image/heic',
+  'image/heif',
 ]);
 
 /**
  * Orchestrates `Mutation.requestEmailLogoUploadUrl` — uploadable-logo
  * follow-up (2026-08-25). Reuses the EXISTING GOS-38 `StoragePort` seam
- * (`src/service-requests/ports/storage.port.ts`) directly, rather than
+ * (`src/storage/ports/storage.port.ts`) directly, rather than
  * building any new storage plumbing for this feature — see this feature's
  * own plan for why (`LocalDevStorageAdapter`/`UploadsController` are
  * provider-agnostic by design, serving any `key` regardless of which

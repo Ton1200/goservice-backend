@@ -291,51 +291,33 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
     expect(response.body).toHaveProperty('errors');
   });
 
-  it('accepts an optional photoUrl and returns it unchanged', async () => {
+  // GOS-70 — the free `photoUrl` string input was REMOVED; a photo is set
+  // only via `photoUploadRef` (full round-trip covered in
+  // `test/profiles-photo-upload.e2e-spec.ts`). Here we just assert the
+  // removed field is rejected and that `photoUrl` defaults to null.
+  it('rejects a stray photoUrl input field (removed in GOS-70) via forbidNonWhitelisted', async () => {
     const { email } = await seedEmailVerifiedUser();
     const sessionToken = await loginSessionToken(email);
 
     const response = await upsertCustomerProfileRequest(
       { ...VALID_INPUT, photoUrl: 'https://cdn.example.com/photo.jpg' },
-      sessionToken,
-    ).expect(200);
-    const body = response.body as UpsertCustomerProfileResponseBody;
-
-    expect(body.data?.upsertCustomerProfile.photoUrl).toBe(
-      'https://cdn.example.com/photo.jpg',
-    );
-  });
-
-  it('rejects a malformed photoUrl at the DTO validation layer', async () => {
-    const { email } = await seedEmailVerifiedUser();
-    const sessionToken = await loginSessionToken(email);
-
-    const response = await upsertCustomerProfileRequest(
-      { ...VALID_INPUT, photoUrl: 'not-a-url' },
       sessionToken,
     );
 
     expect(response.body).toHaveProperty('errors');
   });
 
-  it('leaves photoUrl unchanged on an edit that omits it (not a wipe value)', async () => {
+  it('photoUrl is null on a freshly created profile (no photoUploadRef)', async () => {
     const { email } = await seedEmailVerifiedUser();
     const sessionToken = await loginSessionToken(email);
 
-    await upsertCustomerProfileRequest(
-      { ...VALID_INPUT, photoUrl: 'https://cdn.example.com/photo.jpg' },
+    const response = await upsertCustomerProfileRequest(
+      { ...VALID_INPUT },
       sessionToken,
     ).expect(200);
+    const body = response.body as UpsertCustomerProfileResponseBody;
 
-    const editResponse = await upsertCustomerProfileRequest(
-      { ...VALID_INPUT, city: 'Cordoba' },
-      sessionToken,
-    ).expect(200);
-    const editBody = editResponse.body as UpsertCustomerProfileResponseBody;
-
-    expect(editBody.data?.upsertCustomerProfile.photoUrl).toBe(
-      'https://cdn.example.com/photo.jpg',
-    );
+    expect(body.data?.upsertCustomerProfile.photoUrl).toBeNull();
   });
 
   // GOS-62 — location-sharing consent flag: opt-in, default OFF, boolean

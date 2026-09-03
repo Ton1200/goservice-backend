@@ -6,6 +6,7 @@ import {
   Prisma,
   ProfessionalProfile,
   ProfessionalVerificationStatus,
+  ProfilePhotoUploadRef,
   SpecializationRole,
   UserAccountStatus,
 } from '@prisma/client';
@@ -57,6 +58,44 @@ export class ProfilesRepository {
 
   findCustomerProfileByUserId(userId: string): Promise<CustomerProfile | null> {
     return this.prisma.customerProfile.findUnique({ where: { userId } });
+  }
+
+  /**
+   * GOS-70 — sets (or clears, with `null`) ONLY the `photoUrl` column of an
+   * existing profile, inside the caller's `$transaction` (the admin
+   * profile-photo mutations pair this write with an `AdminAuditLog` write).
+   * The caller pre-checks the profile exists for a friendly domain error;
+   * Prisma still throws `P2025` here if the row vanished between the check
+   * and the write.
+   */
+  setCustomerProfilePhoto(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    photoUrl: string | null,
+  ): Promise<CustomerProfile> {
+    return tx.customerProfile.update({ where: { userId }, data: { photoUrl } });
+  }
+
+  setProfessionalProfilePhoto(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    photoUrl: string | null,
+  ): Promise<ProfessionalProfile> {
+    return tx.professionalProfile.update({
+      where: { userId },
+      data: { photoUrl },
+    });
+  }
+
+  /** GOS-70 — cheap existence check for the admin profile-photo mutations
+   *  (avoids the specialization `include` that
+   *  `findProfessionalProfileByUserId` carries). */
+  async professionalProfileExists(userId: string): Promise<boolean> {
+    const row = await this.prisma.professionalProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    return row !== null;
   }
 
   /**
@@ -333,6 +372,41 @@ export class ProfilesRepository {
   }
 
   /**
+   * GOS-70 — creates the single-use `ProfilePhotoUploadRef` row backing one
+   * `requestProfilePhotoUploadUrl` call. Same shape as
+   * `ServiceRequestsRepository.createUploadRef`.
+   */
+  createProfilePhotoUploadRef(data: {
+    userId: string;
+    storageKey: string;
+    fileUrl: string;
+    expiresAt: Date;
+  }): Promise<ProfilePhotoUploadRef> {
+    return this.prisma.profilePhotoUploadRef.create({ data });
+  }
+
+  /**
+   * GOS-70 — the ref is usable only if it is owned by `userId`, still
+   * `PENDING`, and not past `expiresAt`. `null` otherwise; the caller
+   * (`upsertCustomer/ProfessionalProfile` services) collapses every "not
+   * usable" cause into a single `INVALID_PROFILE_PHOTO_UPLOAD_REF`
+   * (anti-enumeration), exactly like `findUsablePendingUploadRefs`.
+   */
+  findUsablePendingPhotoUploadRef(
+    userId: string,
+    refId: string,
+  ): Promise<ProfilePhotoUploadRef | null> {
+    return this.prisma.profilePhotoUploadRef.findFirst({
+      where: {
+        id: refId,
+        userId,
+        status: 'PENDING',
+        expiresAt: { gt: new Date() },
+      },
+    });
+  }
+
+  /**
    * Idempotent upsert keyed on `userId` (physically enforced by
    * `CustomerProfile.userId`'s `@unique`) — always exactly one row per
    * user, never a duplicate. On the row's first-ever creation (and only
@@ -348,6 +422,13 @@ export class ProfilesRepository {
    * untouched rather than resetting it. `create`'s missing value falls
    * back to the schema's own column default (`false` for
    * `locationSharingEnabled`, `null` for `photoUrl`).
+   *
+   * `photoUploadRefId` (GOS-70) is NOT a column — when present, the caller
+   * has already resolved the ref to a usable row and set `photoUrl` to its
+   * `fileUrl`; this method marks that ref `CONSUMED` inside the SAME
+   * transaction as the profile write, so a ref can never be spent without
+   * the profile actually being updated, and the `status: PENDING` guard on
+   * the `updateMany` makes a concurrent double-spend a harmless no-op.
    */
   async upsertCustomerProfile(
     userId: string,
@@ -359,6 +440,7 @@ export class ProfilesRepository {
       province: string;
       country: CountryCode;
       photoUrl?: string;
+      photoUploadRefId?: string;
       locationSharingEnabled?: boolean;
     },
   ): Promise<{
@@ -366,6 +448,8 @@ export class ProfilesRepository {
     wasCreated: boolean;
     accountStatusTransitioned: boolean;
   }> {
+    const { photoUploadRefId, ...profileData } = data;
+
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.customerProfile.findUnique({
         where: { userId },
@@ -373,9 +457,16 @@ export class ProfilesRepository {
 
       const profile = await tx.customerProfile.upsert({
         where: { userId },
-        create: { userId, ...data },
-        update: { ...data },
+        create: { userId, ...profileData },
+        update: { ...profileData },
       });
+
+      if (photoUploadRefId) {
+        await tx.profilePhotoUploadRef.updateMany({
+          where: { id: photoUploadRefId, userId, status: 'PENDING' },
+          data: { status: 'CONSUMED', consumedAt: new Date() },
+        });
+      }
 
       const wasCreated = existing === null;
       const accountStatusTransitioned = wasCreated
@@ -430,6 +521,7 @@ export class ProfilesRepository {
       serviceAreaDescription: string;
       bio: string;
       photoUrl?: string;
+      photoUploadRefId?: string;
       languages?: string[];
       locationSharingEnabled?: boolean;
       specializations: {
@@ -444,7 +536,9 @@ export class ProfilesRepository {
     wasCreated: boolean;
     accountStatusTransitioned: boolean;
   }> {
-    const { specializations, ...profileData } = data;
+    // `specializations` is a child collection (full-replace); `photoUploadRefId`
+    // is not a column (GOS-70 — see `upsertCustomerProfile`'s doc comment).
+    const { specializations, photoUploadRefId, ...profileData } = data;
 
     return this.prisma.$transaction(async (tx) => {
       const existing = await tx.professionalProfile.findUnique({
@@ -460,6 +554,13 @@ export class ProfilesRepository {
         },
         update: profileData,
       });
+
+      if (photoUploadRefId) {
+        await tx.profilePhotoUploadRef.updateMany({
+          where: { id: photoUploadRefId, userId, status: 'PENDING' },
+          data: { status: 'CONSUMED', consumedAt: new Date() },
+        });
+      }
 
       await tx.professionalSpecialization.deleteMany({
         where: { professionalProfileId: profile.id },
