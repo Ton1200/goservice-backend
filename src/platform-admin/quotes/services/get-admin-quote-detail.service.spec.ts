@@ -11,6 +11,9 @@ describe('GetAdminQuoteDetailService', () => {
     createdAt: new Date(),
     updatedAt: new Date(),
     _count: { negotiationMessages: 0 },
+    // GOS-72 — ADMIN_QUOTE_DETAIL_SELECT now also selects the Quote's
+    // reference images.
+    attachments: [],
     serviceRequest: {
       id: 'service-request-1',
       description: 'Se rompió una cañería.',
@@ -110,6 +113,27 @@ describe('GetAdminQuoteDetailService', () => {
     const detail = await service.getQuoteDetail('quote-1');
 
     expect(detail.engagement).toMatchObject({ id: 'engagement-1' });
+  });
+
+  it('maps the Quote reference images (GOS-72) into attachments', async () => {
+    const createdAt = new Date();
+    const { service } = makeService({
+      row: {
+        ...baseRow,
+        engagement: null,
+        attachments: [
+          { id: 'att-1', url: 'https://s/uploads/a.webp', createdAt },
+          { id: 'att-2', url: 'https://s/uploads/b.webp', createdAt },
+        ],
+      } as unknown as typeof baseRow & { engagement: unknown },
+    });
+
+    const detail = await service.getQuoteDetail('quote-1');
+
+    expect(detail.attachments).toEqual([
+      { id: 'att-1', url: 'https://s/uploads/a.webp', createdAt },
+      { id: 'att-2', url: 'https://s/uploads/b.webp', createdAt },
+    ]);
   });
 
   it('throws ADMIN_QUOTE_NOT_FOUND for a nonexistent id', async () => {

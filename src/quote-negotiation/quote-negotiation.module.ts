@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
+import { MediaUploadsRepository } from '../media-uploads/media-uploads.repository';
 import { PlatformSettingsModule } from '../platform-admin/platform-settings/platform-settings.module';
 import { ProfilesModule } from '../profiles/profiles.module';
 import { QuotesRepository } from '../quotes/quotes.repository';
@@ -63,6 +64,7 @@ import { RejectQuotePriceProposalService } from './services/reject-quote-price-p
     QuoteNegotiationModuleEnabledGuard,
     QuotesRepository,
     ServiceRequestsRepository,
+    MediaUploadsRepository,
     PostQuoteNegotiationMessageService,
     AcceptQuotePriceProposalService,
     RejectQuotePriceProposalService,

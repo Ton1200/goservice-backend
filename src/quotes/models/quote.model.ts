@@ -7,6 +7,7 @@ import {
 } from '@nestjs/graphql';
 import { EngagementModel } from '../../engagements/models/engagement.model';
 import { ProfessionalProfile } from '../../profiles/models/professional-profile.model';
+import { QuoteAttachmentModel } from './quote-attachment.model';
 import { QuoteStatus } from './quote-status.enum';
 
 /**
@@ -57,4 +58,12 @@ export class QuoteModel {
 
   @Field(() => EngagementModel, { nullable: true })
   engagement?: EngagementModel | null;
+
+  // GOS-72 — reference images the Professional attached via
+  // `addQuoteAttachment`. A plain `@Field()` (not a `@ResolveField`) —
+  // `QuotesRepository` always includes it in the same query (see
+  // `QUOTE_INCLUDE`), same pattern as `professionalProfile`/`engagement`
+  // above. Empty array when none were attached.
+  @Field(() => [QuoteAttachmentModel])
+  attachments!: QuoteAttachmentModel[];
 }

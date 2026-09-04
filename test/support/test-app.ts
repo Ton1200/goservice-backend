@@ -189,6 +189,11 @@ export async function cleanUsersData(prisma: PrismaService): Promise<void> {
   await prisma.session.deleteMany();
   await prisma.emailVerificationCode.deleteMany();
   await prisma.passwordResetCode.deleteMany();
+  // GOS-72 — `MediaUploadRef` is a direct child of `User` (shared upload
+  // slots for Quote attachments / negotiation- & chat-message images); sweep
+  // it here so `user.deleteMany()` doesn't trip its FK, same reason
+  // `cleanProfilesData` sweeps `ProfilePhotoUploadRef`.
+  await prisma.mediaUploadRef.deleteMany();
   await prisma.user.deleteMany();
 }
 

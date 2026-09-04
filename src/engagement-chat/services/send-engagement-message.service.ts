@@ -1,4 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { MediaUploadRefIntendedUse } from '@prisma/client';
+import { invalidMediaUploadRef } from '../../media-uploads/errors/invalid-media-upload-ref.error';
+import { MediaUploadsRepository } from '../../media-uploads/media-uploads.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EngagementChatAccessService } from '../engagement-chat-access.service';
 import { EngagementChatRepository } from '../engagement-chat.repository';
@@ -34,6 +37,7 @@ export class SendEngagementMessageService {
     private readonly prisma: PrismaService,
     private readonly accessService: EngagementChatAccessService,
     private readonly engagementChatRepository: EngagementChatRepository,
+    private readonly mediaUploadsRepository: MediaUploadsRepository,
   ) {}
 
   async sendMessage(
@@ -43,6 +47,22 @@ export class SendEngagementMessageService {
   ): Promise<EngagementMessageModel> {
     const party = await this.accessService.resolveParty(userId, engagementId);
 
+    // GOS-72 — resolve the optional coordination image ref BEFORE the
+    // transaction (same read-then-consume ordering as GOS-38). `imageUrl` is
+    // `null` unless a usable ref was supplied.
+    let imageUrl: string | null = null;
+    if (input.mediaUploadRefId) {
+      const [ref] = await this.mediaUploadsRepository.findUsablePendingRefs(
+        userId,
+        [input.mediaUploadRefId],
+        MediaUploadRefIntendedUse.ENGAGEMENT_CHAT_MESSAGE_IMAGE,
+      );
+      if (!ref) {
+        throw invalidMediaUploadRef();
+      }
+      imageUrl = ref.fileUrl;
+    }
+
     const message = await this.prisma.$transaction(async (tx) => {
       const conversation =
         await this.engagementChatRepository.upsertConversation(
@@ -50,13 +70,27 @@ export class SendEngagementMessageService {
           engagementId,
         );
 
-      return this.engagementChatRepository.createMessage(tx, {
+      const created = await this.engagementChatRepository.createMessage(tx, {
         conversationId: conversation.id,
         senderRole: party.role,
         senderCustomerProfileId: party.customerProfileId,
         senderProfessionalProfileId: party.professionalProfileId,
         content: input.content,
+        imageUrl,
       });
+
+      if (input.mediaUploadRefId) {
+        const { count } = await this.mediaUploadsRepository.markConsumed(tx, [
+          input.mediaUploadRefId,
+        ]);
+        if (count !== 1) {
+          // A concurrent consume spent the ref between the read above and
+          // this write — roll the whole transaction back.
+          throw invalidMediaUploadRef();
+        }
+      }
+
+      return created;
     });
 
     this.logger.log({
