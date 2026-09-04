@@ -102,6 +102,10 @@ model User {
   // GOS-70 — pre-reserved profile-photo upload slots (see
   // ProfilePhotoUploadRef below). Purely additive.
   profilePhotoUploadRefs             ProfilePhotoUploadRef[]
+  // GOS-72 — pre-reserved image upload slots shared by Quote attachments,
+  // Quote-negotiation-message images and Engagement-chat-message images (see
+  // MediaUploadRef below). Purely additive, no new column on this table.
+  mediaUploadRefs                    MediaUploadRef[]
 
   // Non-unique: real uniqueness is enforced by the `email` unique
   // constraint above. This index only speeds up the socialLogin fast-path
@@ -578,6 +582,12 @@ model Quote {
   negotiatedPrice       Int?
   message               String
   status                QuoteStatus         @default(SENT)
+  // GOS-72 — reference images the Professional attaches to this Quote via
+  // `addQuoteAttachment`. 1:N, its own table (same pattern as
+  // `ServiceRequestAttachment`, NOT that table). Cascade-deleted with the
+  // Quote, same "must never block a hard delete" rule as every other
+  // Quote-owned relation above.
+  attachments           QuoteAttachment[]
   withdrawnAt           DateTime?
   rejectedAt            DateTime?
   acceptedAt            DateTime?
@@ -641,6 +651,10 @@ model QuoteNegotiationMessage {
   authorProfessionalProfile   ProfessionalProfile? @relation(fields: [authorProfessionalProfileId], references: [id], onDelete: Cascade)
 
   message   String
+  // GOS-72 — optional single reference image on this message, set from a
+  // consumed `MediaUploadRef` (intendedUse QUOTE_NEGOTIATION_MESSAGE_IMAGE).
+  // One image per message, never a list; null when no image was attached.
+  imageUrl  String?
   createdAt DateTime @default(now())
 
   // The QuotePriceProposal this message created, if the author attached a
@@ -828,6 +842,15 @@ model EngagementChatMessage {
   senderProfessionalProfile   ProfessionalProfile? @relation(fields: [senderProfessionalProfileId], references: [id], onDelete: Cascade)
 
   content   String
+  // GOS-72 — optional single coordination image on this message, set from a
+  // consumed `MediaUploadRef` (intendedUse ENGAGEMENT_CHAT_MESSAGE_IMAGE).
+  // One image per message, never a list; null when no image was attached.
+  // A deliberate, ticket-authorised extension of this model's otherwise
+  // strict "content is the ONLY payload field" stance: an image is
+  // coordination media (photo of the site/access/materials), not
+  // Quote/Engagement business state — this module still never writes to
+  // those tables.
+  imageUrl  String?
   createdAt DateTime @default(now())
 
   // Supports engagementMessages (WHERE conversationId = ? ORDER BY
@@ -938,6 +961,24 @@ model ServiceRequestAttachment {
   @@index([serviceRequestId])
 }
 
+// GOS-72 — one reference image attached to a Quote by the submitting
+// Professional (via `addQuoteAttachment`). Mirrors `ServiceRequestAttachment`
+// above field-for-field (`url` is always a URL this backend itself issued via
+// StoragePort; `order` keeps the output array stable and is NOT exposed in
+// GraphQL) but is its OWN table — `ServiceRequestAttachment` is deliberately
+// not reused. Cascade-deleted with its Quote, same rule as every other
+// Quote-owned relation.
+model QuoteAttachment {
+  id        String   @id @default(uuid()) @db.Uuid
+  quoteId   String   @db.Uuid
+  quote     Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  url       String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([quoteId])
+}
+
 // Pre-reserved upload slot — the "ref" a client receives from
 // requestServiceRequestAttachmentUploadUrl and later resubmits in
 // PublishServiceRequestInput.attachmentUploadRefs. No prior "GOS-16"
@@ -998,6 +1039,50 @@ model ProfilePhotoUploadRef {
   createdAt  DateTime                    @default(now())
 
   // Supports the ownership+status check upsertCustomer/ProfessionalProfile
+  // does for a submitted ref, and a future cleanup job for stale PENDING refs.
+  @@index([userId, status])
+}
+
+// GOS-72 — ONE shared pre-reserved image upload slot, reused by all three of
+// this ticket's new image-attachment points, discriminated by `intendedUse`.
+// The "ref" a client receives from `requestMediaUploadUrl` and later
+// resubmits as `addQuoteAttachment(mediaUploadRefIds:)`,
+// `postQuoteNegotiationMessage(mediaUploadRefId:)` or
+// `sendEngagementMessage(mediaUploadRefId:)`.
+//
+// Deliberately a NEW, separate table — NOT a generalization of, nor a
+// migration of, `ServiceRequestAttachmentUploadRef` (GOS-38): that table and
+// its flow stay byte-for-byte unchanged, so GOS-38's production code is never
+// put at risk by this story. Same single-use / ownership / expiry guarantees
+// as the two upload-ref tables above; `userId` is ALWAYS server-derived from
+// the session, never client-supplied. No FK back to the consumed entity (same
+// as `ProfilePhotoUploadRef`) — the ref is consumed straight into a
+// `QuoteAttachment` row or a message's `imageUrl`. Which specific
+// Quote/message a ref may be spent on is validated at consume time, not here.
+enum MediaUploadRefIntendedUse {
+  QUOTE_ATTACHMENT
+  QUOTE_NEGOTIATION_MESSAGE_IMAGE
+  ENGAGEMENT_CHAT_MESSAGE_IMAGE
+}
+
+enum MediaUploadRefStatus {
+  PENDING
+  CONSUMED
+}
+
+model MediaUploadRef {
+  id          String                    @id @default(uuid()) @db.Uuid
+  userId      String                    @db.Uuid
+  user        User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storageKey  String
+  fileUrl     String
+  intendedUse MediaUploadRefIntendedUse
+  status      MediaUploadRefStatus      @default(PENDING)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime                  @default(now())
+
+  // Supports the ownership+status+intendedUse check each consuming mutation
   // does for a submitted ref, and a future cleanup job for stale PENDING refs.
   @@index([userId, status])
 }

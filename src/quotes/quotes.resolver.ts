@@ -4,9 +4,11 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { AccountApprovedGuard } from '../identity-verification/guards/account-approved.guard';
 import { ServiceRequestModel } from '../service-requests/models/service-request.model';
+import { AddQuoteAttachmentInput } from './models/add-quote-attachment-input.model';
 import { QuoteModel } from './models/quote.model';
 import { SubmitQuoteInput } from './models/submit-quote-input.model';
 import { AcceptQuoteService } from './services/accept-quote.service';
+import { AddQuoteAttachmentsService } from './services/add-quote-attachments.service';
 import { ListMyQuotesService } from './services/list-my-quotes.service';
 import { ListQuotesForServiceRequestService } from './services/list-quotes-for-service-request.service';
 import { RejectQuoteService } from './services/reject-quote.service';
@@ -29,6 +31,7 @@ export class QuotesResolver {
     private readonly rejectQuoteService: RejectQuoteService,
     private readonly listQuotesForServiceRequestService: ListQuotesForServiceRequestService,
     private readonly listMyQuotesService: ListMyQuotesService,
+    private readonly addQuoteAttachmentsService: AddQuoteAttachmentsService,
   ) {}
 
   @UseGuards(SessionGuard, AccountApprovedGuard)
@@ -41,6 +44,23 @@ export class QuotesResolver {
     @Args('input') input: SubmitQuoteInput,
   ): Promise<QuoteModel> {
     return this.submitQuoteService.submitQuote(userId, input);
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Mutation(() => QuoteModel, {
+    description:
+      "Attaches one or more reference images to one of the authenticated Professional's own SENT Quotes, consuming MediaUploadRefs previously obtained from requestMediaUploadUrl(intendedUse: QUOTE_ATTACHMENT).",
+  })
+  addQuoteAttachment(
+    @CurrentUser() userId: string,
+    @Args('quoteId', { type: () => ID }) quoteId: string,
+    @Args('input') input: AddQuoteAttachmentInput,
+  ): Promise<QuoteModel> {
+    return this.addQuoteAttachmentsService.addAttachments(
+      userId,
+      quoteId,
+      input.mediaUploadRefIds,
+    );
   }
 
   @UseGuards(SessionGuard, AccountApprovedGuard)

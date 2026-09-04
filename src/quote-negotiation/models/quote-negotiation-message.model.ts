@@ -23,6 +23,14 @@ export class QuoteNegotiationMessageModel {
   @Field()
   message!: string;
 
+  // GOS-72 — optional single reference image on this message, set from a
+  // consumed `MediaUploadRef` (see `PostQuoteNegotiationMessageService`).
+  // A plain scalar column — no include/resolver needed; the admin
+  // `adminQuoteNegotiationThread` surface (which reuses this exact type)
+  // gets it for free, gated by its existing `QUOTE_NEGOTIATION_READ`.
+  @Field(() => String, { nullable: true })
+  imageUrl?: string | null;
+
   @Field(() => GraphQLISODateTime)
   createdAt!: Date;
 
