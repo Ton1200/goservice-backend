@@ -22,7 +22,7 @@ const LOGIN_MUTATION = `
 const MY_PROFESSIONAL_PROFILE_QUERY = `
   query MyProfessionalProfile {
     myProfessionalProfile {
-      id firstName lastName displayName city country serviceAreaDescription bio
+      id firstName lastName displayName country bio
       verificationStatus photoUrl languages locationSharingEnabled
       specializations { role description yearsOfExperience order category { id name } }
     }
@@ -32,7 +32,7 @@ const MY_PROFESSIONAL_PROFILE_QUERY = `
 const UPSERT_PROFESSIONAL_PROFILE_MUTATION = `
   mutation UpsertProfessionalProfile($input: UpsertProfessionalProfileInput!) {
     upsertProfessionalProfile(input: $input) {
-      id firstName lastName displayName city country serviceAreaDescription bio
+      id firstName lastName displayName country bio
       verificationStatus photoUrl languages locationSharingEnabled
       specializations { role description yearsOfExperience order category { id name } }
     }
@@ -61,9 +61,7 @@ interface ProfessionalProfilePayload {
   firstName: string;
   lastName: string;
   displayName: string | null;
-  city: string;
   country: string;
-  serviceAreaDescription: string;
   bio: string;
   verificationStatus: string;
   photoUrl: string | null;
@@ -254,8 +252,6 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
       firstName: 'Juan',
       lastName: 'Perez',
       specializations,
-      city: 'CABA',
-      serviceAreaDescription: 'CABA y GBA Norte',
       bio: 'Trabajo en el rubro hace mas de una decada.',
     };
   }
@@ -711,9 +707,6 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
       const CUSTOMER_INPUT = {
         firstName: 'Juan',
         lastName: 'Perez',
-        addressLine: 'Av. Siempreviva 742',
-        city: 'CABA',
-        province: 'Buenos Aires',
         locationSharingEnabled: false,
       };
       const upsertCustomerResponse = await request(app.getHttpServer())

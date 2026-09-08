@@ -233,9 +233,6 @@ describe('GraphQL /admin/graphql — serviceRequests/serviceRequestDetail (e2e)'
         userId: user.id,
         firstName: 'Juan',
         lastName: 'Perez',
-        addressLine: 'Calle Falsa 123',
-        city: 'CABA',
-        province: 'Buenos Aires',
         country: CountryCode.AR,
       },
     });
@@ -285,9 +282,6 @@ describe('GraphQL /admin/graphql — serviceRequests/serviceRequestDetail (e2e)'
           userId: user.id,
           firstName: 'Ana',
           lastName: 'Gomez',
-          addressLine: 'Calle Falsa 456',
-          city: 'CABA',
-          province: 'Buenos Aires',
           country: CountryCode.AR,
         },
       });

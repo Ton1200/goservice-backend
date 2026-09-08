@@ -15,9 +15,6 @@ describe('UpsertCustomerProfileService', () => {
       id: 'profile-1',
       firstName: 'Jane',
       lastName: 'Doe',
-      addressLine: 'Av. Siempreviva 742',
-      city: 'CABA',
-      province: 'Buenos Aires',
       country: 'AR',
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -65,9 +62,6 @@ describe('UpsertCustomerProfileService', () => {
     return {
       firstName: 'Jane',
       lastName: 'Doe',
-      addressLine: 'Av. Siempreviva 742',
-      city: 'CABA',
-      province: 'Buenos Aires',
       ...overrides,
     };
   }
@@ -91,9 +85,6 @@ describe('UpsertCustomerProfileService', () => {
     expect(upsertCustomerProfile).toHaveBeenCalledWith('user-1', {
       firstName: 'Jane',
       lastName: 'Doe',
-      addressLine: 'Av. Siempreviva 742',
-      city: 'CABA',
-      province: 'Buenos Aires',
       country: 'AR',
       photoUrl: undefined,
       photoUploadRefId: undefined,
@@ -228,7 +219,7 @@ describe('UpsertCustomerProfileService', () => {
     await service.upsertCustomerProfile('user-1', validInput());
     await service.upsertCustomerProfile(
       'user-1',
-      validInput({ city: 'Rosario' }),
+      validInput({ firstName: 'Janet' }),
     );
 
     expect(upsertCustomerProfile).toHaveBeenNthCalledWith(
@@ -300,8 +291,6 @@ describe('UpsertCustomerProfileService', () => {
       const payload = JSON.stringify(call[0]);
       expect(payload).not.toContain('Jane');
       expect(payload).not.toContain('Doe');
-      expect(payload).not.toContain('Siempreviva');
-      expect(payload).not.toContain('CABA');
       expect(payload).not.toContain('secret-key');
     }
   });

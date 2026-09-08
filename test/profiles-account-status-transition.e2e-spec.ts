@@ -48,17 +48,12 @@ function uniqueCategoryName(): string {
 const CUSTOMER_INPUT = {
   firstName: 'Jane',
   lastName: 'Doe',
-  addressLine: 'Av. Siempreviva 742',
-  city: 'CABA',
-  province: 'Buenos Aires',
 };
 
 function professionalInput(categoryId: string): Record<string, unknown> {
   return {
     firstName: 'Juan',
     lastName: 'Perez',
-    city: 'CABA',
-    serviceAreaDescription: 'CABA y GBA Norte',
     bio: 'Trabajo en el rubro hace mas de una decada.',
     specializations: [
       {

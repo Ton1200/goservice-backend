@@ -23,10 +23,10 @@ import { ServiceRequestUrgency } from './service-request-urgency.enum';
  *
  * Deliberately does NOT resolve or expose anything about the owning
  * `CustomerProfile` beyond that raw id — no `@ResolveField` anywhere in
- * this module reaches into `CustomerProfile`'s address/city/province/
- * country. This is the actual privacy control for `compatibleServiceRequests`
- * (an absence, not a filter) — see the GOS-38 plan's "Privacidad de
- * ubicación" section.
+ * this module reaches into `CustomerProfile`'s `country` or any other
+ * location attribute. This is the actual privacy control for
+ * `compatibleServiceRequests` (an absence, not a filter) — see the GOS-38
+ * plan's "Privacidad de ubicación" section.
  */
 @ObjectType('ServiceRequest')
 export class ServiceRequestModel {

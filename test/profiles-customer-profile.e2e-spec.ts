@@ -21,14 +21,14 @@ const LOGIN_MUTATION = `
 
 const MY_CUSTOMER_PROFILE_QUERY = `
   query MyCustomerProfile {
-    myCustomerProfile { id firstName lastName addressLine city province country photoUrl locationSharingEnabled }
+    myCustomerProfile { id firstName lastName country photoUrl locationSharingEnabled }
   }
 `;
 
 const UPSERT_CUSTOMER_PROFILE_MUTATION = `
   mutation UpsertCustomerProfile($input: UpsertCustomerProfileInput!) {
     upsertCustomerProfile(input: $input) {
-      id firstName lastName addressLine city province country photoUrl locationSharingEnabled
+      id firstName lastName country photoUrl locationSharingEnabled
     }
   }
 `;
@@ -48,9 +48,6 @@ interface MyCustomerProfileResponseBody {
       id: string;
       firstName: string;
       lastName: string;
-      addressLine: string;
-      city: string;
-      province: string;
       country: string;
       photoUrl: string | null;
       locationSharingEnabled: boolean;
@@ -65,9 +62,6 @@ interface UpsertCustomerProfileResponseBody {
       id: string;
       firstName: string;
       lastName: string;
-      addressLine: string;
-      city: string;
-      province: string;
       country: string;
       photoUrl: string | null;
       locationSharingEnabled: boolean;
@@ -179,9 +173,6 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
   const VALID_INPUT = {
     firstName: 'Jane',
     lastName: 'Doe',
-    addressLine: 'Av. Siempreviva 742',
-    city: 'CABA',
-    province: 'Buenos Aires',
   };
 
   it('returns null before any CustomerProfile has been created', async () => {
@@ -233,14 +224,14 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
       expect(firstUser?.accountStatus).toBe(UserAccountStatus.PENDING_APPROVAL);
 
       const editResponse = await upsertCustomerProfileRequest(
-        { ...VALID_INPUT, city: 'Rosario', province: 'Santa Fe' },
+        { ...VALID_INPUT, firstName: 'Janet', locationSharingEnabled: true },
         sessionToken,
       ).expect(200);
       const editBody = editResponse.body as UpsertCustomerProfileResponseBody;
 
       expect(editBody.data?.upsertCustomerProfile).toMatchObject({
-        city: 'Rosario',
-        province: 'Santa Fe',
+        firstName: 'Janet',
+        locationSharingEnabled: true,
       });
 
       const rows = await prisma.customerProfile.findMany({
@@ -277,18 +268,24 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
     expect(body.errors?.[0]?.extensions?.code).toBe('UNAUTHENTICATED');
   });
 
-  it('rejects a missing required field (city) at the DTO validation layer', async () => {
+  // GOS-62b — `addressLine`/`city`/`province` were removed from the input.
+  // Sending any of them is now a GraphQL input-validation error ("field is
+  // not defined by input type").
+  it('rejects the removed addressLine/city/province input fields', async () => {
     const { email } = await seedEmailVerifiedUser();
     const sessionToken = await loginSessionToken(email);
-    const { city, ...missingCity } = VALID_INPUT;
-    void city;
 
-    const response = await upsertCustomerProfileRequest(
-      missingCity,
-      sessionToken,
-    );
-
-    expect(response.body).toHaveProperty('errors');
+    for (const removed of [
+      { addressLine: 'Av. Siempreviva 742' },
+      { city: 'CABA' },
+      { province: 'Buenos Aires' },
+    ]) {
+      const response = await upsertCustomerProfileRequest(
+        { ...VALID_INPUT, ...removed },
+        sessionToken,
+      );
+      expect(response.body).toHaveProperty('errors');
+    }
   });
 
   // GOS-70 — the free `photoUrl` string input was REMOVED; a photo is set
@@ -357,7 +354,7 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
       );
 
       const editResponse = await upsertCustomerProfileRequest(
-        { ...VALID_INPUT, city: 'Cordoba' },
+        { ...VALID_INPUT, firstName: 'Janet' },
         sessionToken,
       ).expect(200);
       const editBody = editResponse.body as UpsertCustomerProfileResponseBody;

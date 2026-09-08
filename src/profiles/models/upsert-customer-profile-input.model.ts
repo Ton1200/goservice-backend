@@ -35,20 +35,10 @@ export class UpsertCustomerProfileInput {
   @MaxLength(80)
   lastName!: string;
 
-  @Field()
-  @IsString()
-  @MinLength(1)
-  addressLine!: string;
-
-  @Field()
-  @IsString()
-  @MinLength(1)
-  city!: string;
-
-  @Field()
-  @IsString()
-  @MinLength(1)
-  province!: string;
+  // `addressLine`/`city`/`province` were removed (GOS-62b, 2026-09-08).
+  // Sending any of them now fails GraphQL input validation ("field is not
+  // defined by input type"). Structured address returns later as its own
+  // geocoded entity — see DEC-005.
 
   // Optional — defaults server-side to AR (Argentina) when omitted, so
   // the current single-market mobile app never has to send it. See

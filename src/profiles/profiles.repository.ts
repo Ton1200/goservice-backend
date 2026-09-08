@@ -435,9 +435,6 @@ export class ProfilesRepository {
     data: {
       firstName: string;
       lastName: string;
-      addressLine: string;
-      city: string;
-      province: string;
       country: CountryCode;
       photoUrl?: string;
       photoUploadRefId?: string;
@@ -516,9 +513,7 @@ export class ProfilesRepository {
       firstName: string;
       lastName: string;
       displayName?: string | null;
-      city: string;
       country: CountryCode;
-      serviceAreaDescription: string;
       bio: string;
       photoUrl?: string;
       photoUploadRefId?: string;

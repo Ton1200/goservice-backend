@@ -21,15 +21,9 @@ export class CustomerProfile {
   @Field()
   lastName!: string;
 
-  @Field()
-  addressLine!: string;
-
-  @Field()
-  city!: string;
-
-  @Field()
-  province!: string;
-
+  // `addressLine`/`city`/`province` were removed (GOS-62b, 2026-09-08) — a
+  // GOS-14/GOS-28 free-text placeholder; structured address returns later as
+  // its own geocoded entity (DEC-005). `country` stays (KYC routing).
   @Field(() => CountryCode)
   country!: CountryCode;
 
