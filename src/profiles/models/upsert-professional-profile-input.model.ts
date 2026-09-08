@@ -80,10 +80,9 @@ export class UpsertProfessionalProfileInput {
   @Type(() => UpsertProfessionalSpecializationInput)
   specializations!: UpsertProfessionalSpecializationInput[];
 
-  @Field()
-  @IsString()
-  @MinLength(1)
-  city!: string;
+  // `city` and `serviceAreaDescription` were removed (GOS-62b, 2026-09-08).
+  // Sending either now fails GraphQL input validation. Structured address
+  // returns later as its own geocoded entity — see DEC-005.
 
   // Optional — defaults server-side to AR (Argentina) when omitted, same
   // convention as `UpsertCustomerProfileInput.country`. `@IsEnum` (not
@@ -92,11 +91,6 @@ export class UpsertProfessionalProfileInput {
   @IsOptional()
   @IsEnum(CountryCode)
   country?: CountryCode;
-
-  @Field()
-  @IsString()
-  @MinLength(1)
-  serviceAreaDescription!: string;
 
   @Field()
   @IsString()

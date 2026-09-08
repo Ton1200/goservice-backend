@@ -116,9 +116,6 @@ describe('GraphQL /admin/graphql — admin manages a consumer profile photo (e2e
           create: {
             firstName: 'Jane',
             lastName: 'Doe',
-            addressLine: 'Calle 1',
-            city: 'CABA',
-            province: 'BA',
             country: CountryCode.AR,
           },
         },

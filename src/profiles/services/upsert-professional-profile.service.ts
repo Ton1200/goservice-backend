@@ -33,9 +33,9 @@ const DEFAULT_COUNTRY = CountryCode.AR;
  * main trade must always be identifiable, but the DTO layer has no way to
  * count across array items.
  *
- * Never logs `firstName`/`lastName`/`displayName`/`city`/`country`/
- * `serviceAreaDescription`/`bio`/`photoUrl`/`languages`/any specialization
- * `description` — only IDs, booleans, counts, and status/role values.
+ * Never logs `firstName`/`lastName`/`displayName`/`country`/`bio`/
+ * `photoUrl`/`languages`/any specialization `description` — only IDs,
+ * booleans, counts, and status/role values.
  *
  * `locationSharingEnabled` (GOS-62) is passed through exactly like
  * `photoUrl`/`languages` below — `undefined` when omitted, never coerced —
@@ -72,9 +72,7 @@ export class UpsertProfessionalProfileService {
         firstName: input.firstName,
         lastName: input.lastName,
         displayName: input.displayName,
-        city: input.city,
         country: input.country ?? DEFAULT_COUNTRY,
-        serviceAreaDescription: input.serviceAreaDescription,
         bio: input.bio,
         photoUrl,
         photoUploadRefId,

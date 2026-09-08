@@ -147,9 +147,6 @@ const USER_ACCOUNT_DETAIL_QUERY = `
       customerProfile {
         firstName
         lastName
-        addressLine
-        city
-        province
         country
         photoUrl
         locationSharingEnabled
@@ -159,9 +156,7 @@ const USER_ACCOUNT_DETAIL_QUERY = `
         lastName
         displayName
         bio
-        city
         country
-        serviceAreaDescription
         photoUrl
         languages
         verificationStatus
@@ -1118,9 +1113,10 @@ function buildAccountTabContent(detail) {
 }
 
 /** "Customer profile" tab — only rendered/added when `hasCustomerProfile`
- * is true (see `openUserDetailModal`). A "Address" sub-section groups
- * addressLine/city/province/country, visually separated per the human's
- * explicit requirement. */
+ * is true (see `openUserDetailModal`). A "Location" sub-section holds
+ * `country` (the structured addressLine/city/province fields were removed —
+ * GOS-62b, 2026-09-08; structured address returns later as its own geocoded
+ * entity, see DEC-005). */
 function buildCustomerProfileTabContent(profile, userId, onChanged) {
   const wrapper = document.createElement('div');
 
@@ -1146,20 +1142,18 @@ function buildCustomerProfileTabContent(profile, userId, onChanged) {
   );
 
   wrapper.appendChild(
-    buildSubsection('Address', [
-      buildField('Address', profile.addressLine),
-      buildField('City', profile.city),
-      buildField('Province', profile.province),
-      buildField('Country', profile.country),
-    ]),
+    buildSubsection('Location', [buildField('Country', profile.country)]),
   );
 
   return wrapper;
 }
 
 /** "Professional profile" tab — only rendered/added when
- * `hasProfessionalProfile` is true. "Service area" and "Specializations"
- * sub-sections, visually separated, per the human's explicit requirement. */
+ * `hasProfessionalProfile` is true. "Location" and "Specializations"
+ * sub-sections, visually separated. (The structured `city` and free-text
+ * `serviceAreaDescription` fields were removed — GOS-62b, 2026-09-08;
+ * structured address returns later as its own geocoded entity, see
+ * DEC-005.) */
 function buildProfessionalProfileTabContent(profile, userId, onChanged) {
   const wrapper = document.createElement('div');
 
@@ -1194,11 +1188,7 @@ function buildProfessionalProfileTabContent(profile, userId, onChanged) {
   );
 
   wrapper.appendChild(
-    buildSubsection('Service area', [
-      buildField('City', profile.city),
-      buildField('Country', profile.country),
-      buildField('Service area description', profile.serviceAreaDescription),
-    ]),
+    buildSubsection('Location', [buildField('Country', profile.country)]),
   );
 
   const specializationNodes = [];

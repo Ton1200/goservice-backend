@@ -62,9 +62,6 @@ const USER_ACCOUNT_DETAIL_QUERY = `
         id
         firstName
         lastName
-        addressLine
-        city
-        province
         country
         photoUrl
       }
@@ -74,9 +71,7 @@ const USER_ACCOUNT_DETAIL_QUERY = `
         lastName
         displayName
         bio
-        city
         country
-        serviceAreaDescription
         verificationStatus
         languages
         specializations {
@@ -621,9 +616,6 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
         userId: user.id,
         firstName: 'Jane',
         lastName: 'Doe',
-        addressLine: 'Av. Siempre Viva 742',
-        city: 'Buenos Aires',
-        province: 'CABA',
       },
     });
     await prisma.professionalProfile.create({
@@ -631,8 +623,6 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
         userId: user.id,
         firstName: 'Jane',
         lastName: 'Doe',
-        city: 'Buenos Aires',
-        serviceAreaDescription: 'CABA and surrounding areas',
         bio: 'Experienced professional.',
       },
     });
@@ -962,9 +952,6 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
           userId: id,
           firstName: 'Jane',
           lastName: 'Doe',
-          addressLine: 'Av. Siempre Viva 742',
-          city: 'Buenos Aires',
-          province: 'CABA',
         },
       });
       const professionalProfile = await prisma.professionalProfile.create({
@@ -973,8 +960,6 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
           firstName: 'Jane',
           lastName: 'Doe',
           displayName: 'Jane the Plumber',
-          city: 'Buenos Aires',
-          serviceAreaDescription: 'CABA and surrounding areas',
           bio: 'Experienced plumber.',
           languages: ['es', 'en'],
         },
@@ -1009,7 +994,6 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
             customerProfile: {
               firstName: string;
               lastName: string;
-              city: string;
             } | null;
             professionalProfile: {
               firstName: string;
@@ -1035,7 +1019,6 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
       expect(body.data.userAccountDetail.customerProfile).toMatchObject({
         firstName: 'Jane',
         lastName: 'Doe',
-        city: 'Buenos Aires',
       });
       expect(body.data.userAccountDetail.professionalProfile).toMatchObject({
         firstName: 'Jane',

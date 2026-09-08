@@ -154,9 +154,6 @@ function createCustomerProfile(
   data: {
     firstName: string;
     lastName: string;
-    addressLine: string;
-    city: string;
-    province: string;
     country: CountryCode;
   },
 ) {
@@ -172,9 +169,7 @@ async function createProfessionalProfile(
     // their own name and leave it unset; a couple set it to exercise the
     // now-nullable column.
     displayName?: string;
-    city: string;
     country: CountryCode;
-    serviceAreaDescription: string;
     bio: string;
     languages: string[];
     verificationStatus: ProfessionalVerificationStatus;
@@ -192,9 +187,7 @@ async function createProfessionalProfile(
       firstName: data.firstName,
       lastName: data.lastName,
       displayName: data.displayName ?? null,
-      city: data.city,
       country: data.country,
-      serviceAreaDescription: data.serviceAreaDescription,
       bio: data.bio,
       languages: data.languages,
       verificationStatus: data.verificationStatus,
@@ -483,9 +476,6 @@ async function main(): Promise<void> {
   const mariaProfile = await createCustomerProfile(maria.id, {
     firstName: 'María',
     lastName: 'Fernández',
-    addressLine: 'Av. Corrientes 1234',
-    city: 'Buenos Aires',
-    province: 'Buenos Aires',
     country: CountryCode.AR,
   });
 
@@ -501,9 +491,6 @@ async function main(): Promise<void> {
   const carlosProfile = await createCustomerProfile(carlos.id, {
     firstName: 'Carlos',
     lastName: 'Gómez',
-    addressLine: 'Bv. San Juan 567',
-    city: 'Córdoba',
-    province: 'Córdoba',
     country: CountryCode.AR,
   });
 
@@ -519,9 +506,6 @@ async function main(): Promise<void> {
   const lauraProfile = await createCustomerProfile(laura.id, {
     firstName: 'Laura',
     lastName: 'Ramírez',
-    addressLine: 'Calle 85 #12-34',
-    city: 'Bogotá',
-    province: 'Bogotá D.C.',
     country: CountryCode.CO,
   });
 
@@ -538,9 +522,7 @@ async function main(): Promise<void> {
   const pedroProfile = await createProfessionalProfile(pedro.id, {
     firstName: 'Pedro',
     lastName: 'Suárez',
-    city: 'Buenos Aires',
     country: CountryCode.AR,
-    serviceAreaDescription: 'Zona Capital Federal y GBA Norte',
     bio: 'Plomero matriculado, especializado en reparación e instalación de calefones y cañerías.',
     languages: ['es'],
     verificationStatus: ProfessionalVerificationStatus.UNVERIFIED,
@@ -566,9 +548,7 @@ async function main(): Promise<void> {
   const anaProfile = await createProfessionalProfile(ana.id, {
     firstName: 'Ana',
     lastName: 'López',
-    city: 'Rosario',
     country: CountryCode.AR,
-    serviceAreaDescription: 'Rosario y alrededores',
     bio: 'Electricista con 10 años de experiencia en instalaciones domiciliarias e industriales.',
     languages: ['es', 'en'],
     verificationStatus: ProfessionalVerificationStatus.VERIFIED,
@@ -600,9 +580,7 @@ async function main(): Promise<void> {
   const jorgeProfile = await createProfessionalProfile(jorge.id, {
     firstName: 'Jorge',
     lastName: 'Martínez',
-    city: 'Mendoza',
     country: CountryCode.AR,
-    serviceAreaDescription: 'Ciudad de Mendoza y Godoy Cruz',
     bio: 'Carpintero especializado en muebles a medida, con conocimientos básicos de plomería.',
     languages: ['es'],
     verificationStatus: ProfessionalVerificationStatus.PENDING_REVIEW,
@@ -634,9 +612,7 @@ async function main(): Promise<void> {
   const sofiaProfile = await createProfessionalProfile(sofia.id, {
     firstName: 'Sofía',
     lastName: 'Castro',
-    city: 'Medellín',
     country: CountryCode.CO,
-    serviceAreaDescription: 'Medellín y área metropolitana',
     bio: 'Pintora de interiores/exteriores, con experiencia adicional en diseño de jardines.',
     languages: ['es'],
     verificationStatus: ProfessionalVerificationStatus.UNVERIFIED,
@@ -669,9 +645,6 @@ async function main(): Promise<void> {
   await createCustomerProfile(diego.id, {
     firstName: 'Diego',
     lastName: 'Torres',
-    addressLine: 'Av. Rivadavia 4500',
-    city: 'Buenos Aires',
-    province: 'Buenos Aires',
     country: CountryCode.AR,
   });
   const diegoProProfile = await createProfessionalProfile(diego.id, {
@@ -679,9 +652,7 @@ async function main(): Promise<void> {
     lastName: 'Torres',
     // Optional "nombre comercial" — one of two demo professionals that set it.
     displayName: 'Diego Torres - Limpieza y Electricidad',
-    city: 'Buenos Aires',
     country: CountryCode.AR,
-    serviceAreaDescription: 'Zona Capital Federal y alrededores',
     bio: 'Ofrezco servicios de limpieza profesional y reparaciones eléctricas menores.',
     languages: ['es'],
     verificationStatus: ProfessionalVerificationStatus.UNVERIFIED,
@@ -713,9 +684,6 @@ async function main(): Promise<void> {
   await createCustomerProfile(valentina.id, {
     firstName: 'Valentina',
     lastName: 'Ríos',
-    addressLine: 'Cra 45 #26-85',
-    city: 'Bogotá',
-    province: 'Bogotá D.C.',
     country: CountryCode.CO,
   });
   const valentinaProProfile = await createProfessionalProfile(valentina.id, {
@@ -723,9 +691,7 @@ async function main(): Promise<void> {
     lastName: 'Ríos',
     // Optional "nombre comercial" — one of two demo professionals that set it.
     displayName: 'Valentina Ríos - Electrodomésticos',
-    city: 'Bogotá',
     country: CountryCode.CO,
-    serviceAreaDescription: 'Bogotá y zona metropolitana',
     bio: 'Técnica especializada en reparación de electrodomésticos, con retoques de pintura.',
     languages: ['es'],
     verificationStatus: ProfessionalVerificationStatus.VERIFIED,
@@ -771,9 +737,6 @@ async function main(): Promise<void> {
   await createCustomerProfile(pendiente.id, {
     firstName: 'Pendiente',
     lastName: 'Aprobación',
-    addressLine: 'Calle Falsa 123',
-    city: 'Rosario',
-    province: 'Santa Fe',
     country: CountryCode.AR,
   });
   // Has a CustomerProfile (as if they just submitted it) but the account is

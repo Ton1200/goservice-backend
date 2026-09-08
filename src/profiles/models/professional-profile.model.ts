@@ -40,14 +40,11 @@ export class ProfessionalProfile {
   @Field(() => [ProfessionalSpecialization])
   specializations!: ProfessionalSpecialization[];
 
-  @Field()
-  city!: string;
-
+  // `city` and `serviceAreaDescription` were removed (GOS-62b, 2026-09-08) —
+  // GOS-14/GOS-28 free-text placeholders; structured address returns later
+  // as its own geocoded entity (DEC-005). `country` stays (KYC routing).
   @Field(() => CountryCode)
   country!: CountryCode;
-
-  @Field()
-  serviceAreaDescription!: string;
 
   @Field()
   bio!: string;

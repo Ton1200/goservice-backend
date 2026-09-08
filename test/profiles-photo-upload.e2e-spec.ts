@@ -56,9 +56,6 @@ function customerInput(): Record<string, unknown> {
   return {
     firstName: 'Jane',
     lastName: 'Doe',
-    addressLine: 'Av. Siempreviva 742',
-    city: 'CABA',
-    province: 'Buenos Aires',
   };
 }
 
@@ -242,8 +239,6 @@ describe('GraphQL profile-photo upload flow (e2e, GOS-70)', () => {
         input: {
           firstName: 'Juan',
           lastName: 'Perez',
-          city: 'CABA',
-          serviceAreaDescription: 'CABA',
           bio: 'Trabajo en el rubro.',
           specializations: [
             {
@@ -289,7 +284,9 @@ describe('GraphQL profile-photo upload flow (e2e, GOS-70)', () => {
     );
     const second = await gql(
       UPSERT_CUSTOMER_PROFILE_MUTATION,
-      { input: { ...customerInput(), city: 'Cordoba', photoUploadRef: ref } },
+      {
+        input: { ...customerInput(), firstName: 'Janet', photoUploadRef: ref },
+      },
       token,
     );
     expect(

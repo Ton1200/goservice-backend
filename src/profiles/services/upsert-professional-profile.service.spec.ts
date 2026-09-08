@@ -19,9 +19,7 @@ describe('UpsertProfessionalProfileService', () => {
       firstName: 'Juan',
       lastName: 'Perez',
       displayName: null,
-      city: 'CABA',
       country: 'AR',
-      serviceAreaDescription: 'CABA y GBA Norte',
       bio: 'Trabajo en el rubro hace mas de una decada.',
       verificationStatus: 'UNVERIFIED',
       specializations: [
@@ -92,8 +90,6 @@ describe('UpsertProfessionalProfileService', () => {
           yearsOfExperience: 10,
         },
       ],
-      city: 'CABA',
-      serviceAreaDescription: 'CABA y GBA Norte',
       bio: 'Trabajo en el rubro hace mas de una decada.',
       ...overrides,
     };
@@ -497,7 +493,7 @@ describe('UpsertProfessionalProfileService', () => {
       const payload = JSON.stringify(call[0]);
       expect(payload).not.toContain('Juan');
       expect(payload).not.toContain('Perez');
-      expect(payload).not.toContain('GBA Norte');
+      expect(payload).not.toContain('decada');
       expect(payload).not.toContain('experiencia');
       expect(payload).not.toContain('secret-key');
       expect(payload).not.toContain('"es"');

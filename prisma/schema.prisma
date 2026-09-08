@@ -263,9 +263,13 @@ model CustomerProfile {
   // separate identity-level name and deliberately not reused here.
   firstName   String
   lastName    String
-  addressLine String
-  city        String
-  province    String
+  // Structured address (addressLine/city/province) was REMOVED
+  // (GOS-62b, 2026-09-08) — destructive migration
+  // `*_remove_structured_address_from_profiles`, no data retained (test
+  // data only). It was a GOS-14/GOS-28 free-text placeholder for a future
+  // location-aware Discovery; structured address will return as its own
+  // geocoded entity — see DEC-005 (still "Proposed"). `country` below stays
+  // (Identity Verification resolves the KYC provider by country).
   // Defaults to Argentina — GoService's initial market — anticipating the
   // documented later expansion to Latin America without a future migration.
   // A real CountryCode enum (not a bare String) since Identity Verification
@@ -318,7 +322,7 @@ model CustomerProfile {
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
   // where: { userId }.
-  @@index([country, city])
+  @@index([country])
 }
 
 model ProfessionalProfile {
@@ -339,14 +343,16 @@ model ProfessionalProfile {
   // => cleared. Was a required `String` before the name split — see
   // `*_split_profile_name_into_first_last/migration.sql`.
   displayName            String?
-  // Structured city/country (as opposed to only the free-text
-  // serviceAreaDescription below) anticipates Professional Discovery
-  // needing to filter/index by category+city without a future migration.
-  city                   String
+  // Structured `city` and the free-text `serviceAreaDescription` were both
+  // REMOVED (GOS-62b, 2026-09-08) — destructive migration
+  // `*_remove_structured_address_from_profiles`, no data retained (test data
+  // only). `city` was a GOS-14/GOS-28 placeholder for a future location-aware
+  // Discovery; structured address will return as its own geocoded entity —
+  // see DEC-005 (still "Proposed"). `country` below stays (Identity
+  // Verification resolves the KYC provider by country).
   // Real CountryCode enum — see CustomerProfile.country's own comment above
   // for the full rationale (retroactive String -> enum migration).
   country                CountryCode                    @default(AR)
-  serviceAreaDescription String
   bio                    String
   // Same caveat as CustomerProfile.photoUrl — a URL string, no real upload
   // flow/storage provider decided yet.
@@ -396,9 +402,9 @@ model ProfessionalProfile {
   proposedAppointments         Appointment[]                @relation("AppointmentProposedByProfessional")
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
-  // User" constraint. Indexes anticipate Discovery (country+city) and a
+  // User" constraint. Indexes anticipate Discovery (by country) and a
   // future Identity Verification queue (verificationStatus).
-  @@index([country, city])
+  @@index([country])
   @@index([verificationStatus])
 }
 
