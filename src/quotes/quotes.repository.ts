@@ -12,6 +12,11 @@ const QUOTE_INCLUDE = {
     },
   },
   engagement: true,
+  // GOS-72 — reference images attached via `addQuoteAttachment`. Stable,
+  // explicit order — see `QuoteAttachment.order`'s own schema comment for
+  // why this isn't just `createdAt`. Always included so `QuoteModel.attachments`
+  // resolves off the same query (no field resolver), same as `engagement`.
+  attachments: { orderBy: { order: 'asc' as const } },
 } satisfies Prisma.QuoteInclude;
 
 export type QuoteWithRelations = Prisma.QuoteGetPayload<{
@@ -63,18 +68,20 @@ const ADMIN_QUOTE_SELECT = {
       // (createdAt/updatedAt included), same "orphaned type made reachable"
       // pattern `ADMIN_SERVICE_REQUEST_SELECT` already establishes.
       category: true,
-      // Includes user.firstName/lastName (beyond the bare minimum needed to
-      // just "identify" the request) specifically so this can reuse
+      // The customer's real name (nombre / apellido) now lives on the
+      // `CustomerProfile` itself, so this can still reuse
       // `AdminServiceRequestCustomerModel` verbatim — same type, same
-      // name+email formatter fallback pattern the Service Requests grid's
-      // own customer column already uses — rather than inventing a
-      // near-duplicate, narrower admin-only type.
+      // name+email column the Service Requests grid's own customer column
+      // uses — rather than inventing a near-duplicate, narrower admin-only
+      // type. The owning `User`'s own `firstName`/`lastName` are a separate
+      // identity-level name and no longer read here.
       customerProfile: {
         select: {
           id: true,
-          displayName: true,
+          firstName: true,
+          lastName: true,
           user: {
-            select: { id: true, email: true, firstName: true, lastName: true },
+            select: { id: true, email: true },
           },
         },
       },
@@ -83,9 +90,12 @@ const ADMIN_QUOTE_SELECT = {
   professionalProfile: {
     select: {
       id: true,
+      firstName: true,
+      lastName: true,
+      // Optional "nombre comercial" — may be null.
       displayName: true,
       user: {
-        select: { id: true, email: true, firstName: true, lastName: true },
+        select: { id: true, email: true },
       },
     },
   },
@@ -104,6 +114,16 @@ const ADMIN_QUOTE_DETAIL_SELECT = {
   ...ADMIN_QUOTE_SELECT,
   engagement: {
     select: { id: true, status: true, createdAt: true },
+  },
+  // GOS-72 — the Quote's reference images, on the one-row detail view only
+  // (not the grid — same "cheap select for the grid, richer for detail"
+  // split as `engagement` above, mirroring
+  // `ADMIN_SERVICE_REQUEST_DETAIL_SELECT`'s own `attachments`). Reuses the
+  // consumer `QuoteAttachment` shape; gated by the existing `QUOTES_READ`,
+  // no new permission — an image inherits its owning Quote's access rules.
+  attachments: {
+    select: { id: true, url: true, createdAt: true },
+    orderBy: { order: 'asc' as const },
   },
 } satisfies Prisma.QuoteSelect;
 
@@ -143,6 +163,28 @@ export class QuotesRepository {
     message: string;
   }): Promise<QuoteWithRelations> {
     return this.prisma.quote.create({ data, include: QUOTE_INCLUDE });
+  }
+
+  /**
+   * GOS-72 — part of `AddQuoteAttachmentsService`'s transaction: inserts one
+   * `QuoteAttachment` per validated `MediaUploadRef`, in the client-submitted
+   * array order (see `QuoteAttachment.order`'s own schema comment). Runs
+   * inside the caller-owned `tx` — never opens its own transaction (same
+   * convention as `transitionToAcceptedIfSent`/`setNegotiatedPrice`). The
+   * caller marks the refs `CONSUMED` in the same `tx`.
+   */
+  createAttachments(
+    tx: Prisma.TransactionClient,
+    quoteId: string,
+    items: { url: string; order: number }[],
+  ): Promise<{ count: number }> {
+    return tx.quoteAttachment.createMany({
+      data: items.map((item) => ({
+        quoteId,
+        url: item.url,
+        order: item.order,
+      })),
+    });
   }
 
   findManyByServiceRequestId(

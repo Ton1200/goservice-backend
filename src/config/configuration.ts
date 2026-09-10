@@ -11,6 +11,8 @@
  * database password; see `.env.example`).
  */
 
+import { resolve } from 'path';
+
 export interface AppConfig {
   /** HTTP port the NestJS/GraphQL server listens on. */
   port: number;
@@ -138,12 +140,12 @@ export interface AppConfig {
    */
   adminPanelPath: string;
   /**
-   * GOS-38 — `LocalDevStorageAdapter` (`src/service-requests/adapters/`),
-   * the LOCAL DEV/TEST ONLY placeholder implementation of `StoragePort`
-   * (`src/service-requests/ports/storage.port.ts`). No real object-storage
-   * provider is decided yet (see infrastructure.md's open hosting-provider
-   * question) — this is only used to compose the local `uploadUrl`/
-   * `publicUrl` this adapter's own `UploadsController` serves.
+   * GOS-38 — `LocalDevStorageAdapter` (`src/storage/adapters/`), the LOCAL
+   * DEV/TEST ONLY placeholder implementation of `StoragePort`
+   * (`src/storage/ports/storage.port.ts`). No real object-storage provider
+   * is decided yet (see infrastructure.md's open hosting-provider question)
+   * — this is only used to compose the local `uploadUrl`/`publicUrl` this
+   * adapter's own `UploadsController` serves.
    */
   storageLocal: {
     baseUrl: string;
@@ -157,6 +159,17 @@ export interface AppConfig {
      * running multiple processes that must agree on the same signature.
      */
     signingSecret: string | undefined;
+    /**
+     * GOS-70 — absolute filesystem directory `LocalDevStorageAdapter`
+     * writes uploaded files to. Read from `STORAGE_LOCAL_UPLOADS_DIR` and
+     * resolved against `process.cwd()`, so a relative value like
+     * `./var/uploads` (the dev default) keeps working while a real
+     * deployment can point it at an absolute path on a dedicated volume.
+     * `StorageUploadsDirInitializer` (in `StorageModule`) verifies this
+     * path exists and is writable at boot and fails startup loudly if not
+     * — it is never allowed to surface only on a user's first upload.
+     */
+    uploadsDir: string;
   };
   /**
    * Roles/admin-user management follow-up (2026-08-20) —
@@ -323,6 +336,13 @@ export default (): AppConfig => {
     storageLocal: {
       baseUrl: process.env.STORAGE_LOCAL_BASE_URL ?? 'http://localhost:3000',
       signingSecret: process.env.STORAGE_LOCAL_SIGNING_SECRET,
+      // `resolve(cwd, absolutePath)` returns the absolute path unchanged, so
+      // an operator may pass either `./var/uploads` (dev default) or an
+      // absolute `/srv/goservice/uploads`.
+      uploadsDir: resolve(
+        process.cwd(),
+        process.env.STORAGE_LOCAL_UPLOADS_DIR ?? './var/uploads',
+      ),
     },
     adminInvite: {
       ttlHours: parsePort(process.env.ADMIN_INVITE_TTL_HOURS, 72),

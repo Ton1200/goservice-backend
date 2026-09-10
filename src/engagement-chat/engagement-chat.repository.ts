@@ -61,6 +61,9 @@ export class EngagementChatRepository {
       senderCustomerProfileId: string | null;
       senderProfessionalProfileId: string | null;
       content: string;
+      // GOS-72 — the consumed `MediaUploadRef.fileUrl`, or `null` when no
+      // coordination image was attached.
+      imageUrl: string | null;
     },
   ): Promise<EngagementChatMessage> {
     return tx.engagementChatMessage.create({ data });

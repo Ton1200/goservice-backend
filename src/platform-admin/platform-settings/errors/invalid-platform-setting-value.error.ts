@@ -5,6 +5,7 @@ const REQUIRED_CODE = 'PLATFORM_SETTING_VALUE_REQUIRED';
 const INVALID_SHAPE_CODE = 'PLATFORM_SETTING_INVALID_VALUE';
 const ENCRYPTED_CANNOT_BE_PUBLIC_CODE =
   'PLATFORM_SETTING_ENCRYPTED_CANNOT_BE_PUBLIC';
+const KEY_RESERVED_CODE = 'PLATFORM_SETTING_KEY_RESERVED';
 
 /**
  * Thrown by `SetPlatformSettingService.assertValueParses` when `input.value`
@@ -48,5 +49,19 @@ export function platformSettingEncryptedCannotBePublic(): DomainException {
   return new DomainException(
     ENCRYPTED_CANNOT_BE_PUBLIC_CODE,
     'An encrypted (secret) setting can never also be marked public — isEncrypted and isPublic cannot both be true.',
+  );
+}
+
+/**
+ * GOS-70 — thrown by `SetPlatformSettingService` when the submitted `key`
+ * is under the reserved `storage.` prefix. Those rows are owned by the
+ * dedicated `updateStorageSettings` mutation (permission
+ * `STORAGE_SETTINGS_WRITE`), so the generic settings surface must not
+ * write them.
+ */
+export function platformSettingKeyReserved(): DomainException {
+  return new DomainException(
+    KEY_RESERVED_CODE,
+    'This setting key is managed by a dedicated admin surface (updateStorageSettings) and cannot be changed here.',
   );
 }

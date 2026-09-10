@@ -15,10 +15,9 @@ function toCustomerModel(
   const model = new AdminServiceRequestCustomerModel();
   model.id = customerProfile.id;
   model.userId = customerProfile.user.id;
-  model.displayName = customerProfile.displayName;
   model.email = customerProfile.user.email;
-  model.firstName = customerProfile.user.firstName;
-  model.lastName = customerProfile.user.lastName;
+  model.firstName = customerProfile.firstName;
+  model.lastName = customerProfile.lastName;
   return model;
 }
 
@@ -40,10 +39,10 @@ function toProfessionalModel(
   const model = new AdminQuoteProfessionalModel();
   model.id = professionalProfile.id;
   model.userId = professionalProfile.user.id;
-  model.displayName = professionalProfile.displayName;
   model.email = professionalProfile.user.email;
-  model.firstName = professionalProfile.user.firstName;
-  model.lastName = professionalProfile.user.lastName;
+  model.firstName = professionalProfile.firstName;
+  model.lastName = professionalProfile.lastName;
+  model.displayName = professionalProfile.displayName;
   return model;
 }
 
@@ -98,6 +97,14 @@ export function toAdminQuoteDetailModel(
   model.professional = toProfessionalModel(row.professionalProfile);
   model.negotiationMessageCount = row._count.negotiationMessages;
   model.engagement = toEngagementModel(row.engagement);
+  // GOS-72 — `ADMIN_QUOTE_DETAIL_SELECT.attachments` already selects exactly
+  // `{ id, url, createdAt }` in stable `order`, structurally the consumer
+  // `QuoteAttachmentModel` shape.
+  model.attachments = row.attachments.map((attachment) => ({
+    id: attachment.id,
+    url: attachment.url,
+    createdAt: attachment.createdAt,
+  }));
   model.createdAt = row.createdAt;
   model.updatedAt = row.updatedAt;
   return model;

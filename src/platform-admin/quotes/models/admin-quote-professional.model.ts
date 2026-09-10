@@ -23,14 +23,17 @@ export class AdminQuoteProfessionalModel {
   userId!: string;
 
   @Field()
-  displayName!: string;
-
-  @Field()
   email!: string;
 
-  @Field(() => String, { nullable: true })
-  firstName!: string | null;
+  // The professional's real name (nombre / apellido), sourced from the
+  // `ProfessionalProfile` itself — both always present.
+  @Field()
+  firstName!: string;
 
+  @Field()
+  lastName!: string;
+
+  // Optional public "nombre comercial" — may be `null`.
   @Field(() => String, { nullable: true })
-  lastName!: string | null;
+  displayName?: string | null;
 }

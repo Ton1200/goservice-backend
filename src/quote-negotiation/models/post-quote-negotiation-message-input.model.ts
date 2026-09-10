@@ -1,8 +1,9 @@
-import { Field, InputType, Int } from '@nestjs/graphql';
+import { Field, ID, InputType, Int } from '@nestjs/graphql';
 import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -36,4 +37,15 @@ export class PostQuoteNegotiationMessageInput {
   @IsOptional()
   @IsInt()
   proposedPrice?: number;
+
+  // GOS-72 — optional single reference image on this message. The opaque
+  // `MediaUploadRef.id` from
+  // `requestMediaUploadUrl(intendedUse: QUOTE_NEGOTIATION_MESSAGE_IMAGE)`,
+  // resubmitted unmodified and consumed (validated + marked `CONSUMED`) in
+  // the same transaction as the message. Independent of `proposedPrice` — a
+  // message may carry an image, a price proposal, both, or neither.
+  @Field(() => ID, { nullable: true })
+  @IsOptional()
+  @IsUUID('4')
+  mediaUploadRefId?: string;
 }

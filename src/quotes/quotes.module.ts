@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { EngagementsModule } from '../engagements/engagements.module';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
+import { MediaUploadsRepository } from '../media-uploads/media-uploads.repository';
 import { ProfilesModule } from '../profiles/profiles.module';
 import { QuoteNegotiationRepository } from '../quote-negotiation/quote-negotiation.repository';
 import { ServiceRequestsRepository } from '../service-requests/service-requests.repository';
@@ -10,6 +11,7 @@ import { QuoteFieldResolver } from './quote-field.resolver';
 import { QuotesRepository } from './quotes.repository';
 import { QuotesResolver } from './quotes.resolver';
 import { AcceptQuoteService } from './services/accept-quote.service';
+import { AddQuoteAttachmentsService } from './services/add-quote-attachments.service';
 import { ListMyQuotesService } from './services/list-my-quotes.service';
 import { ListQuotesForServiceRequestService } from './services/list-quotes-for-service-request.service';
 import { RejectQuoteService } from './services/reject-quote.service';
@@ -47,6 +49,12 @@ import { WithdrawQuoteService } from './services/withdraw-quote.service';
  * (it, in turn, already reuses `QuotesRepository`/`ServiceRequestsRepository`
  * this same concrete-provider way — see `quote-negotiation.module.ts`'s own
  * comment — so importing it here would form a two-way module cycle).
+ *
+ * `MediaUploadsRepository` (GOS-72) is reused the SAME concrete-provider way
+ * — `AddQuoteAttachmentsService` validates + consumes the submitted
+ * `MediaUploadRef`s in the same transaction as the `QuoteAttachment` rows;
+ * `quotes/` never imports `MediaUploadsModule` (which carries
+ * `MediaUploadsResolver`).
  */
 @Module({
   imports: [
@@ -62,12 +70,14 @@ import { WithdrawQuoteService } from './services/withdraw-quote.service';
     QuotesRepository,
     ServiceRequestsRepository,
     QuoteNegotiationRepository,
+    MediaUploadsRepository,
     SubmitQuoteService,
     WithdrawQuoteService,
     ListQuotesForServiceRequestService,
     ListMyQuotesService,
     AcceptQuoteService,
     RejectQuoteService,
+    AddQuoteAttachmentsService,
   ],
   exports: [QuotesRepository],
 })

@@ -21,14 +21,14 @@ const LOGIN_MUTATION = `
 
 const MY_CUSTOMER_PROFILE_QUERY = `
   query MyCustomerProfile {
-    myCustomerProfile { id displayName addressLine city province country photoUrl locationSharingEnabled }
+    myCustomerProfile { id firstName lastName country photoUrl locationSharingEnabled }
   }
 `;
 
 const UPSERT_CUSTOMER_PROFILE_MUTATION = `
   mutation UpsertCustomerProfile($input: UpsertCustomerProfileInput!) {
     upsertCustomerProfile(input: $input) {
-      id displayName addressLine city province country photoUrl locationSharingEnabled
+      id firstName lastName country photoUrl locationSharingEnabled
     }
   }
 `;
@@ -46,10 +46,8 @@ interface MyCustomerProfileResponseBody {
   data: {
     myCustomerProfile: {
       id: string;
-      displayName: string;
-      addressLine: string;
-      city: string;
-      province: string;
+      firstName: string;
+      lastName: string;
       country: string;
       photoUrl: string | null;
       locationSharingEnabled: boolean;
@@ -62,10 +60,8 @@ interface UpsertCustomerProfileResponseBody {
   data: {
     upsertCustomerProfile: {
       id: string;
-      displayName: string;
-      addressLine: string;
-      city: string;
-      province: string;
+      firstName: string;
+      lastName: string;
       country: string;
       photoUrl: string | null;
       locationSharingEnabled: boolean;
@@ -175,10 +171,8 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
   }
 
   const VALID_INPUT = {
-    displayName: 'Jane Doe',
-    addressLine: 'Av. Siempreviva 742',
-    city: 'CABA',
-    province: 'Buenos Aires',
+    firstName: 'Jane',
+    lastName: 'Doe',
   };
 
   it('returns null before any CustomerProfile has been created', async () => {
@@ -230,14 +224,14 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
       expect(firstUser?.accountStatus).toBe(UserAccountStatus.PENDING_APPROVAL);
 
       const editResponse = await upsertCustomerProfileRequest(
-        { ...VALID_INPUT, city: 'Rosario', province: 'Santa Fe' },
+        { ...VALID_INPUT, firstName: 'Janet', locationSharingEnabled: true },
         sessionToken,
       ).expect(200);
       const editBody = editResponse.body as UpsertCustomerProfileResponseBody;
 
       expect(editBody.data?.upsertCustomerProfile).toMatchObject({
-        city: 'Rosario',
-        province: 'Santa Fe',
+        firstName: 'Janet',
+        locationSharingEnabled: true,
       });
 
       const rows = await prisma.customerProfile.findMany({
@@ -274,65 +268,53 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
     expect(body.errors?.[0]?.extensions?.code).toBe('UNAUTHENTICATED');
   });
 
-  it('rejects a missing required field (city) at the DTO validation layer', async () => {
+  // GOS-62b — `addressLine`/`city`/`province` were removed from the input.
+  // Sending any of them is now a GraphQL input-validation error ("field is
+  // not defined by input type").
+  it('rejects the removed addressLine/city/province input fields', async () => {
     const { email } = await seedEmailVerifiedUser();
     const sessionToken = await loginSessionToken(email);
-    const { city, ...missingCity } = VALID_INPUT;
-    void city;
+
+    for (const removed of [
+      { addressLine: 'Av. Siempreviva 742' },
+      { city: 'CABA' },
+      { province: 'Buenos Aires' },
+    ]) {
+      const response = await upsertCustomerProfileRequest(
+        { ...VALID_INPUT, ...removed },
+        sessionToken,
+      );
+      expect(response.body).toHaveProperty('errors');
+    }
+  });
+
+  // GOS-70 — the free `photoUrl` string input was REMOVED; a photo is set
+  // only via `photoUploadRef` (full round-trip covered in
+  // `test/profiles-photo-upload.e2e-spec.ts`). Here we just assert the
+  // removed field is rejected and that `photoUrl` defaults to null.
+  it('rejects a stray photoUrl input field (removed in GOS-70) via forbidNonWhitelisted', async () => {
+    const { email } = await seedEmailVerifiedUser();
+    const sessionToken = await loginSessionToken(email);
 
     const response = await upsertCustomerProfileRequest(
-      missingCity,
+      { ...VALID_INPUT, photoUrl: 'https://cdn.example.com/photo.jpg' },
       sessionToken,
     );
 
     expect(response.body).toHaveProperty('errors');
   });
 
-  it('accepts an optional photoUrl and returns it unchanged', async () => {
+  it('photoUrl is null on a freshly created profile (no photoUploadRef)', async () => {
     const { email } = await seedEmailVerifiedUser();
     const sessionToken = await loginSessionToken(email);
 
     const response = await upsertCustomerProfileRequest(
-      { ...VALID_INPUT, photoUrl: 'https://cdn.example.com/photo.jpg' },
+      { ...VALID_INPUT },
       sessionToken,
     ).expect(200);
     const body = response.body as UpsertCustomerProfileResponseBody;
 
-    expect(body.data?.upsertCustomerProfile.photoUrl).toBe(
-      'https://cdn.example.com/photo.jpg',
-    );
-  });
-
-  it('rejects a malformed photoUrl at the DTO validation layer', async () => {
-    const { email } = await seedEmailVerifiedUser();
-    const sessionToken = await loginSessionToken(email);
-
-    const response = await upsertCustomerProfileRequest(
-      { ...VALID_INPUT, photoUrl: 'not-a-url' },
-      sessionToken,
-    );
-
-    expect(response.body).toHaveProperty('errors');
-  });
-
-  it('leaves photoUrl unchanged on an edit that omits it (not a wipe value)', async () => {
-    const { email } = await seedEmailVerifiedUser();
-    const sessionToken = await loginSessionToken(email);
-
-    await upsertCustomerProfileRequest(
-      { ...VALID_INPUT, photoUrl: 'https://cdn.example.com/photo.jpg' },
-      sessionToken,
-    ).expect(200);
-
-    const editResponse = await upsertCustomerProfileRequest(
-      { ...VALID_INPUT, city: 'Cordoba' },
-      sessionToken,
-    ).expect(200);
-    const editBody = editResponse.body as UpsertCustomerProfileResponseBody;
-
-    expect(editBody.data?.upsertCustomerProfile.photoUrl).toBe(
-      'https://cdn.example.com/photo.jpg',
-    );
+    expect(body.data?.upsertCustomerProfile.photoUrl).toBeNull();
   });
 
   // GOS-62 — location-sharing consent flag: opt-in, default OFF, boolean
@@ -372,7 +354,7 @@ describe('GraphQL myCustomerProfile / upsertCustomerProfile (e2e)', () => {
       );
 
       const editResponse = await upsertCustomerProfileRequest(
-        { ...VALID_INPUT, city: 'Cordoba' },
+        { ...VALID_INPUT, firstName: 'Janet' },
         sessionToken,
       ).expect(200);
       const editBody = editResponse.body as UpsertCustomerProfileResponseBody;

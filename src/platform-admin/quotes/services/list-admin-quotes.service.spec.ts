@@ -23,23 +23,22 @@ describe('ListAdminQuotesService', () => {
       },
       customerProfile: {
         id: 'customer-profile-1',
-        displayName: 'Juan Perez',
+        firstName: 'Juan',
+        lastName: 'Perez',
         user: {
           id: 'user-1',
           email: 'juan@example.com',
-          firstName: 'Juan',
-          lastName: 'Perez',
         },
       },
     },
     professionalProfile: {
       id: 'professional-profile-1',
-      displayName: 'Carlos Gomez',
+      firstName: 'Carlos',
+      lastName: 'Gomez',
+      displayName: null,
       user: {
         id: 'user-2',
         email: 'carlos@example.com',
-        firstName: 'Carlos',
-        lastName: 'Gomez',
       },
     },
   };

@@ -36,7 +36,7 @@ const PUBLISH_SERVICE_REQUEST_MUTATION = `
 const QUOTE_FIELDS = `
   id serviceRequestId professionalProfileId price message status
   createdAt updatedAt
-  professionalProfile { id displayName }
+  professionalProfile { id firstName lastName displayName }
   engagement { id status }
 `;
 
@@ -98,7 +98,12 @@ interface QuotePayload {
   status: string;
   createdAt: string;
   updatedAt: string;
-  professionalProfile: { id: string; displayName: string };
+  professionalProfile: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    displayName: string | null;
+  };
   engagement: { id: string; status: string } | null;
 }
 
@@ -214,10 +219,8 @@ describe('GraphQL Quote/Engagement (GOS-41, e2e)', () => {
     const customerProfile = await prisma.customerProfile.create({
       data: {
         userId,
-        displayName: 'Cliente de Prueba',
-        addressLine: 'Calle Falsa 123',
-        city: 'CABA',
-        province: 'Buenos Aires',
+        firstName: 'Cliente',
+        lastName: 'de Prueba',
         country: CountryCode.AR,
       },
     });
@@ -231,10 +234,9 @@ describe('GraphQL Quote/Engagement (GOS-41, e2e)', () => {
     const professionalProfile = await prisma.professionalProfile.create({
       data: {
         userId,
-        displayName: 'Profesional de Prueba',
-        city: 'CABA',
+        firstName: 'Profesional',
+        lastName: 'de Prueba',
         country: CountryCode.AR,
-        serviceAreaDescription: 'CABA y GBA',
         bio: 'Con experiencia.',
         verificationStatus: ProfessionalVerificationStatus.UNVERIFIED,
       },

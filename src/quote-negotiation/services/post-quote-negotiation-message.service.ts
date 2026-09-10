@@ -1,5 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { QuoteNegotiationParty, QuoteStatus } from '@prisma/client';
+import {
+  MediaUploadRefIntendedUse,
+  QuoteNegotiationParty,
+  QuoteStatus,
+} from '@prisma/client';
+import { invalidMediaUploadRef } from '../../media-uploads/errors/invalid-media-upload-ref.error';
+import { MediaUploadsRepository } from '../../media-uploads/media-uploads.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import { QuoteNegotiationAccessService } from '../quote-negotiation-access.service';
@@ -43,6 +49,7 @@ export class PostQuoteNegotiationMessageService {
     private readonly accessService: QuoteNegotiationAccessService,
     private readonly platformSettingPort: PlatformSettingPort,
     private readonly quoteNegotiationRepository: QuoteNegotiationRepository,
+    private readonly mediaUploadsRepository: MediaUploadsRepository,
   ) {}
 
   async postMessage(
@@ -68,6 +75,22 @@ export class PostQuoteNegotiationMessageService {
       }
     }
 
+    // GOS-72 — resolve the optional image ref BEFORE the transaction (same
+    // read-then-consume ordering as GOS-38). `imageUrl` is `null` unless a
+    // usable ref was supplied.
+    let imageUrl: string | null = null;
+    if (input.mediaUploadRefId) {
+      const [ref] = await this.mediaUploadsRepository.findUsablePendingRefs(
+        userId,
+        [input.mediaUploadRefId],
+        MediaUploadRefIntendedUse.QUOTE_NEGOTIATION_MESSAGE_IMAGE,
+      );
+      if (!ref) {
+        throw invalidMediaUploadRef();
+      }
+      imageUrl = ref.fileUrl;
+    }
+
     const created = await this.prisma.$transaction(async (tx) => {
       const message = await this.quoteNegotiationRepository.createMessage(tx, {
         quoteId,
@@ -75,7 +98,19 @@ export class PostQuoteNegotiationMessageService {
         authorCustomerProfileId: party.customerProfileId,
         authorProfessionalProfileId: party.professionalProfileId,
         message: input.message,
+        imageUrl,
       });
+
+      if (input.mediaUploadRefId) {
+        const { count } = await this.mediaUploadsRepository.markConsumed(tx, [
+          input.mediaUploadRefId,
+        ]);
+        if (count !== 1) {
+          // A concurrent consume spent the ref between the read above and
+          // this write — roll the whole transaction back.
+          throw invalidMediaUploadRef();
+        }
+      }
 
       if (!hasProposedPrice) {
         return { ...message, priceProposal: null };

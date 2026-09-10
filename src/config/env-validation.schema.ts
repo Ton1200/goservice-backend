@@ -170,6 +170,17 @@ export const envValidationSchema = Joi.object({
   STORAGE_LOCAL_BASE_URL: Joi.string().uri().optional(),
   STORAGE_LOCAL_SIGNING_SECRET: Joi.string().min(1).optional(),
 
+  // GOS-70 — filesystem directory `LocalDevStorageAdapter` writes uploaded
+  // files to. The `./var/uploads` default is safe for LOCAL DEV ONLY (it
+  // resolves under the backend's working dir, is git-ignored, and is what
+  // every prior environment implicitly used via the old hardcoded
+  // `join(process.cwd(), 'var', 'uploads')`). A real deployment MUST set
+  // this to a writable path on its own dedicated volume — there is no
+  // implicit production default. `StorageUploadsDirInitializer`
+  // (`src/storage/`) verifies the resolved path is writable at boot and
+  // fails startup loudly (naming this variable) if it is not.
+  STORAGE_LOCAL_UPLOADS_DIR: Joi.string().min(1).default('./var/uploads'),
+
   // Roles/admin-user management follow-up (2026-08-20) — `AdminInvite`
   // issuance policy. Same shape/defaults precedent as the
   // EMAIL_VERIFICATION_*/PASSWORD_RESET_* vars above.

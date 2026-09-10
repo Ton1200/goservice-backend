@@ -73,10 +73,8 @@ function uniqueEmail(): string {
 }
 
 const CUSTOMER_INPUT = {
-  displayName: 'Jane Doe',
-  addressLine: 'Av. Siempreviva 742',
-  city: 'CABA',
-  province: 'Buenos Aires',
+  firstName: 'Jane',
+  lastName: 'Doe',
   country: 'AR',
 };
 
@@ -442,8 +440,6 @@ describe('Identity Verification (e2e)', () => {
           variables: {
             input: {
               ...CUSTOMER_INPUT,
-              city: 'Bogotá',
-              province: 'Bogotá D.C.',
               country: 'CO',
             },
           },

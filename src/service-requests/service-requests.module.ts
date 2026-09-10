@@ -38,7 +38,7 @@ import { ServiceRequestsResolver } from './service-requests.resolver';
  *
  * `StoragePort`/`LocalDevStorageAdapter`/`UploadsController` moved OUT of
  * this module (uploadable-logo follow-up, 2026-08-25) into the new
- * `@Global()` `StorageModule` (`src/service-requests/storage.module.ts`,
+ * `@Global()` `StorageModule` (`src/storage/storage.module.ts`,
  * imported once at `AppModule` root, mirroring `PrismaModule`'s own
  * pattern) — see that module's own header comment for WHY this had to
  * become a single, process-wide singleton once `PlatformAdminModule` also

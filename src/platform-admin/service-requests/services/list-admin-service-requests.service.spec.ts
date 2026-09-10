@@ -20,12 +20,11 @@ describe('ListAdminServiceRequestsService', () => {
     },
     customerProfile: {
       id: 'customer-profile-1',
-      displayName: 'Juan Perez',
+      firstName: 'Juan',
+      lastName: 'Perez',
       user: {
         id: 'user-1',
         email: 'juan@example.com',
-        firstName: 'Juan',
-        lastName: 'Perez',
       },
     },
     _count: { attachments: 2 },
@@ -59,7 +58,8 @@ describe('ListAdminServiceRequestsService', () => {
       customer: {
         id: 'customer-profile-1',
         userId: 'user-1',
-        displayName: 'Juan Perez',
+        firstName: 'Juan',
+        lastName: 'Perez',
         email: 'juan@example.com',
       },
     });

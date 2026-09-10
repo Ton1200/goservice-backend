@@ -21,14 +21,14 @@ export class AdminServiceRequestCustomerModel {
   userId!: string;
 
   @Field()
-  displayName!: string;
-
-  @Field()
   email!: string;
 
-  @Field(() => String, { nullable: true })
-  firstName!: string | null;
+  // The customer's real name (nombre / apellido), sourced from the
+  // `CustomerProfile` itself — both always present now that they replaced
+  // the required `displayName` column.
+  @Field()
+  firstName!: string;
 
-  @Field(() => String, { nullable: true })
-  lastName!: string | null;
+  @Field()
+  lastName!: string;
 }

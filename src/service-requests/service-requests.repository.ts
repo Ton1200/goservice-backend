@@ -55,9 +55,14 @@ const ADMIN_SERVICE_REQUEST_SELECT = {
   customerProfile: {
     select: {
       id: true,
-      displayName: true,
+      // Person's real name now lives on the profile itself (nombre /
+      // apellido), split out of the former single `displayName`. The
+      // owning `User`'s own `firstName`/`lastName` are a separate
+      // identity-level name and no longer read here.
+      firstName: true,
+      lastName: true,
       user: {
-        select: { id: true, email: true, firstName: true, lastName: true },
+        select: { id: true, email: true },
       },
     },
   },
@@ -94,6 +99,9 @@ const ADMIN_SERVICE_REQUEST_DETAIL_SELECT = {
       createdAt: true,
       professionalProfile: {
         select: {
+          firstName: true,
+          lastName: true,
+          // Optional "nombre comercial" — may be null.
           displayName: true,
           user: { select: { email: true } },
         },

@@ -60,20 +60,18 @@ const USER_ACCOUNT_DETAIL_QUERY = `
       hasProfessionalProfile
       customerProfile {
         id
-        displayName
-        addressLine
-        city
-        province
+        firstName
+        lastName
         country
         photoUrl
       }
       professionalProfile {
         id
+        firstName
+        lastName
         displayName
         bio
-        city
         country
-        serviceAreaDescription
         verificationStatus
         languages
         specializations {
@@ -616,18 +614,15 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
     await prisma.customerProfile.create({
       data: {
         userId: user.id,
-        displayName: 'Jane Doe',
-        addressLine: 'Av. Siempre Viva 742',
-        city: 'Buenos Aires',
-        province: 'CABA',
+        firstName: 'Jane',
+        lastName: 'Doe',
       },
     });
     await prisma.professionalProfile.create({
       data: {
         userId: user.id,
-        displayName: 'Jane Doe',
-        city: 'Buenos Aires',
-        serviceAreaDescription: 'CABA and surrounding areas',
+        firstName: 'Jane',
+        lastName: 'Doe',
         bio: 'Experienced professional.',
       },
     });
@@ -955,18 +950,16 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
       await prisma.customerProfile.create({
         data: {
           userId: id,
-          displayName: 'Jane Doe',
-          addressLine: 'Av. Siempre Viva 742',
-          city: 'Buenos Aires',
-          province: 'CABA',
+          firstName: 'Jane',
+          lastName: 'Doe',
         },
       });
       const professionalProfile = await prisma.professionalProfile.create({
         data: {
           userId: id,
+          firstName: 'Jane',
+          lastName: 'Doe',
           displayName: 'Jane the Plumber',
-          city: 'Buenos Aires',
-          serviceAreaDescription: 'CABA and surrounding areas',
           bio: 'Experienced plumber.',
           languages: ['es', 'en'],
         },
@@ -998,9 +991,14 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
           userAccountDetail: {
             hasCustomerProfile: boolean;
             hasProfessionalProfile: boolean;
-            customerProfile: { displayName: string; city: string } | null;
+            customerProfile: {
+              firstName: string;
+              lastName: string;
+            } | null;
             professionalProfile: {
-              displayName: string;
+              firstName: string;
+              lastName: string;
+              displayName: string | null;
               languages: string[];
               specializations: {
                 role: string;
@@ -1019,10 +1017,12 @@ describe('GraphQL /admin/graphql — userAccounts/updateUserAccount/forceUserAcc
       expect(body.data.userAccountDetail.hasCustomerProfile).toBe(true);
       expect(body.data.userAccountDetail.hasProfessionalProfile).toBe(true);
       expect(body.data.userAccountDetail.customerProfile).toMatchObject({
-        displayName: 'Jane Doe',
-        city: 'Buenos Aires',
+        firstName: 'Jane',
+        lastName: 'Doe',
       });
       expect(body.data.userAccountDetail.professionalProfile).toMatchObject({
+        firstName: 'Jane',
+        lastName: 'Doe',
         displayName: 'Jane the Plumber',
         languages: ['es', 'en'],
       });

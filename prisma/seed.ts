@@ -342,6 +342,36 @@ const PLATFORM_SETTINGS: {
     value: 'true',
     isPublic: false,
   },
+  // GOS-70 — storage / image-processing knobs. Managed from the admin panel
+  // by the DEDICATED `updateStorageSettings` mutation (permission
+  // `STORAGE_SETTINGS_WRITE`), NOT the generic `setPlatformSetting`, which
+  // rejects any `storage.*` key. `isPublic: false` — internal knobs; the
+  // mobile app just calls `requestProfilePhotoUploadUrl` and handles
+  // `PROFILE_PHOTO_UPLOAD_DISABLED` like any other domain error. Seeded so
+  // they show up in the panel with a real value from day one.
+  {
+    key: 'storage.profile-photo-upload.enabled',
+    description:
+      'Enables the profile-photo upload flow (requestProfilePhotoUploadUrl + photoUploadRef). Does NOT affect ServiceRequest attachments or the email logo.',
+    value: 'true',
+    isPublic: false,
+  },
+  {
+    key: 'storage.image-processing.max-dimension-px',
+    description:
+      'Longest-edge cap (px) applied to every image processed by the shared storage layer. One of 512, 1024, 2048.',
+    value: '1024',
+    isPublic: false,
+    valueType: 'NUMBER',
+  },
+  {
+    key: 'storage.image-processing.webp-quality',
+    description:
+      'WebP encode quality (1-100) for images processed by the shared storage layer.',
+    value: '80',
+    isPublic: false,
+    valueType: 'NUMBER',
+  },
 ];
 
 // Editable transactional-email templates follow-up (2026-08-24) — seeds the

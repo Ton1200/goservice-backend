@@ -132,6 +132,16 @@ const PERMISSION_GROUPS = [
     read: 'EMAIL_TEMPLATES_READ',
     write: 'EMAIL_TEMPLATES_WRITE',
   },
+  // GOS-70 — storage / image-processing settings (Settings > Storage tab).
+  // Same "keep in sync by hand" caveat as every row above; an
+  // already-bootstrapped environment must grant STORAGE_SETTINGS_READ/WRITE
+  // to a role from THIS screen (the bootstrap script never resets an
+  // existing role's permissions).
+  {
+    label: 'Storage',
+    read: 'STORAGE_SETTINGS_READ',
+    write: 'STORAGE_SETTINGS_WRITE',
+  },
 ];
 
 const ACTION_COLUMNS = [

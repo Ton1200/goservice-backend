@@ -46,17 +46,14 @@ function uniqueCategoryName(): string {
 }
 
 const CUSTOMER_INPUT = {
-  displayName: 'Jane Doe',
-  addressLine: 'Av. Siempreviva 742',
-  city: 'CABA',
-  province: 'Buenos Aires',
+  firstName: 'Jane',
+  lastName: 'Doe',
 };
 
 function professionalInput(categoryId: string): Record<string, unknown> {
   return {
-    displayName: 'Juan Perez',
-    city: 'CABA',
-    serviceAreaDescription: 'CABA y GBA Norte',
+    firstName: 'Juan',
+    lastName: 'Perez',
     bio: 'Trabajo en el rubro hace mas de una decada.',
     specializations: [
       {

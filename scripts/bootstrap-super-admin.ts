@@ -129,6 +129,10 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // the Roles UI (`updateAdminRolePermissions`).
       Permission.EMAIL_TEMPLATES_READ,
       Permission.EMAIL_TEMPLATES_WRITE,
+      // GOS-70 — storage/image-processing settings surface. SUPER_ADMIN gets
+      // every permission.
+      Permission.STORAGE_SETTINGS_READ,
+      Permission.STORAGE_SETTINGS_WRITE,
     ],
   },
   {
@@ -175,6 +179,12 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // on this role.
       Permission.EMAIL_TEMPLATES_READ,
       Permission.EMAIL_TEMPLATES_WRITE,
+      // GOS-70 — FLAGGED FOR HUMAN REVIEW: explicit human decision that
+      // CONFIG_MANAGER-and-above can manage storage/image settings, same
+      // "full read/write config capability" bucket as FEATURE_FLAGS_*/
+      // EMAIL_TEMPLATES_* on this role.
+      Permission.STORAGE_SETTINGS_READ,
+      Permission.STORAGE_SETTINGS_WRITE,
     ],
   },
   {
@@ -204,6 +214,9 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // same read-only semantics: this role can VIEW the current
       // subject/HTML body/text body but never edit or send a test email.
       Permission.EMAIL_TEMPLATES_READ,
+      // GOS-70 — FLAGGED FOR HUMAN REVIEW: read-only semantics, this role
+      // can VIEW the storage/image settings but never change them.
+      Permission.STORAGE_SETTINGS_READ,
     ],
   },
 ];

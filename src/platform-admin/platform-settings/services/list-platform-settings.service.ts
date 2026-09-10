@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { STORAGE_SETTING_KEY_PREFIX } from '../../../storage/storage-setting-keys.constants';
 import { PlatformSettingsRepository } from '../platform-settings.repository';
 import { PlatformSettingModel } from '../models/platform-setting.model';
 import { toPlatformSettingModel } from '../models/to-platform-setting-model.util';
@@ -17,6 +18,14 @@ export class ListPlatformSettingsService {
 
   async listPlatformSettings(): Promise<PlatformSettingModel[]> {
     const rows = await this.platformSettingsRepository.findAllWithUpdatedBy();
-    return rows.map((row) => toPlatformSettingModel(row));
+    return (
+      rows
+        // GOS-70 — `storage.*` rows have their own admin surface
+        // (`storageSettings`/`updateStorageSettings`, permission
+        // `STORAGE_SETTINGS_*`); keep them out of the generic list so the
+        // two surfaces don't overlap.
+        .filter((row) => !row.key.startsWith(STORAGE_SETTING_KEY_PREFIX))
+        .map((row) => toPlatformSettingModel(row))
+    );
   }
 }

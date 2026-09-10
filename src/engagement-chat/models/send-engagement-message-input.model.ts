@@ -1,5 +1,11 @@
-import { Field, InputType } from '@nestjs/graphql';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { Field, ID, InputType } from '@nestjs/graphql';
+import {
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 /**
  * Structurally closed input — no `senderRole`/`customerProfileId`/
@@ -15,6 +21,12 @@ import { IsString, MaxLength, MinLength } from 'class-validator';
  * `min(1)`/`max(2000)` on `content` mirror
  * `PostQuoteNegotiationMessageInput.message`'s own
  * reasonable-but-not-confirmed-as-a-product-rule bounds.
+ *
+ * `mediaUploadRefId` (GOS-72) is the one deliberate, ticket-authorised
+ * exception to "coordination-only, no structured payload": an OPTIONAL
+ * single coordination image (photo of the site/access/materials). It is
+ * media, not `Quote`/`Engagement` business state — this module still never
+ * writes to those tables. Never a list; one image per message.
  */
 @InputType()
 export class SendEngagementMessageInput {
@@ -23,4 +35,9 @@ export class SendEngagementMessageInput {
   @MinLength(1)
   @MaxLength(2000)
   content!: string;
+
+  @Field(() => ID, { nullable: true })
+  @IsOptional()
+  @IsUUID('4')
+  mediaUploadRefId?: string;
 }

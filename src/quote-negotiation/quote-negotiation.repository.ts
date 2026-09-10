@@ -48,6 +48,9 @@ export class QuoteNegotiationRepository {
       authorCustomerProfileId: string | null;
       authorProfessionalProfileId: string | null;
       message: string;
+      // GOS-72 — the consumed `MediaUploadRef.fileUrl`, or `null` when no
+      // image was attached.
+      imageUrl: string | null;
     },
   ) {
     return tx.quoteNegotiationMessage.create({ data });

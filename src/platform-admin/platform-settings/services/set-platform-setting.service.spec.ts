@@ -185,6 +185,23 @@ describe('SetPlatformSettingService', () => {
     );
   });
 
+  it('rejects a reserved storage.* key (GOS-70) with PLATFORM_SETTING_KEY_RESERVED, before any DB read/write', async () => {
+    const { service, findByKey, upsert } = makeService();
+
+    await expect(
+      service.setPlatformSetting('admin-1', {
+        key: 'storage.image-processing.max-dimension-px',
+        description: 'x',
+        valueType: 'NUMBER',
+        isEncrypted: false,
+        isPublic: false,
+        value: '1024',
+      }),
+    ).rejects.toMatchObject({ code: 'PLATFORM_SETTING_KEY_RESERVED' });
+    expect(findByKey).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
   it('rejects a BOOLEAN value that is not exactly "true"/"false"', async () => {
     const { service } = makeService();
 

@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { StoragePort } from '../ports/storage.port';
+import { StoragePort } from '../../storage/ports/storage.port';
 import { ServiceRequestsRepository } from '../service-requests.repository';
 import { RequestServiceRequestAttachmentUploadUrlService } from './request-service-request-attachment-upload-url.service';
 

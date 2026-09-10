@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
-import { EngagementChatParty } from '@prisma/client';
+import { EngagementChatParty, MediaUploadRefIntendedUse } from '@prisma/client';
+import { MediaUploadsRepository } from '../../media-uploads/media-uploads.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   EngagementChatAccessService,
@@ -24,12 +25,27 @@ describe('SendEngagementMessageService', () => {
   function makeService(overrides?: {
     party?: EngagementChatPartyResolution;
     resolvePartyRejects?: Error;
+    usableRefs?: { id: string; fileUrl: string }[];
+    consumedCount?: number;
   }) {
     const fakeTx = { __fakeTransactionClient: true };
     const $transaction = jest.fn(
       (callback: (tx: unknown) => Promise<unknown>) => callback(fakeTx),
     );
     const prisma = { $transaction } as unknown as PrismaService;
+
+    const findUsablePendingRefs = jest
+      .fn()
+      .mockResolvedValue(overrides?.usableRefs ?? []);
+    const markConsumed = jest
+      .fn()
+      .mockImplementation((_tx, ids: string[]) =>
+        Promise.resolve({ count: overrides?.consumedCount ?? ids.length }),
+      );
+    const mediaUploadsRepository = {
+      findUsablePendingRefs,
+      markConsumed,
+    } as unknown as MediaUploadsRepository;
 
     const resolveParty = overrides?.resolvePartyRejects
       ? jest.fn().mockRejectedValue(overrides.resolvePartyRejects)
@@ -57,9 +73,17 @@ describe('SendEngagementMessageService', () => {
       prisma,
       accessService,
       engagementChatRepository,
+      mediaUploadsRepository,
     );
 
-    return { service, resolveParty, upsertConversation, createMessage };
+    return {
+      service,
+      resolveParty,
+      upsertConversation,
+      createMessage,
+      findUsablePendingRefs,
+      markConsumed,
+    };
   }
 
   let logSpy: jest.SpyInstance;
@@ -130,5 +154,73 @@ describe('SendEngagementMessageService', () => {
       }),
     ).rejects.toMatchObject({ code: 'ENGAGEMENT_NOT_FOUND' });
     expect(upsertConversation).not.toHaveBeenCalled();
+  });
+
+  // GOS-72 — optional coordination image via a consumed MediaUploadRef.
+
+  it('persists imageUrl null and never touches media uploads when no mediaUploadRefId is supplied', async () => {
+    const { service, createMessage, findUsablePendingRefs, markConsumed } =
+      makeService();
+
+    await service.sendMessage('user-1', 'engagement-1', { content: 'Hola' });
+
+    expect(findUsablePendingRefs).not.toHaveBeenCalled();
+    expect(markConsumed).not.toHaveBeenCalled();
+    expect(createMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ imageUrl: null }),
+    );
+  });
+
+  it('sets imageUrl from the consumed ref and marks it CONSUMED in the same transaction', async () => {
+    const { service, createMessage, findUsablePendingRefs, markConsumed } =
+      makeService({
+        usableRefs: [{ id: 'ref-1', fileUrl: 'http://x/site.webp' }],
+      });
+
+    await service.sendMessage('user-1', 'engagement-1', {
+      content: 'Así quedó el acceso',
+      mediaUploadRefId: 'ref-1',
+    });
+
+    expect(findUsablePendingRefs).toHaveBeenCalledWith(
+      'user-1',
+      ['ref-1'],
+      MediaUploadRefIntendedUse.ENGAGEMENT_CHAT_MESSAGE_IMAGE,
+    );
+    expect(createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ __fakeTransactionClient: true }),
+      expect.objectContaining({ imageUrl: 'http://x/site.webp' }),
+    );
+    expect(markConsumed).toHaveBeenCalledWith(
+      expect.objectContaining({ __fakeTransactionClient: true }),
+      ['ref-1'],
+    );
+  });
+
+  it('throws INVALID_MEDIA_UPLOAD_REF and never creates the message when the ref is unusable (missing / wrong intendedUse / expired / consumed)', async () => {
+    const { service, createMessage } = makeService({ usableRefs: [] });
+
+    await expect(
+      service.sendMessage('user-1', 'engagement-1', {
+        content: 'Hola',
+        mediaUploadRefId: 'ref-x',
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_MEDIA_UPLOAD_REF' });
+    expect(createMessage).not.toHaveBeenCalled();
+  });
+
+  it('rolls back with INVALID_MEDIA_UPLOAD_REF when the consume write loses a race (count !== 1)', async () => {
+    const { service } = makeService({
+      usableRefs: [{ id: 'ref-1', fileUrl: 'http://x/site.webp' }],
+      consumedCount: 0,
+    });
+
+    await expect(
+      service.sendMessage('user-1', 'engagement-1', {
+        content: 'Hola',
+        mediaUploadRefId: 'ref-1',
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_MEDIA_UPLOAD_REF' });
   });
 });

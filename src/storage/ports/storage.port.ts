@@ -11,7 +11,11 @@
  * explicitly OPEN infrastructure decision (see infrastructure.md) — out of
  * scope for GOS-38. Swapping `LocalDevStorageAdapter` for a real provider
  * adapter later is one new class + one `useClass`/`useExisting` change in
- * `service-requests.module.ts`, never a resolver/service/schema change.
+ * `src/storage/storage.module.ts`, never a resolver/service/schema change.
+ *
+ * Relocated from `src/service-requests/` to its own top-level `src/storage/`
+ * module (GOS-70, 2026-09-02) — it was always a cross-cutting, multi-consumer
+ * seam, not a service-requests concern.
  */
 export interface CreateAttachmentUploadUrlCommand {
   fileName: string;

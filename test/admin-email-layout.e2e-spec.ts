@@ -1,10 +1,12 @@
 import { INestApplication } from '@nestjs/common';
 import { AdminUserStatus, Permission } from '@prisma/client';
 import * as argon2 from 'argon2';
+import sharp from 'sharp';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { cleanAdminUsersData, createTestApp } from './support/test-app';
+import { waitForUpload } from './support/wait-for-upload';
 
 const ADMIN_LOGIN_MUTATION = `
   mutation AdminLogin($input: AdminLoginInput!) {
@@ -329,24 +331,36 @@ describe('GraphQL /admin/graphql — Email Layout (e2e)', () => {
       const { uploadUrl, publicUrl } = body.data!.requestEmailLogoUploadUrl;
       expect(uploadUrl).toContain('/uploads/');
       expect(publicUrl).toContain('/uploads/');
+      // GOS-70 — every image content-type normalizes to a `.webp` key.
+      expect(publicUrl).toMatch(/\.webp$/);
 
-      // Same path-extraction/round-trip pattern as
-      // `service-requests.e2e-spec.ts`'s own attachment-upload test —
-      // exercises the REAL `LocalDevStorageAdapter`/`UploadsController`,
-      // not a mock.
-      const fileBytes = Buffer.from('fake-png-bytes');
+      // Exercises the REAL `LocalDevStorageAdapter`/`UploadsController`, not
+      // a mock. GOS-70: the logo is processed asynchronously to WebP, so
+      // the public URL 404s until the worker runs and then serves
+      // image/webp (never the original bytes).
+      const pngBytes = await sharp({
+        create: {
+          width: 32,
+          height: 32,
+          channels: 3,
+          background: { r: 200, g: 30, b: 30 },
+        },
+      })
+        .png()
+        .toBuffer();
       const uploadPath = uploadUrl.replace(/^https?:\/\/[^/]+/, '');
       await request(app.getHttpServer())
         .put(uploadPath)
         .set('Content-Type', 'image/png')
-        .send(fileBytes)
+        .send(pngBytes)
         .expect(200);
 
       const fetchPath = publicUrl.replace(/^https?:\/\/[^/]+/, '');
-      const getResponse = await request(app.getHttpServer())
-        .get(fetchPath)
-        .expect(200);
-      expect(Buffer.compare(getResponse.body as Buffer, fileBytes)).toBe(0);
+      const getResponse = await waitForUpload(app.getHttpServer(), fetchPath);
+      expect(getResponse.headers['content-type']).toContain('image/webp');
+      expect((await sharp(getResponse.body as Buffer).metadata()).format).toBe(
+        'webp',
+      );
     });
   });
 });

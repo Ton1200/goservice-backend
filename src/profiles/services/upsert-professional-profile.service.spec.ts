@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { DomainException } from '../../common/errors/domain-exception';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import { SpecializationRole } from '../models/specialization-role.enum';
 import { UpsertProfessionalProfileInput } from '../models/upsert-professional-profile-input.model';
 import { ProfilesRepository } from '../profiles.repository';
@@ -10,13 +11,15 @@ describe('UpsertProfessionalProfileService', () => {
     existingCategoryIds?: string[];
     wasCreated?: boolean;
     accountStatusTransitioned?: boolean;
+    featureEnabled?: boolean;
+    usableRef?: { id: string; fileUrl: string } | null;
   }) {
     const profile = {
       id: 'profile-1',
-      displayName: 'Juan Perez',
-      city: 'CABA',
+      firstName: 'Juan',
+      lastName: 'Perez',
+      displayName: null,
       country: 'AR',
-      serviceAreaDescription: 'CABA y GBA Norte',
       bio: 'Trabajo en el rubro hace mas de una decada.',
       verificationStatus: 'UNVERIFIED',
       specializations: [
@@ -39,18 +42,37 @@ describe('UpsertProfessionalProfileService', () => {
       wasCreated: overrides?.wasCreated ?? true,
       accountStatusTransitioned: overrides?.accountStatusTransitioned ?? true,
     });
+    const findUsablePendingPhotoUploadRef = jest
+      .fn()
+      .mockResolvedValue(
+        overrides?.usableRef === undefined ? null : overrides.usableRef,
+      );
     const profilesRepository = {
       findExistingCategoryIds,
       upsertProfessionalProfile,
+      findUsablePendingPhotoUploadRef,
     } as unknown as ProfilesRepository;
 
-    const service = new UpsertProfessionalProfileService(profilesRepository);
+    const isEnabled = jest
+      .fn()
+      .mockResolvedValue(overrides?.featureEnabled ?? true);
+    const platformSettingPort = {
+      isEnabled,
+      getValue: jest.fn(),
+    } as unknown as PlatformSettingPort;
+
+    const service = new UpsertProfessionalProfileService(
+      profilesRepository,
+      platformSettingPort,
+    );
 
     return {
       service,
       profile,
       findExistingCategoryIds,
       upsertProfessionalProfile,
+      findUsablePendingPhotoUploadRef,
+      isEnabled,
     };
   }
 
@@ -58,7 +80,8 @@ describe('UpsertProfessionalProfileService', () => {
     overrides?: Partial<UpsertProfessionalProfileInput>,
   ): UpsertProfessionalProfileInput {
     return {
-      displayName: 'Juan Perez',
+      firstName: 'Juan',
+      lastName: 'Perez',
       specializations: [
         {
           categoryId: 'cat-1',
@@ -67,8 +90,6 @@ describe('UpsertProfessionalProfileService', () => {
           yearsOfExperience: 10,
         },
       ],
-      city: 'CABA',
-      serviceAreaDescription: 'CABA y GBA Norte',
       bio: 'Trabajo en el rubro hace mas de una decada.',
       ...overrides,
     };
@@ -105,27 +126,66 @@ describe('UpsertProfessionalProfileService', () => {
     );
   });
 
-  it('passes photoUrl/languages through to the repository when provided', async () => {
-    const { service, upsertProfessionalProfile } = makeService();
+  it('resolves a usable photoUploadRef to photoUrl + photoUploadRefId; passes languages through', async () => {
+    const {
+      service,
+      upsertProfessionalProfile,
+      findUsablePendingPhotoUploadRef,
+    } = makeService({
+      usableRef: {
+        id: 'ref-1',
+        fileUrl: 'http://localhost:3000/uploads/pro.webp',
+      },
+    });
 
     await service.upsertProfessionalProfile(
       'user-1',
-      validInput({
-        photoUrl: 'https://cdn.example.com/pro.jpg',
-        languages: ['es', 'en'],
-      }),
+      validInput({ photoUploadRef: 'ref-1', languages: ['es', 'en'] }),
     );
 
+    expect(findUsablePendingPhotoUploadRef).toHaveBeenCalledWith(
+      'user-1',
+      'ref-1',
+    );
     expect(upsertProfessionalProfile).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({
-        photoUrl: 'https://cdn.example.com/pro.jpg',
+        photoUrl: 'http://localhost:3000/uploads/pro.webp',
+        photoUploadRefId: 'ref-1',
         languages: ['es', 'en'],
       }),
     );
   });
 
-  it('passes photoUrl/languages through as undefined (not a wipe value) when omitted', async () => {
+  it('rejects an unusable photoUploadRef with INVALID_PROFILE_PHOTO_UPLOAD_REF', async () => {
+    const { service, upsertProfessionalProfile } = makeService({
+      usableRef: null,
+    });
+
+    await expect(
+      service.upsertProfessionalProfile(
+        'user-1',
+        validInput({ photoUploadRef: 'ref-x' }),
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_PROFILE_PHOTO_UPLOAD_REF' });
+    expect(upsertProfessionalProfile).not.toHaveBeenCalled();
+  });
+
+  it('rejects a photoUploadRef when the feature toggle is off', async () => {
+    const { service, upsertProfessionalProfile } = makeService({
+      featureEnabled: false,
+    });
+
+    await expect(
+      service.upsertProfessionalProfile(
+        'user-1',
+        validInput({ photoUploadRef: 'ref-1' }),
+      ),
+    ).rejects.toMatchObject({ code: 'PROFILE_PHOTO_UPLOAD_DISABLED' });
+    expect(upsertProfessionalProfile).not.toHaveBeenCalled();
+  });
+
+  it('passes photoUrl/photoUploadRefId/languages through as undefined when no ref is submitted', async () => {
     const { service, upsertProfessionalProfile } = makeService();
 
     await service.upsertProfessionalProfile('user-1', validInput());
@@ -134,9 +194,11 @@ describe('UpsertProfessionalProfileService', () => {
       upsertProfessionalProfile.mock.calls as unknown[][]
     )[0][1] as {
       photoUrl?: string;
+      photoUploadRefId?: string;
       languages?: string[];
     };
     expect(callArg.photoUrl).toBeUndefined();
+    expect(callArg.photoUploadRefId).toBeUndefined();
     expect(callArg.languages).toBeUndefined();
   });
 
@@ -165,6 +227,45 @@ describe('UpsertProfessionalProfileService', () => {
       locationSharingEnabled?: boolean;
     };
     expect(callArg.locationSharingEnabled).toBeUndefined();
+  });
+
+  it('passes the optional displayName ("nombre comercial") through when provided', async () => {
+    const { service, upsertProfessionalProfile } = makeService();
+
+    await service.upsertProfessionalProfile(
+      'user-1',
+      validInput({ displayName: 'Juan Perez - Plomería 24h' }),
+    );
+
+    expect(upsertProfessionalProfile).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ displayName: 'Juan Perez - Plomería 24h' }),
+    );
+  });
+
+  it('passes displayName through as undefined (leave unchanged) when omitted', async () => {
+    const { service, upsertProfessionalProfile } = makeService();
+
+    await service.upsertProfessionalProfile('user-1', validInput());
+
+    const callArg = (
+      upsertProfessionalProfile.mock.calls as unknown[][]
+    )[0][1] as { displayName?: string | null };
+    expect(callArg.displayName).toBeUndefined();
+  });
+
+  it('passes an explicit null displayName through (clears the nombre comercial)', async () => {
+    const { service, upsertProfessionalProfile } = makeService();
+
+    await service.upsertProfessionalProfile(
+      'user-1',
+      validInput({ displayName: null }),
+    );
+
+    const callArg = (
+      upsertProfessionalProfile.mock.calls as unknown[][]
+    )[0][1] as { displayName?: string | null };
+    expect(callArg.displayName).toBeNull();
   });
 
   it('passes specializations through to the repository unchanged, in submission order', async () => {
@@ -371,23 +472,30 @@ describe('UpsertProfessionalProfileService', () => {
     expect(createdLog?.specializationCount).toBe(1);
   });
 
-  it('never logs PII field values (displayName/city/country/serviceAreaDescription/bio/photoUrl/languages/specialization description)', async () => {
-    const { service } = makeService();
+  it('never logs PII field values or the resolved photo URL', async () => {
+    const { service } = makeService({
+      usableRef: {
+        id: 'ref-1',
+        fileUrl: 'http://localhost:3000/uploads/secret-key.webp',
+      },
+    });
 
     await service.upsertProfessionalProfile(
       'user-1',
       validInput({
-        photoUrl: 'https://cdn.example.com/pro.jpg',
+        displayName: 'Juan Perez - Plomería 24h',
+        photoUploadRef: 'ref-1',
         languages: ['es', 'en'],
       }),
     );
 
     for (const call of logSpy.mock.calls as unknown[][]) {
       const payload = JSON.stringify(call[0]);
-      expect(payload).not.toContain('Juan Perez');
-      expect(payload).not.toContain('GBA Norte');
+      expect(payload).not.toContain('Juan');
+      expect(payload).not.toContain('Perez');
+      expect(payload).not.toContain('decada');
       expect(payload).not.toContain('experiencia');
-      expect(payload).not.toContain('cdn.example.com');
+      expect(payload).not.toContain('secret-key');
       expect(payload).not.toContain('"es"');
     }
   });

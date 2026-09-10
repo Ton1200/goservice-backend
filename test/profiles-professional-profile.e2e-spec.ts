@@ -22,7 +22,7 @@ const LOGIN_MUTATION = `
 const MY_PROFESSIONAL_PROFILE_QUERY = `
   query MyProfessionalProfile {
     myProfessionalProfile {
-      id displayName city country serviceAreaDescription bio
+      id firstName lastName displayName country bio
       verificationStatus photoUrl languages locationSharingEnabled
       specializations { role description yearsOfExperience order category { id name } }
     }
@@ -32,7 +32,7 @@ const MY_PROFESSIONAL_PROFILE_QUERY = `
 const UPSERT_PROFESSIONAL_PROFILE_MUTATION = `
   mutation UpsertProfessionalProfile($input: UpsertProfessionalProfileInput!) {
     upsertProfessionalProfile(input: $input) {
-      id displayName city country serviceAreaDescription bio
+      id firstName lastName displayName country bio
       verificationStatus photoUrl languages locationSharingEnabled
       specializations { role description yearsOfExperience order category { id name } }
     }
@@ -58,10 +58,10 @@ interface SpecializationPayload {
 
 interface ProfessionalProfilePayload {
   id: string;
-  displayName: string;
-  city: string;
+  firstName: string;
+  lastName: string;
+  displayName: string | null;
   country: string;
-  serviceAreaDescription: string;
   bio: string;
   verificationStatus: string;
   photoUrl: string | null;
@@ -249,10 +249,9 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
     specializations: Record<string, unknown>[],
   ): Record<string, unknown> {
     return {
-      displayName: 'Juan Perez',
+      firstName: 'Juan',
+      lastName: 'Perez',
       specializations,
-      city: 'CABA',
-      serviceAreaDescription: 'CABA y GBA Norte',
       bio: 'Trabajo en el rubro hace mas de una decada.',
     };
   }
@@ -567,8 +566,9 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
   });
 
   it(
-    'defaults languages to an empty list and leaves photoUrl null when ' +
-      'omitted, then accepts and returns both unchanged once provided',
+    'defaults languages to [] / photoUrl null / displayName ("nombre ' +
+      'comercial") null when omitted, then accepts and returns them once ' +
+      'provided, then clears an explicit-null displayName',
     async () => {
       const { email } = await seedEmailVerifiedUser();
       const sessionToken = await loginSessionToken(email);
@@ -586,21 +586,42 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
       expect(withoutThemBody.data?.upsertProfessionalProfile.languages).toEqual(
         [],
       );
+      expect(
+        withoutThemBody.data?.upsertProfessionalProfile.displayName,
+      ).toBeNull();
 
+      // GOS-70 — `photoUrl` is no longer a string input (see
+      // `test/profiles-photo-upload.e2e-spec.ts` for the real upload flow);
+      // this case just keeps exercising languages + displayName.
       const withThem = await upsertProfessionalProfileRequest(
         {
           ...baseInput([primarySpecialization(categoryId)]),
-          photoUrl: 'https://cdn.example.com/pro.jpg',
           languages: ['es', 'en'],
+          displayName: 'Juan Perez - Plomería 24h',
         },
         sessionToken,
       ).expect(200);
       const withThemBody =
         withThem.body as UpsertProfessionalProfileResponseBody;
       expect(withThemBody.data?.upsertProfessionalProfile).toMatchObject({
-        photoUrl: 'https://cdn.example.com/pro.jpg',
+        photoUrl: null,
         languages: ['es', 'en'],
+        displayName: 'Juan Perez - Plomería 24h',
       });
+
+      // Explicit null clears the nombre comercial (partial-update convention
+      // extended with explicit-null support).
+      const cleared = await upsertProfessionalProfileRequest(
+        {
+          ...baseInput([primarySpecialization(categoryId)]),
+          displayName: null,
+        },
+        sessionToken,
+      ).expect(200);
+      expect(
+        (cleared.body as UpsertProfessionalProfileResponseBody).data
+          ?.upsertProfessionalProfile.displayName,
+      ).toBeNull();
     },
   );
 
@@ -684,10 +705,8 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
       // Same User, own CustomerProfile, explicit false — independent
       // fields, not a single User-level flag.
       const CUSTOMER_INPUT = {
-        displayName: 'Juan Perez',
-        addressLine: 'Av. Siempreviva 742',
-        city: 'CABA',
-        province: 'Buenos Aires',
+        firstName: 'Juan',
+        lastName: 'Perez',
         locationSharingEnabled: false,
       };
       const upsertCustomerResponse = await request(app.getHttpServer())

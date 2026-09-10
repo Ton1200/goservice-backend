@@ -1,4 +1,4 @@
-import { Field, InputType } from '@nestjs/graphql';
+import { Field, ID, InputType } from '@nestjs/graphql';
 import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
@@ -8,7 +8,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
-  IsUrl,
+  IsUUID,
   MaxLength,
   MinLength,
   ValidateNested,
@@ -30,11 +30,31 @@ import { UpsertProfessionalSpecializationInput } from './upsert-professional-spe
  */
 @InputType()
 export class UpsertProfessionalProfileInput {
+  // The professional's real name, split into two fields (nombre / apellido)
+  // — same `@MaxLength(80)` rationale as `UpsertCustomerProfileInput`.
   @Field()
   @IsString()
   @MinLength(1)
+  @MaxLength(80)
+  firstName!: string;
+
+  @Field()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  lastName!: string;
+
+  // Optional public-facing "nombre comercial", DISTINCT from
+  // `firstName`/`lastName`. Partial-update semantics with explicit-null
+  // support: omitted => left unchanged on an edit; explicit `null` =>
+  // cleared. `@IsOptional()` skips `@MinLength`/`@MaxLength` for both
+  // `null` and `undefined`, but an empty string `""` is still rejected.
+  @Field(() => String, { nullable: true })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
   @MaxLength(120)
-  displayName!: string;
+  displayName?: string | null;
 
   // Full-replace-set semantics: each call replaces the professional's
   // entire specialization list with exactly this set — see
@@ -60,10 +80,9 @@ export class UpsertProfessionalProfileInput {
   @Type(() => UpsertProfessionalSpecializationInput)
   specializations!: UpsertProfessionalSpecializationInput[];
 
-  @Field()
-  @IsString()
-  @MinLength(1)
-  city!: string;
+  // `city` and `serviceAreaDescription` were removed (GOS-62b, 2026-09-08).
+  // Sending either now fails GraphQL input validation. Structured address
+  // returns later as its own geocoded entity — see DEC-005.
 
   // Optional — defaults server-side to AR (Argentina) when omitted, same
   // convention as `UpsertCustomerProfileInput.country`. `@IsEnum` (not
@@ -76,20 +95,15 @@ export class UpsertProfessionalProfileInput {
   @Field()
   @IsString()
   @MinLength(1)
-  serviceAreaDescription!: string;
-
-  @Field()
-  @IsString()
-  @MinLength(1)
   bio!: string;
 
-  // No object-storage provider is decided yet (see infrastructure.md) — a
-  // client must upload the image elsewhere itself and pass the resulting
-  // URL here; this field only validates shape, it never handles the upload.
-  @Field({ nullable: true })
+  // GOS-70 — the ONLY way to set a profile photo. See
+  // `UpsertCustomerProfileInput.photoUploadRef` for the full flow. The
+  // former free `photoUrl` string field was removed (breaking).
+  @Field(() => ID, { nullable: true })
   @IsOptional()
-  @IsUrl()
-  photoUrl?: string;
+  @IsUUID()
+  photoUploadRef?: string;
 
   @Field(() => [String], { nullable: true })
   @IsOptional()

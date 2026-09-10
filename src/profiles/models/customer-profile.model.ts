@@ -6,6 +6,9 @@ import { CountryCode } from './country-code.enum';
  * here: `myCustomerProfile` is always implicitly "mine" via
  * `@CurrentUser()`, and nothing in this story needs the raw FK
  * client-side. Adding it later is a purely additive, non-breaking field.
+ *
+ * `firstName`/`lastName` are the person's real name (nombre / apellido),
+ * split out of the former single `displayName` field.
  */
 @ObjectType()
 export class CustomerProfile {
@@ -13,22 +16,23 @@ export class CustomerProfile {
   id!: string;
 
   @Field()
-  displayName!: string;
+  firstName!: string;
 
   @Field()
-  addressLine!: string;
+  lastName!: string;
 
-  @Field()
-  city!: string;
-
-  @Field()
-  province!: string;
-
+  // `addressLine`/`city`/`province` were removed (GOS-62b, 2026-09-08) — a
+  // GOS-14/GOS-28 free-text placeholder; structured address returns later as
+  // its own geocoded entity (DEC-005). `country` stays (KYC routing).
   @Field(() => CountryCode)
   country!: CountryCode;
 
-  // No object-storage provider is decided yet — see infrastructure.md —
-  // so this is just a URL string, nullable until a real upload flow exists.
+  // GOS-70 — a real upload flow now backs this: it is set only by
+  // consuming a `photoUploadRef` on `upsertCustomerProfile` (see
+  // `UpsertCustomerProfileInput.photoUploadRef`), and always points at a
+  // server-processed WebP served by `UploadsController`. Still nullable
+  // (a profile may have no photo). The underlying object-storage provider
+  // remains a `LocalDevStorageAdapter` placeholder — see infrastructure.md.
   @Field(() => String, { nullable: true })
   photoUrl?: string | null;
 

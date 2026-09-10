@@ -46,9 +46,9 @@ const QUOTES_QUERY = `
           description
           status
           category { id name }
-          customerProfile { id userId displayName email }
+          customerProfile { id userId firstName lastName email }
         }
-        professional { id userId displayName email }
+        professional { id userId firstName lastName displayName email }
       }
     }
   }
@@ -211,10 +211,8 @@ describe('GraphQL /admin/graphql — quotes/quoteDetail (e2e)', () => {
     const customerProfile = await prisma.customerProfile.create({
       data: {
         userId: user.id,
-        displayName: 'Juan Perez',
-        addressLine: 'Calle Falsa 123',
-        city: 'CABA',
-        province: 'Buenos Aires',
+        firstName: 'Juan',
+        lastName: 'Perez',
         country: CountryCode.AR,
       },
     });
@@ -246,10 +244,9 @@ describe('GraphQL /admin/graphql — quotes/quoteDetail (e2e)', () => {
     const professionalProfile = await prisma.professionalProfile.create({
       data: {
         userId: user.id,
-        displayName: 'Carlos Gomez',
-        city: 'CABA',
+        firstName: 'Carlos',
+        lastName: 'Gomez',
         country: CountryCode.AR,
-        serviceAreaDescription: 'CABA y GBA',
         bio: 'Con experiencia.',
         verificationStatus: ProfessionalVerificationStatus.UNVERIFIED,
       },

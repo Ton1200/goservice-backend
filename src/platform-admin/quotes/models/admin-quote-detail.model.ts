@@ -5,6 +5,7 @@ import {
   Int,
   ObjectType,
 } from '@nestjs/graphql';
+import { QuoteAttachmentModel } from '../../../quotes/models/quote-attachment.model';
 import { QuoteStatus } from '../../../quotes/models/quote-status.enum';
 import { AdminQuoteEngagementModel } from './admin-quote-engagement.model';
 import { AdminQuoteProfessionalModel } from './admin-quote-professional.model';
@@ -54,6 +55,14 @@ export class AdminQuoteDetailModel {
 
   @Field(() => AdminQuoteEngagementModel, { nullable: true })
   engagement!: AdminQuoteEngagementModel | null;
+
+  // GOS-72 — the Quote's reference images. Reuses the consumer
+  // `QuoteAttachment` type directly ("orphaned type made reachable" — same
+  // pattern as `AdminServiceRequestDetailModel.attachments`); gated by the
+  // existing `QUOTES_READ`, no new permission — the image inherits its
+  // owning Quote's access rules.
+  @Field(() => [QuoteAttachmentModel])
+  attachments!: QuoteAttachmentModel[];
 
   @Field(() => GraphQLISODateTime)
   createdAt!: Date;

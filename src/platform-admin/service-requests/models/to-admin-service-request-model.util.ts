@@ -14,10 +14,9 @@ function toCustomerModel(
   const model = new AdminServiceRequestCustomerModel();
   model.id = customerProfile.id;
   model.userId = customerProfile.user.id;
-  model.displayName = customerProfile.displayName;
   model.email = customerProfile.user.email;
-  model.firstName = customerProfile.user.firstName;
-  model.lastName = customerProfile.user.lastName;
+  model.firstName = customerProfile.firstName;
+  model.lastName = customerProfile.lastName;
   return model;
 }
 
@@ -48,6 +47,8 @@ function toQuoteProfessionalModel(
   professionalProfile: AdminServiceRequestDetailRow['quotes'][number]['professionalProfile'],
 ): AdminServiceRequestQuoteProfessionalModel {
   const model = new AdminServiceRequestQuoteProfessionalModel();
+  model.firstName = professionalProfile.firstName;
+  model.lastName = professionalProfile.lastName;
   model.displayName = professionalProfile.displayName;
   model.email = professionalProfile.user.email;
   return model;

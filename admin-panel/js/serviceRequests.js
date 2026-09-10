@@ -48,7 +48,7 @@ const SERVICE_REQUESTS_QUERY = `
         attachmentsCount
         createdAt
         category { id name }
-        customer { id userId displayName email firstName lastName }
+        customer { id userId email firstName lastName }
       }
     }
   }
@@ -70,7 +70,7 @@ const SERVICE_REQUEST_DETAIL_QUERY = `
       createdAt
       updatedAt
       category { id name }
-      customer { id userId displayName email firstName lastName }
+      customer { id userId email firstName lastName }
       attachments { id url createdAt }
       quotes {
         id
@@ -78,7 +78,7 @@ const SERVICE_REQUEST_DETAIL_QUERY = `
         negotiatedPrice
         status
         negotiationMessageCount
-        professional { displayName email }
+        professional { firstName lastName displayName email }
         createdAt
       }
     }
@@ -99,7 +99,6 @@ const ELIGIBLE_CUSTOMERS_QUERY = `
     eligibleServiceRequestCustomers(search: $search) {
       id
       userId
-      displayName
       email
       firstName
       lastName
@@ -252,10 +251,7 @@ function budgetFormatter(cell) {
 
 function customerNameFormatter(cell) {
   const customer = cell.getRow().getData().customer;
-  const fullName = [customer.firstName, customer.lastName]
-    .filter(Boolean)
-    .join(' ');
-  return fullName || customer.displayName;
+  return [customer.firstName, customer.lastName].filter(Boolean).join(' ');
 }
 
 function customerEmailFormatter(cell) {
@@ -501,10 +497,12 @@ function priceFormatterValue(value) {
  * text. */
 function buildServiceRequestDetailTabContent(detail) {
   const wrapper = document.createElement('div');
-  const customerFullName =
-    [detail.customer.firstName, detail.customer.lastName]
-      .filter(Boolean)
-      .join(' ') || detail.customer.displayName;
+  const customerFullName = [
+    detail.customer.firstName,
+    detail.customer.lastName,
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   wrapper.appendChild(
     buildSubsection('Customer', [
@@ -556,7 +554,13 @@ function buildQuoteRow(quote) {
   const main = document.createElement('div');
   main.className = 'gs-quote-row-main';
   main.append(
-    buildField('Professional', quote.professional.displayName),
+    buildField(
+      'Professional',
+      [quote.professional.firstName, quote.professional.lastName]
+        .filter(Boolean)
+        .join(' '),
+    ),
+    buildField('Nombre comercial', quote.professional.displayName),
     buildField('Email', quote.professional.email),
     buildField('Price', priceFormatterValue(quote.price)),
     buildField('Precio negociado', priceFormatterValue(quote.negotiatedPrice)),
@@ -691,7 +695,7 @@ function customerOptionLabel(customer) {
   const fullName = [customer.firstName, customer.lastName]
     .filter(Boolean)
     .join(' ');
-  return `${fullName || customer.displayName} — ${customer.email}`;
+  return `${fullName} — ${customer.email}`;
 }
 
 async function populateCategoryOptions() {

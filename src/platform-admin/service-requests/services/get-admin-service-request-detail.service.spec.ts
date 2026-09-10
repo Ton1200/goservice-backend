@@ -20,12 +20,11 @@ describe('GetAdminServiceRequestDetailService', () => {
     },
     customerProfile: {
       id: 'customer-profile-1',
-      displayName: 'Juan Perez',
+      firstName: 'Juan',
+      lastName: 'Perez',
       user: {
         id: 'user-1',
         email: 'juan@example.com',
-        firstName: 'Juan',
-        lastName: 'Perez',
       },
     },
     attachments: [
@@ -39,7 +38,9 @@ describe('GetAdminServiceRequestDetailService', () => {
         status: 'SENT',
         createdAt: new Date(),
         professionalProfile: {
-          displayName: 'Carlos Gomez',
+          firstName: 'Carlos',
+          lastName: 'Gomez',
+          displayName: null,
           user: { email: 'carlos@example.com' },
         },
         _count: { negotiationMessages: 3 },
@@ -80,7 +81,9 @@ describe('GetAdminServiceRequestDetailService', () => {
           status: 'SENT',
           negotiationMessageCount: 3,
           professional: {
-            displayName: 'Carlos Gomez',
+            firstName: 'Carlos',
+            lastName: 'Gomez',
+            displayName: null,
             email: 'carlos@example.com',
           },
         },

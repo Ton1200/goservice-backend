@@ -2,16 +2,19 @@ import { UseGuards } from '@nestjs/common';
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
+import { DocumentUploadUrlModel } from '../service-requests/models/document-upload-url.model';
 import { Category } from './models/category.model';
 import { CustomerProfile } from './models/customer-profile.model';
 import { MyAccount } from './models/my-account.model';
 import { ProfessionalProfile } from './models/professional-profile.model';
+import { RequestProfilePhotoUploadUrlInput } from './models/request-profile-photo-upload-url-input.model';
 import { UpsertCustomerProfileInput } from './models/upsert-customer-profile-input.model';
 import { UpsertProfessionalProfileInput } from './models/upsert-professional-profile-input.model';
 import { GetMyAccountService } from './services/get-my-account.service';
 import { GetMyCustomerProfileService } from './services/get-my-customer-profile.service';
 import { GetMyProfessionalProfileService } from './services/get-my-professional-profile.service';
 import { ListCategoriesService } from './services/list-categories.service';
+import { RequestProfilePhotoUploadUrlService } from './services/request-profile-photo-upload-url.service';
 import { UpsertCustomerProfileService } from './services/upsert-customer-profile.service';
 import { UpsertProfessionalProfileService } from './services/upsert-professional-profile.service';
 
@@ -32,6 +35,7 @@ export class ProfilesResolver {
     private readonly listCategoriesService: ListCategoriesService,
     private readonly upsertCustomerProfileService: UpsertCustomerProfileService,
     private readonly upsertProfessionalProfileService: UpsertProfessionalProfileService,
+    private readonly requestProfilePhotoUploadUrlService: RequestProfilePhotoUploadUrlService,
   ) {}
 
   @UseGuards(SessionGuard)
@@ -103,6 +107,21 @@ export class ProfilesResolver {
     @Args('input') input: UpsertProfessionalProfileInput,
   ): Promise<ProfessionalProfile> {
     return this.upsertProfessionalProfileService.upsertProfessionalProfile(
+      userId,
+      input,
+    );
+  }
+
+  @UseGuards(SessionGuard)
+  @Mutation(() => DocumentUploadUrlModel, {
+    description:
+      'Issues a short-lived signed URL to upload a profile photo. The client PUTs the raw image bytes to `uploadUrl` (any common image format; the server resizes and re-encodes them to WebP), then passes the returned `ref` as `photoUploadRef` on `upsertCustomerProfile`/`upsertProfessionalProfile` to attach it. Fails with PROFILE_PHOTO_UPLOAD_DISABLED when the feature is turned off in the admin panel.',
+  })
+  requestProfilePhotoUploadUrl(
+    @CurrentUser() userId: string,
+    @Args('input') input: RequestProfilePhotoUploadUrlInput,
+  ): Promise<DocumentUploadUrlModel> {
+    return this.requestProfilePhotoUploadUrlService.requestUploadUrl(
       userId,
       input,
     );

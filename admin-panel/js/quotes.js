@@ -46,9 +46,9 @@ const QUOTES_QUERY = `
           description
           status
           category { id name }
-          customerProfile { id userId displayName email firstName lastName }
+          customerProfile { id userId email firstName lastName }
         }
-        professional { id userId displayName email firstName lastName }
+        professional { id userId firstName lastName displayName email }
       }
     }
   }
@@ -73,9 +73,9 @@ const QUOTE_DETAIL_QUERY = `
         description
         status
         category { id name }
-        customerProfile { id userId displayName email firstName lastName }
+        customerProfile { id userId email firstName lastName }
       }
-      professional { id userId displayName email firstName lastName }
+      professional { id userId firstName lastName displayName email }
       engagement { id status createdAt }
     }
   }
@@ -235,11 +235,8 @@ function negotiationCountFormatter(cell) {
   return count > 0 ? `💬 ${count}` : '—';
 }
 
-function fullNameOrDisplayName(person) {
-  const fullName = [person.firstName, person.lastName]
-    .filter(Boolean)
-    .join(' ');
-  return fullName || person.displayName;
+function personFullName(person) {
+  return [person.firstName, person.lastName].filter(Boolean).join(' ');
 }
 
 function serviceRequestSummaryFormatter(cell) {
@@ -252,7 +249,7 @@ function serviceRequestSummaryFormatter(cell) {
 }
 
 function customerNameFormatter(cell) {
-  return fullNameOrDisplayName(
+  return personFullName(
     cell.getRow().getData().serviceRequest.customerProfile,
   );
 }
@@ -262,7 +259,7 @@ function customerEmailFormatter(cell) {
 }
 
 function professionalNameFormatter(cell) {
-  return fullNameOrDisplayName(cell.getRow().getData().professional);
+  return personFullName(cell.getRow().getData().professional);
 }
 
 function professionalEmailFormatter(cell) {
@@ -526,10 +523,10 @@ function authorRoleVariant(role) {
  * text, plus the new `negotiatedPrice` field right under `price`. */
 function buildQuoteDetailTabContent(detail) {
   const wrapper = document.createElement('div');
-  const customerFullName = fullNameOrDisplayName(
+  const customerFullName = personFullName(
     detail.serviceRequest.customerProfile,
   );
-  const professionalFullName = fullNameOrDisplayName(detail.professional);
+  const professionalFullName = personFullName(detail.professional);
 
   wrapper.appendChild(
     buildSubsection('Quote', [
@@ -563,6 +560,7 @@ function buildQuoteDetailTabContent(detail) {
   wrapper.appendChild(
     buildSubsection('Professional', [
       buildField('Name', professionalFullName),
+      buildField('Nombre comercial', detail.professional.displayName),
       buildField('Email', detail.professional.email),
     ]),
   );

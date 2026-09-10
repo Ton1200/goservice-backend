@@ -25,10 +25,9 @@ export class ListEligibleServiceRequestCustomersService {
       const model = new AdminServiceRequestCustomerModel();
       model.id = row.id;
       model.userId = row.user.id;
-      model.displayName = row.displayName;
       model.email = row.user.email;
-      model.firstName = row.user.firstName;
-      model.lastName = row.user.lastName;
+      model.firstName = row.firstName;
+      model.lastName = row.lastName;
       return model;
     });
   }
