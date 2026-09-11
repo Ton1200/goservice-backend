@@ -42,6 +42,21 @@ export class AppointmentsRepository {
   }
 
   /**
+   * GOS-111 — `StartEngagementWorkService`'s pre-transaction gate: an
+   * Engagement may only move `ACCEPTED -> IN_PROGRESS` if it already has
+   * >= 1 `CONFIRMED` `Appointment`. A real Postgres `COUNT` filter, never an
+   * in-memory filter of `findManyByEngagementId`. Reused from
+   * `src/engagements/` as a CONCRETE provider (that module never imports
+   * `AppointmentsModule`) — mirrors `AppointmentAccessService` reusing
+   * `EngagementsRepository` in the opposite direction.
+   */
+  countConfirmedByEngagementId(engagementId: string): Promise<number> {
+    return this.prisma.appointment.count({
+      where: { engagementId, status: 'CONFIRMED' },
+    });
+  }
+
+  /**
    * `AcceptAppointmentService`'s CAS — only actually confirms while still
    * `PENDING`. `count === 0` (with no thrown error) covers "already
    * confirmed/cancelled by a concurrent request" (`APPOINTMENT_ACCEPT_CONFLICT`,

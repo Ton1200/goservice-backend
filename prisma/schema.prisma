@@ -251,9 +251,9 @@ model Category {
 }
 
 model CustomerProfile {
-  id          String      @id @default(uuid()) @db.Uuid
-  userId      String      @unique @db.Uuid
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                     String      @id @default(uuid()) @db.Uuid
+  userId                 String      @unique @db.Uuid
+  user                   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   // The person's real name, split into two fields (nombre / apellido).
   // Replaced the former single free-text `displayName` column — see
   // `prisma/migrations/*_split_profile_name_into_first_last/migration.sql`'s
@@ -261,8 +261,8 @@ model CustomerProfile {
   // retroactive change used (demo/seed data only). Both NOT NULL, same as
   // the column they replace. `User.firstName`/`User.lastName` are a
   // separate identity-level name and deliberately not reused here.
-  firstName   String
-  lastName    String
+  firstName              String
+  lastName               String
   // Structured address (addressLine/city/province) was REMOVED
   // (GOS-62b, 2026-09-08) — destructive migration
   // `*_remove_structured_address_from_profiles`, no data retained (test
@@ -278,11 +278,11 @@ model CustomerProfile {
   // `String @default("AR")` — see
   // `prisma/migrations/*_convert_country_to_enum/migration.sql`'s own
   // comment for the `USING country::"CountryCode"` cast this required.
-  country     CountryCode @default(AR)
+  country                CountryCode @default(AR)
   // Reference to an externally-stored image (no object-storage provider is
   // decided yet — see infrastructure.md's open hosting-provider question —
   // so this is just a URL string today, not backed by any real upload flow).
-  photoUrl    String?
+  photoUrl               String?
   // GOS-62 — explicit opt-in consent flag ONLY: whether this Customer is
   // willing to share their location, added ahead of any real geolocation
   // capability (DEC-005, still status "Proposed" — this field does not
@@ -294,9 +294,9 @@ model CustomerProfile {
   // latitude/longitude pair or any coordinate — no real geospatial data
   // exists anywhere in this schema yet; that belongs to a separate future
   // story once DEC-005 is actually decided.
-  locationSharingEnabled Boolean @default(false)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  locationSharingEnabled Boolean     @default(false)
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
 
   // GOS-38 — purely additive back-reference, no new column here.
   serviceRequests             ServiceRequest[]
@@ -398,8 +398,8 @@ model ProfessionalProfile {
   // Engagement this ProfessionalProfile is the party of (denormalized,
   // regardless of who proposed it), and, separately, every Appointment this
   // ProfessionalProfile itself proposed.
-  appointments                 Appointment[]                @relation("AppointmentProfessional")
-  proposedAppointments         Appointment[]                @relation("AppointmentProposedByProfessional")
+  appointments                Appointment[]                @relation("AppointmentProfessional")
+  proposedAppointments        Appointment[]                @relation("AppointmentProposedByProfessional")
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
   // User" constraint. Indexes anticipate Discovery (by country) and a
@@ -722,14 +722,32 @@ model QuotePriceProposal {
   @@index([quoteId, status])
 }
 
-// GOS-41 — deliberately a single value for now (`ACCEPTED`). No
-// IN_PROGRESS/COMPLETED/etc. is added speculatively — see the GOS-41 plan's
-// decision #6: those states get added when a real trigger for them exists,
-// not before, same "reserved for later" posture as
-// ProfessionalVerificationStatus/ServiceRequestStatus already establish
-// elsewhere in this schema.
+// GOS-111 — the Engagement work-execution state machine (épico GOS-100
+// "Ejecución y Cierre del Trabajo"). Declared in lifecycle order:
+//   ACCEPTED                       -> set the moment a Quote is accepted (GOS-41).
+//   IN_PROGRESS                    -> Professional called startEngagementWork
+//                                    ("empecé el trabajo"); requires >= 1
+//                                    CONFIRMED Appointment. Stamps startedAt.
+//   PENDING_CUSTOMER_CONFIRMATION  -> Professional called markEngagementWorkFinished
+//                                    ("terminé, falta que el Cliente confirme").
+//                                    Stamps finishedAt.
+//   COMPLETED / CANCELLED          -> RESERVED. Added to the enum now so
+//                                    GOS-113/114/117 (Customer confirmation,
+//                                    cancellations) attach with no further
+//                                    migration — NO transition into either
+//                                    exists yet.
+// GOS-111 implements only ACCEPTED -> IN_PROGRESS -> PENDING_CUSTOMER_CONFIRMATION,
+// both Professional-driven, via the guarded-CAS-inside-$transaction idiom
+// (see EngagementsRepository.startWorkIfAccepted / finishWorkIfInProgress and
+// AcceptQuoteService's own decision #4). Values are only ever appended
+// (`ALTER TYPE ... ADD VALUE`), never removed — same additive-only posture
+// as ServiceRequestStatus/ProfessionalVerificationStatus.
 enum EngagementStatus {
   ACCEPTED
+  IN_PROGRESS
+  PENDING_CUSTOMER_CONFIRMATION
+  COMPLETED
+  CANCELLED
 }
 
 // GOS-41 — created exactly once, atomically, inside AcceptQuoteService's
@@ -757,6 +775,13 @@ model Engagement {
   professionalProfileId String              @db.Uuid
   professionalProfile   ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
   status                EngagementStatus    @default(ACCEPTED)
+  // GOS-111 — stamped exactly once each, by their respective Professional-driven
+  // transitions (startEngagementWork sets startedAt on ACCEPTED -> IN_PROGRESS;
+  // markEngagementWorkFinished sets finishedAt on IN_PROGRESS ->
+  // PENDING_CUSTOMER_CONFIRMATION). Nullable, no @default — same criterion as
+  // Appointment.confirmedAt/cancelledAt. Existing rows stay NULL / ACCEPTED.
+  startedAt             DateTime?
+  finishedAt            DateTime?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
@@ -766,12 +791,12 @@ model Engagement {
   // EngagementChatConversation.engagementId (`@unique`) below, same
   // "child holds the FK" convention ServiceRequest.engagement/Quote.engagement
   // already establish above.
-  chatConversation      EngagementChatConversation?
+  chatConversation EngagementChatConversation?
 
   // GOS-59 — every Appointment ever proposed/confirmed/cancelled on this
   // Engagement (deliberately NOT a single 1:1 field — see
   // Appointment.engagementId's own comment for why it's not `@unique`).
-  appointments          Appointment[]
+  appointments Appointment[]
 
   // Supports myEngagementsAsCustomer/myEngagementsAsProfessional (WHERE
   // <profile>Id = ? ORDER BY createdAt DESC). serviceRequestId/quoteId
@@ -1546,7 +1571,7 @@ model PlatformSetting {
 // own `onDelete: SetNull` pattern exactly — a deleted admin's past edits are
 // not themselves erased, just anonymized.
 model EmailTemplate {
-  id        String @id @default(uuid()) @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
   // 'verification_code' | 'password_reset_code' | 'admin_invite' — see this
   // model's own header comment; validated against
   // `KNOWN_EMAIL_TEMPLATE_KEYS` at the application layer
@@ -1554,10 +1579,10 @@ model EmailTemplate {
   // stays the single source of truth for the whole feature (seed, admin-UI
   // labels/variable hints, and validation) without a schema migration if
   // the key SET itself ever needs to change.
-  key       String @unique
-  subject   String
-  htmlBody  String
-  textBody  String
+  key      String @unique
+  subject  String
+  htmlBody String
+  textBody String
 
   updatedByAdminUserId String?    @db.Uuid
   updatedByAdminUser   AdminUser? @relation(fields: [updatedByAdminUserId], references: [id], onDelete: SetNull)
