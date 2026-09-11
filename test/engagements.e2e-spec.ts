@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import {
   AuthProvider,
   CountryCode,
-  EngagementStatus,
   ProfessionalVerificationStatus,
   SpecializationRole,
   UserAccountStatus,
@@ -64,7 +63,7 @@ const ACCEPT_APPOINTMENT_MUTATION = `
 `;
 
 const ENGAGEMENT_FIELDS = `
-  id status startedAt finishedAt customerProfileId professionalProfileId
+  id status startedAt finishedAt cancelledAt cancelReason customerProfileId professionalProfileId
 `;
 
 const START_ENGAGEMENT_WORK_MUTATION = `
@@ -85,6 +84,12 @@ const CONFIRM_ENGAGEMENT_COMPLETION_MUTATION = `
   }
 `;
 
+const CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION = `
+  mutation CancelEngagementByCustomer($engagementId: ID!, $reason: String!) {
+    cancelEngagementByCustomer(engagementId: $engagementId, reason: $reason) { ${ENGAGEMENT_FIELDS} }
+  }
+`;
+
 const MY_ENGAGEMENTS_AS_PROFESSIONAL_QUERY = `
   query {
     myEngagementsAsProfessional { ${ENGAGEMENT_FIELDS} }
@@ -101,6 +106,8 @@ interface EngagementPayload {
   status: string;
   startedAt: string | null;
   finishedAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
   customerProfileId: string;
   professionalProfileId: string;
 }
@@ -114,20 +121,21 @@ function uniqueCategoryName(label: string): string {
 }
 
 /**
- * e2e coverage for GOS-111/GOS-113 — the Engagement work-execution state
- * machine: `startEngagementWork` (ACCEPTED -> IN_PROGRESS, requires a
+ * e2e coverage for GOS-111/GOS-113/GOS-114 — the Engagement work-execution
+ * state machine: `startEngagementWork` (ACCEPTED -> IN_PROGRESS, requires a
  * CONFIRMED Appointment), `markEngagementWorkFinished` (IN_PROGRESS ->
- * PENDING_CUSTOMER_CONFIRMATION), and `confirmEngagementCompletion`
- * (PENDING_CUSTOMER_CONFIRMATION -> COMPLETED, Customer-driven, GOS-113).
- * Same "ad hoc seedX() helper, no shared factory library" convention as
- * `test/appointments.e2e-spec.ts`, whose `seedEngagement` (publish -> submit
- * -> accept, a real Engagement, never a hand-inserted row) and appointment
- * propose/accept flow are reused here.
+ * PENDING_CUSTOMER_CONFIRMATION), `confirmEngagementCompletion`
+ * (PENDING_CUSTOMER_CONFIRMATION -> COMPLETED, Customer-driven, GOS-113),
+ * and `cancelEngagementByCustomer` (ACCEPTED|IN_PROGRESS -> CANCELLED,
+ * Customer-driven, GOS-114). Same "ad hoc seedX() helper, no shared factory
+ * library" convention as `test/appointments.e2e-spec.ts`, whose
+ * `seedEngagement` (publish -> submit -> accept, a real Engagement, never a
+ * hand-inserted row) and appointment propose/accept flow are reused here.
  *
  * Runs against the isolated `postgres_test` database (port 5433), never the
  * shared dev Postgres. The `redis` container must be up (@nestjs/throttler).
  */
-describe('GraphQL Engagement work execution (GOS-111/113, e2e)', () => {
+describe('GraphQL Engagement work execution (GOS-111/113/114, e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   const createdCategoryIds: string[] = [];
@@ -850,14 +858,13 @@ describe('GraphQL Engagement work execution (GOS-111/113, e2e)', () => {
 
     it('rejects a CANCELLED Engagement with ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION', async () => {
       const { engagementId, customerToken } = await seedEngagement();
-      // No cancel mutation exists yet (GOS-114/117), so this deliberately
-      // bypasses the real GraphQL flow with a direct write — a temporary
-      // exception to this file's "always drive through GraphQL" convention,
-      // to be replaced once a real cancel mutation ships.
-      await prisma.engagement.update({
-        where: { id: engagementId },
-        data: { status: EngagementStatus.CANCELLED },
-      });
+      // GOS-114 shipped a real cancel mutation — drive the CANCELLED
+      // fixture through it instead of a direct Prisma write.
+      await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'no longer needed' },
+        customerToken,
+      ).expect(200);
 
       const response = await gqlRequest(
         CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
@@ -911,6 +918,268 @@ describe('GraphQL Engagement work execution (GOS-111/113, e2e)', () => {
         where: { id: engagementId },
       });
       expect(row?.status).toBe('COMPLETED');
+    });
+  });
+
+  describe('cancelEngagementByCustomer', () => {
+    it('ACCEPTED -> CANCELLED for the owning Customer, recording cancelledAt/cancelReason', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'Ya no lo necesito' },
+        customerToken,
+      ).expect(200);
+      const body = response.body as {
+        data: { cancelEngagementByCustomer: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.cancelEngagementByCustomer.status).toBe('CANCELLED');
+      expect(body.data?.cancelEngagementByCustomer.cancelledAt).not.toBeNull();
+      expect(body.data?.cancelEngagementByCustomer.cancelReason).toBe(
+        'Ya no lo necesito',
+      );
+
+      const row = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+      expect(row?.status).toBe('CANCELLED');
+      expect(row?.cancelledAt).not.toBeNull();
+      expect(row?.cancelReason).toBe('Ya no lo necesito');
+    });
+
+    it('IN_PROGRESS -> CANCELLED for the owning Customer', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedEngagement();
+      await confirmAnAppointment(
+        engagementId,
+        customerToken,
+        professionalToken,
+      );
+      await gqlRequest(
+        START_ENGAGEMENT_WORK_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'Cambio de planes' },
+        customerToken,
+      ).expect(200);
+      const body = response.body as {
+        data: { cancelEngagementByCustomer: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.cancelEngagementByCustomer.status).toBe('CANCELLED');
+    });
+
+    it('rejects the Professional owner with ENGAGEMENT_NOT_FOUND (anti-enumeration)', async () => {
+      const { engagementId, professionalToken } = await seedEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'x' },
+        professionalToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects an unrelated third-party Customer with ENGAGEMENT_NOT_FOUND', async () => {
+      const { engagementId } = await seedEngagement();
+      const thirdParty = await seedApprovedCustomer();
+      const thirdPartyToken = await loginSessionToken(thirdParty.email);
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'x' },
+        thirdPartyToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects a random engagementId with ENGAGEMENT_NOT_FOUND', async () => {
+      const { customerToken } = await seedEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        {
+          engagementId: '00000000-0000-0000-0000-000000000000',
+          reason: 'x',
+        },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects an unauthenticated call with UNAUTHENTICATED', async () => {
+      const { engagementId } = await seedEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        {
+          engagementId,
+          reason: 'x',
+        },
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('UNAUTHENTICATED');
+    });
+
+    it('rejects a PENDING_CUSTOMER_CONFIRMATION Engagement with ENGAGEMENT_NOT_CANCELLABLE_BY_CUSTOMER', async () => {
+      const { engagementId, customerToken } =
+        await seedPendingCustomerConfirmationEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'x' },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe(
+        'ENGAGEMENT_NOT_CANCELLABLE_BY_CUSTOMER',
+      );
+    });
+
+    it('rejects an already-COMPLETED Engagement with ENGAGEMENT_NOT_CANCELLABLE_BY_CUSTOMER', async () => {
+      const { engagementId, customerToken } =
+        await seedPendingCustomerConfirmationEngagement();
+      await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'x' },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe(
+        'ENGAGEMENT_NOT_CANCELLABLE_BY_CUSTOMER',
+      );
+    });
+
+    it('rejects an already-CANCELLED Engagement (second cancel) with ENGAGEMENT_NOT_CANCELLABLE_BY_CUSTOMER', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+      await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'first' },
+        customerToken,
+      ).expect(200);
+
+      const second = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'second' },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(second.body)).toBe(
+        'ENGAGEMENT_NOT_CANCELLABLE_BY_CUSTOMER',
+      );
+    });
+
+    it('two concurrent cancelEngagementByCustomer calls: exactly one wins, the other gets ENGAGEMENT_CANCEL_CONFLICT', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+
+      const [a, b] = await Promise.all([
+        gqlRequest(
+          CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+          { engagementId, reason: 'a' },
+          customerToken,
+        ),
+        gqlRequest(
+          CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+          { engagementId, reason: 'b' },
+          customerToken,
+        ),
+      ]);
+
+      const bodyA = a.body as {
+        data: { cancelEngagementByCustomer: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+      const bodyB = b.body as {
+        data: { cancelEngagementByCustomer: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      const wonA =
+        !bodyA.errors &&
+        bodyA.data?.cancelEngagementByCustomer.status === 'CANCELLED';
+      const wonB =
+        !bodyB.errors &&
+        bodyB.data?.cancelEngagementByCustomer.status === 'CANCELLED';
+      expect(wonA).toBe(!wonB);
+
+      const loserCode = wonA ? errorCode(bodyB) : errorCode(bodyA);
+      expect(loserCode).toBe('ENGAGEMENT_CANCEL_CONFLICT');
+
+      const row = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+      expect(row?.status).toBe('CANCELLED');
+    });
+
+    it('a race against a concurrent markEngagementWorkFinished: exactly one wins', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedEngagement();
+      await confirmAnAppointment(
+        engagementId,
+        customerToken,
+        professionalToken,
+      );
+      await gqlRequest(
+        START_ENGAGEMENT_WORK_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+
+      const [cancelResponse, finishResponse] = await Promise.all([
+        gqlRequest(
+          CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+          { engagementId, reason: 'cliente cancela' },
+          customerToken,
+        ),
+        gqlRequest(
+          MARK_ENGAGEMENT_WORK_FINISHED_MUTATION,
+          { engagementId },
+          professionalToken,
+        ),
+      ]);
+
+      const cancelBody = cancelResponse.body as {
+        data: { cancelEngagementByCustomer: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+      const finishBody = finishResponse.body as {
+        data: { markEngagementWorkFinished: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      const cancelWon =
+        !cancelBody.errors &&
+        cancelBody.data?.cancelEngagementByCustomer.status === 'CANCELLED';
+      const finishWon =
+        !finishBody.errors &&
+        finishBody.data?.markEngagementWorkFinished.status ===
+          'PENDING_CUSTOMER_CONFIRMATION';
+      expect(cancelWon).toBe(!finishWon);
+
+      const row = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+      expect(row?.status).toBe(
+        cancelWon ? 'CANCELLED' : 'PENDING_CUSTOMER_CONFIRMATION',
+      );
     });
   });
 

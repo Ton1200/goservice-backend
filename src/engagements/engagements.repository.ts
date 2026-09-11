@@ -14,16 +14,18 @@ import { PrismaService } from '../prisma/prisma.service';
  *   atomically alongside the ServiceRequest OPEN->ENGAGED and Quote
  *   SENT->ACCEPTED CAS transitions.
  * - `startWorkIfAccepted` / `finishWorkIfInProgress` (GOS-111) /
- *   `completeIfPendingCustomerConfirmation` (GOS-113) are the guarded
- *   compare-and-swap transitions of the work-execution state machine
- *   (ACCEPTED -> IN_PROGRESS -> PENDING_CUSTOMER_CONFIRMATION -> COMPLETED).
+ *   `completeIfPendingCustomerConfirmation` (GOS-113) /
+ *   `cancelIfActive` (GOS-114) are the guarded compare-and-swap transitions
+ *   of the work-execution state machine (ACCEPTED -> IN_PROGRESS ->
+ *   PENDING_CUSTOMER_CONFIRMATION -> COMPLETED, or ACCEPTED|IN_PROGRESS ->
+ *   CANCELLED).
  *   Each also takes an EXTERNALLY-opened `tx`, called only from inside its
  *   own application service's `prisma.$transaction`
  *   (`StartEngagementWorkService` / `MarkEngagementWorkFinishedService` /
- *   `ConfirmEngagementCompletionService`) — same idiom as
- *   `quotesRepository.transitionToAcceptedIfSent`. A `count !== 1` result
- *   means the caller lost a race and must throw its conflict error + roll
- *   back the transaction.
+ *   `ConfirmEngagementCompletionService` / `CancelEngagementByCustomerService`)
+ *   — same idiom as `quotesRepository.transitionToAcceptedIfSent`. A
+ *   `count !== 1` result means the caller lost a race and must throw its
+ *   conflict error + roll back the transaction.
  */
 @Injectable()
 export class EngagementsRepository {
@@ -92,6 +94,38 @@ export class EngagementsRepository {
     return tx.engagement.updateMany({
       where: { id, status: EngagementStatus.PENDING_CUSTOMER_CONFIRMATION },
       data: { status: EngagementStatus.COMPLETED },
+    });
+  }
+
+  /**
+   * GOS-114 — guarded CAS for `cancelEngagementByCustomer`: only
+   * transitions while still `ACCEPTED` or `IN_PROGRESS` (unlike the other
+   * three CAS methods above, this one guards TWO source statuses in a
+   * single `updateMany`, same idiom as `AppointmentsRepository.cancelIfActive`).
+   * `count === 0` means a lost race (e.g. the Professional's own
+   * `startEngagementWork`/`markEngagementWorkFinished`, or a second
+   * concurrent cancel, ran in between the caller's pre-read and this write)
+   * — `CancelEngagementByCustomerService` throws `engagementCancelConflict()`
+   * and rolls back. Stamps `cancelledAt`/`cancelReason` in the same write —
+   * no separate column-only update.
+   */
+  cancelIfActive(
+    tx: Prisma.TransactionClient,
+    id: string,
+    cancelReason: string,
+  ): Promise<{ count: number }> {
+    return tx.engagement.updateMany({
+      where: {
+        id,
+        status: {
+          in: [EngagementStatus.ACCEPTED, EngagementStatus.IN_PROGRESS],
+        },
+      },
+      data: {
+        status: EngagementStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancelReason,
+      },
     });
   }
 

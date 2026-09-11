@@ -48,6 +48,21 @@ export class EngagementModel {
   @Field(() => GraphQLISODateTime, { nullable: true })
   finishedAt?: Date | null;
 
+  /**
+   * GOS-114 — set the moment the Customer calls
+   * `cancelEngagementByCustomer` (ACCEPTED|IN_PROGRESS → CANCELLED); `null`
+   * before then.
+   */
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  cancelledAt?: Date | null;
+
+  /**
+   * GOS-114 — the Customer-supplied reason passed to
+   * `cancelEngagementByCustomer`; `null` until then.
+   */
+  @Field(() => String, { nullable: true })
+  cancelReason?: string | null;
+
   @Field(() => GraphQLISODateTime)
   createdAt!: Date;
 
