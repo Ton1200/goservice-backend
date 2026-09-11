@@ -7,10 +7,12 @@ import { UsersModule } from '../users/users.module';
 import { EngagementsRepository } from './engagements.repository';
 import { EngagementsResolver } from './engagements.resolver';
 import { CancelEngagementByCustomerService } from './services/cancel-engagement-by-customer.service';
+import { CancelEngagementByProfessionalService } from './services/cancel-engagement-by-professional.service';
 import { ConfirmEngagementCompletionService } from './services/confirm-engagement-completion.service';
 import { ListMyEngagementsAsCustomerService } from './services/list-my-engagements-as-customer.service';
 import { ListMyEngagementsAsProfessionalService } from './services/list-my-engagements-as-professional.service';
 import { MarkEngagementWorkFinishedService } from './services/mark-engagement-work-finished.service';
+import { ReportEngagementNoShowService } from './services/report-engagement-no-show.service';
 import { StartEngagementWorkService } from './services/start-engagement-work.service';
 
 /**
@@ -62,6 +64,8 @@ import { StartEngagementWorkService } from './services/start-engagement-work.ser
     MarkEngagementWorkFinishedService,
     ConfirmEngagementCompletionService,
     CancelEngagementByCustomerService,
+    CancelEngagementByProfessionalService,
+    ReportEngagementNoShowService,
   ],
   exports: [EngagementsRepository],
 })

@@ -87,6 +87,44 @@ export class ProfilesRepository {
     });
   }
 
+  /**
+   * GOS-117 — increments the OTHER party's no-show trust/reliability
+   * counter when one side of an Engagement reports a no-show
+   * (`ReportEngagementNoShowService`). Unlike `setCustomerProfilePhoto`/
+   * `setProfessionalProfilePhoto` above, this does NOT take a `tx`: those
+   * two always run inside a caller's `$transaction` because that caller
+   * pairs the write with a second write (an `AdminAuditLog` row) that must
+   * commit atomically with it. `ReportEngagementNoShowService` pairs this
+   * write with nothing else — `Engagement.status` is deliberately
+   * untouched (see that service's own header comment) — so there is no
+   * second write to be atomic WITH, and `this.prisma` directly is the
+   * simpler, honest choice. A future caller that DOES need to pair this
+   * with another write can add a `tx`-taking overload then, rather than
+   * speculatively adding one now.
+   *
+   * A plain `update` by primary key, not a guarded `updateMany` — there is
+   * no precondition to race against here: a concurrent/repeated no-show
+   * report from the same party is an explicitly ALLOWED, undeduplicated
+   * outcome per GOS-117's own AC, not a conflict to guard against.
+   */
+  incrementCustomerNoShowReportedCount(
+    customerProfileId: string,
+  ): Promise<CustomerProfile> {
+    return this.prisma.customerProfile.update({
+      where: { id: customerProfileId },
+      data: { noShowReportedCount: { increment: 1 } },
+    });
+  }
+
+  incrementProfessionalNoShowReportedCount(
+    professionalProfileId: string,
+  ): Promise<ProfessionalProfile> {
+    return this.prisma.professionalProfile.update({
+      where: { id: professionalProfileId },
+      data: { noShowReportedCount: { increment: 1 } },
+    });
+  }
+
   /** GOS-70 — cheap existence check for the admin profile-photo mutations
    *  (avoids the specialization `include` that
    *  `findProfessionalProfileByUserId` carries). */
