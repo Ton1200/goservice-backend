@@ -90,6 +90,18 @@ const CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION = `
   }
 `;
 
+const CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION = `
+  mutation CancelEngagementByProfessional($engagementId: ID!, $reason: String!) {
+    cancelEngagementByProfessional(engagementId: $engagementId, reason: $reason) { ${ENGAGEMENT_FIELDS} }
+  }
+`;
+
+const REPORT_ENGAGEMENT_NO_SHOW_MUTATION = `
+  mutation ReportEngagementNoShow($engagementId: ID!, $reason: String!) {
+    reportEngagementNoShow(engagementId: $engagementId, reason: $reason) { ${ENGAGEMENT_FIELDS} }
+  }
+`;
+
 const MY_ENGAGEMENTS_AS_PROFESSIONAL_QUERY = `
   query {
     myEngagementsAsProfessional { ${ENGAGEMENT_FIELDS} }
@@ -121,21 +133,24 @@ function uniqueCategoryName(label: string): string {
 }
 
 /**
- * e2e coverage for GOS-111/GOS-113/GOS-114 — the Engagement work-execution
- * state machine: `startEngagementWork` (ACCEPTED -> IN_PROGRESS, requires a
- * CONFIRMED Appointment), `markEngagementWorkFinished` (IN_PROGRESS ->
- * PENDING_CUSTOMER_CONFIRMATION), `confirmEngagementCompletion`
+ * e2e coverage for GOS-111/GOS-113/GOS-114/GOS-117 — the Engagement
+ * work-execution state machine: `startEngagementWork` (ACCEPTED ->
+ * IN_PROGRESS, requires a CONFIRMED Appointment), `markEngagementWorkFinished`
+ * (IN_PROGRESS -> PENDING_CUSTOMER_CONFIRMATION), `confirmEngagementCompletion`
  * (PENDING_CUSTOMER_CONFIRMATION -> COMPLETED, Customer-driven, GOS-113),
- * and `cancelEngagementByCustomer` (ACCEPTED|IN_PROGRESS -> CANCELLED,
- * Customer-driven, GOS-114). Same "ad hoc seedX() helper, no shared factory
- * library" convention as `test/appointments.e2e-spec.ts`, whose
- * `seedEngagement` (publish -> submit -> accept, a real Engagement, never a
- * hand-inserted row) and appointment propose/accept flow are reused here.
+ * `cancelEngagementByCustomer` (ACCEPTED|IN_PROGRESS -> CANCELLED,
+ * Customer-driven, GOS-114), `cancelEngagementByProfessional` (same
+ * transition, Professional-driven, GOS-117), and `reportEngagementNoShow`
+ * (GOS-117 — a pure trust/reliability counter, no state change). Same "ad
+ * hoc seedX() helper, no shared factory library" convention as
+ * `test/appointments.e2e-spec.ts`, whose `seedEngagement` (publish -> submit
+ * -> accept, a real Engagement, never a hand-inserted row) and appointment
+ * propose/accept flow are reused here.
  *
  * Runs against the isolated `postgres_test` database (port 5433), never the
  * shared dev Postgres. The `redis` container must be up (@nestjs/throttler).
  */
-describe('GraphQL Engagement work execution (GOS-111/113/114, e2e)', () => {
+describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   const createdCategoryIds: string[] = [];
@@ -1180,6 +1195,391 @@ describe('GraphQL Engagement work execution (GOS-111/113/114, e2e)', () => {
       expect(row?.status).toBe(
         cancelWon ? 'CANCELLED' : 'PENDING_CUSTOMER_CONFIRMATION',
       );
+    });
+  });
+
+  describe('cancelEngagementByProfessional (GOS-117)', () => {
+    it('ACCEPTED -> CANCELLED for the owning Professional, recording cancelledAt/cancelReason', async () => {
+      const { engagementId, professionalToken } = await seedEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        { engagementId, reason: 'No puedo cumplir con el trabajo' },
+        professionalToken,
+      ).expect(200);
+      const body = response.body as {
+        data: { cancelEngagementByProfessional: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.cancelEngagementByProfessional.status).toBe(
+        'CANCELLED',
+      );
+      expect(
+        body.data?.cancelEngagementByProfessional.cancelledAt,
+      ).not.toBeNull();
+      expect(body.data?.cancelEngagementByProfessional.cancelReason).toBe(
+        'No puedo cumplir con el trabajo',
+      );
+
+      const row = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+      expect(row?.status).toBe('CANCELLED');
+      expect(row?.cancelledAt).not.toBeNull();
+      expect(row?.cancelReason).toBe('No puedo cumplir con el trabajo');
+    });
+
+    it('IN_PROGRESS -> CANCELLED for the owning Professional', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedEngagement();
+      await confirmAnAppointment(
+        engagementId,
+        customerToken,
+        professionalToken,
+      );
+      await gqlRequest(
+        START_ENGAGEMENT_WORK_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        { engagementId, reason: 'Emergencia personal' },
+        professionalToken,
+      ).expect(200);
+      const body = response.body as {
+        data: { cancelEngagementByProfessional: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.cancelEngagementByProfessional.status).toBe(
+        'CANCELLED',
+      );
+    });
+
+    it('rejects the Customer owner with ENGAGEMENT_NOT_FOUND (anti-enumeration)', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        { engagementId, reason: 'x' },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects an unrelated third-party Professional with ENGAGEMENT_NOT_FOUND', async () => {
+      const { engagementId } = await seedEngagement();
+      const outsiderCategoryId = await seedCategory();
+      const outsider = await seedApprovedProfessional([outsiderCategoryId]);
+      const outsiderToken = await loginSessionToken(outsider.email);
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        { engagementId, reason: 'x' },
+        outsiderToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects a random engagementId with ENGAGEMENT_NOT_FOUND', async () => {
+      const { professionalToken } = await seedEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        {
+          engagementId: '00000000-0000-0000-0000-000000000000',
+          reason: 'x',
+        },
+        professionalToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects an unauthenticated call with UNAUTHENTICATED', async () => {
+      const { engagementId } = await seedEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        {
+          engagementId,
+          reason: 'x',
+        },
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('UNAUTHENTICATED');
+    });
+
+    it('rejects a PENDING_CUSTOMER_CONFIRMATION Engagement with ENGAGEMENT_NOT_CANCELLABLE_BY_PROFESSIONAL', async () => {
+      const { engagementId, professionalToken } =
+        await seedPendingCustomerConfirmationEngagement();
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        { engagementId, reason: 'x' },
+        professionalToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe(
+        'ENGAGEMENT_NOT_CANCELLABLE_BY_PROFESSIONAL',
+      );
+    });
+
+    it('rejects an already-COMPLETED Engagement with ENGAGEMENT_NOT_CANCELLABLE_BY_PROFESSIONAL', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedPendingCustomerConfirmationEngagement();
+      await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+
+      const response = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        { engagementId, reason: 'x' },
+        professionalToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe(
+        'ENGAGEMENT_NOT_CANCELLABLE_BY_PROFESSIONAL',
+      );
+    });
+
+    it('rejects an already-CANCELLED Engagement (second cancel) with ENGAGEMENT_NOT_CANCELLABLE_BY_PROFESSIONAL', async () => {
+      const { engagementId, professionalToken } = await seedEngagement();
+      await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        { engagementId, reason: 'first' },
+        professionalToken,
+      ).expect(200);
+
+      const second = await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        { engagementId, reason: 'second' },
+        professionalToken,
+      ).expect(200);
+
+      expect(errorCode(second.body)).toBe(
+        'ENGAGEMENT_NOT_CANCELLABLE_BY_PROFESSIONAL',
+      );
+    });
+
+    it('two concurrent cancelEngagementByProfessional calls: exactly one wins, the other gets ENGAGEMENT_CANCEL_CONFLICT', async () => {
+      const { engagementId, professionalToken } = await seedEngagement();
+
+      const [a, b] = await Promise.all([
+        gqlRequest(
+          CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+          { engagementId, reason: 'a' },
+          professionalToken,
+        ),
+        gqlRequest(
+          CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+          { engagementId, reason: 'b' },
+          professionalToken,
+        ),
+      ]);
+
+      const bodyA = a.body as {
+        data: { cancelEngagementByProfessional: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+      const bodyB = b.body as {
+        data: { cancelEngagementByProfessional: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      const wonA =
+        !bodyA.errors &&
+        bodyA.data?.cancelEngagementByProfessional.status === 'CANCELLED';
+      const wonB =
+        !bodyB.errors &&
+        bodyB.data?.cancelEngagementByProfessional.status === 'CANCELLED';
+      expect(wonA).toBe(!wonB);
+
+      const loserCode = wonA ? errorCode(bodyB) : errorCode(bodyA);
+      expect(loserCode).toBe('ENGAGEMENT_CANCEL_CONFLICT');
+
+      const row = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+      expect(row?.status).toBe('CANCELLED');
+    });
+  });
+
+  describe('reportEngagementNoShow (GOS-117)', () => {
+    it('Customer reports a Professional no-show: increments only the Professional’s counter and leaves status untouched', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+      const before = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+
+      const response = await gqlRequest(
+        REPORT_ENGAGEMENT_NO_SHOW_MUTATION,
+        { engagementId, reason: 'El profesional no se presentó' },
+        customerToken,
+      ).expect(200);
+      const body = response.body as {
+        data: { reportEngagementNoShow: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.reportEngagementNoShow.status).toBe('ACCEPTED');
+
+      const professionalProfileId =
+        body.data!.reportEngagementNoShow.professionalProfileId;
+      const customerProfileId =
+        body.data!.reportEngagementNoShow.customerProfileId;
+      const professionalProfile = await prisma.professionalProfile.findUnique(
+        { where: { id: professionalProfileId } },
+      );
+      const customerProfile = await prisma.customerProfile.findUnique({
+        where: { id: customerProfileId },
+      });
+      expect(professionalProfile?.noShowReportedCount).toBe(1);
+      expect(customerProfile?.noShowReportedCount).toBe(0);
+
+      // Explicit assertion: Engagement.status is byte-identical before/after
+      // — reporting a no-show has ZERO effect on the Engagement itself.
+      const after = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+      expect(after?.status).toBe(before?.status);
+      expect(after?.updatedAt).toEqual(before?.updatedAt);
+    });
+
+    it('Professional reports a Customer no-show (IN_PROGRESS): increments only the Customer’s counter', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedEngagement();
+      await confirmAnAppointment(
+        engagementId,
+        customerToken,
+        professionalToken,
+      );
+      await gqlRequest(
+        START_ENGAGEMENT_WORK_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+
+      const response = await gqlRequest(
+        REPORT_ENGAGEMENT_NO_SHOW_MUTATION,
+        { engagementId, reason: 'El cliente no se presentó' },
+        professionalToken,
+      ).expect(200);
+      const body = response.body as {
+        data: { reportEngagementNoShow: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.reportEngagementNoShow.status).toBe('IN_PROGRESS');
+
+      const professionalProfileId =
+        body.data!.reportEngagementNoShow.professionalProfileId;
+      const customerProfileId =
+        body.data!.reportEngagementNoShow.customerProfileId;
+      const professionalProfile = await prisma.professionalProfile.findUnique(
+        { where: { id: professionalProfileId } },
+      );
+      const customerProfile = await prisma.customerProfile.findUnique({
+        where: { id: customerProfileId },
+      });
+      expect(customerProfile?.noShowReportedCount).toBe(1);
+      expect(professionalProfile?.noShowReportedCount).toBe(0);
+    });
+
+    it('rejects an unrelated third party with ENGAGEMENT_NOT_FOUND (anti-enumeration)', async () => {
+      const { engagementId } = await seedEngagement();
+      const thirdParty = await seedApprovedCustomer();
+      const thirdPartyToken = await loginSessionToken(thirdParty.email);
+
+      const response = await gqlRequest(
+        REPORT_ENGAGEMENT_NO_SHOW_MUTATION,
+        { engagementId, reason: 'x' },
+        thirdPartyToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects a PENDING_CUSTOMER_CONFIRMATION Engagement with ENGAGEMENT_NOT_REPORTABLE_FOR_NO_SHOW', async () => {
+      const { engagementId, customerToken } =
+        await seedPendingCustomerConfirmationEngagement();
+
+      const response = await gqlRequest(
+        REPORT_ENGAGEMENT_NO_SHOW_MUTATION,
+        { engagementId, reason: 'x' },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe(
+        'ENGAGEMENT_NOT_REPORTABLE_FOR_NO_SHOW',
+      );
+    });
+
+    it('rejects an already-CANCELLED Engagement with ENGAGEMENT_NOT_REPORTABLE_FOR_NO_SHOW', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+      await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'ya no lo necesito' },
+        customerToken,
+      ).expect(200);
+
+      const response = await gqlRequest(
+        REPORT_ENGAGEMENT_NO_SHOW_MUTATION,
+        { engagementId, reason: 'x' },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe(
+        'ENGAGEMENT_NOT_REPORTABLE_FOR_NO_SHOW',
+      );
+    });
+
+    it('two reports from the same party on the same Engagement both succeed — no dedup, counter ends at 2', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+
+      const first = await gqlRequest(
+        REPORT_ENGAGEMENT_NO_SHOW_MUTATION,
+        { engagementId, reason: 'primera vez' },
+        customerToken,
+      ).expect(200);
+      const firstBody = first.body as {
+        data: { reportEngagementNoShow: EngagementPayload } | null;
+      };
+      const professionalProfileId =
+        firstBody.data!.reportEngagementNoShow.professionalProfileId;
+
+      await gqlRequest(
+        REPORT_ENGAGEMENT_NO_SHOW_MUTATION,
+        { engagementId, reason: 'de nuevo' },
+        customerToken,
+      ).expect(200);
+
+      const professionalProfile = await prisma.professionalProfile.findUnique(
+        { where: { id: professionalProfileId } },
+      );
+      expect(professionalProfile?.noShowReportedCount).toBe(2);
+    });
+
+    it('rejects an unauthenticated call with UNAUTHENTICATED', async () => {
+      const { engagementId } = await seedEngagement();
+
+      const response = await gqlRequest(REPORT_ENGAGEMENT_NO_SHOW_MUTATION, {
+        engagementId,
+        reason: 'x',
+      }).expect(200);
+
+      expect(errorCode(response.body)).toBe('UNAUTHENTICATED');
     });
   });
 

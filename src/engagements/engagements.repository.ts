@@ -25,7 +25,11 @@ import { PrismaService } from '../prisma/prisma.service';
  *   `ConfirmEngagementCompletionService` / `CancelEngagementByCustomerService`)
  *   — same idiom as `quotesRepository.transitionToAcceptedIfSent`. A
  *   `count !== 1` result means the caller lost a race and must throw its
- *   conflict error + roll back the transaction.
+ *   conflict error + roll back the transaction. `cancelIfActive` is
+ *   role-agnostic by design — its `where`/`data` never reference who
+ *   initiated the cancel — so GOS-117's `CancelEngagementByProfessionalService`
+ *   reuses it COMPLETELY UNCHANGED as a second caller, alongside
+ *   `CancelEngagementByCustomerService`.
  */
 @Injectable()
 export class EngagementsRepository {

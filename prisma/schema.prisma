@@ -295,6 +295,15 @@ model CustomerProfile {
   // exists anywhere in this schema yet; that belongs to a separate future
   // story once DEC-005 is actually decided.
   locationSharingEnabled Boolean     @default(false)
+  // GOS-117 — trust/reliability counter: incremented each time the OTHER
+  // party (the Professional) on one of this Customer's Engagements reports
+  // this Customer as a no-show via `reportEngagementNoShow`. Deliberately
+  // NOT exposed on `CustomerProfileModel` yet — no GraphQL surface for
+  // profile counters exists today — and deliberately has ZERO automatic
+  // consequence (no blocking/threshold logic anywhere) — see
+  // `ReportEngagementNoShowService`'s own header comment. Never
+  // deduplicated: repeated reports on the same Engagement all count.
+  noShowReportedCount    Int         @default(0)
   createdAt              DateTime    @default(now())
   updatedAt              DateTime    @updatedAt
 
@@ -370,6 +379,12 @@ model ProfessionalProfile {
   // rationale) — independent per profile: a User holding both a
   // CustomerProfile and a ProfessionalProfile may set each one differently.
   locationSharingEnabled Boolean                        @default(false)
+  // GOS-117 — same trust/reliability counter as `CustomerProfile`'s own
+  // field of the same name (see that field's own comment for the full
+  // rationale) — incremented each time the OTHER party (the Customer) on
+  // one of this Professional's Engagements reports this Professional as a
+  // no-show.
+  noShowReportedCount    Int                            @default(0)
   createdAt              DateTime                       @default(now())
   updatedAt              DateTime                       @updatedAt
 
