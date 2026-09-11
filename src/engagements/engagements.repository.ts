@@ -13,12 +13,14 @@ import { PrismaService } from '../prisma/prisma.service';
  *   comment), never on its own: an `Engagement` must never be created except
  *   atomically alongside the ServiceRequest OPEN->ENGAGED and Quote
  *   SENT->ACCEPTED CAS transitions.
- * - `startWorkIfAccepted` / `finishWorkIfInProgress` (GOS-111) are the
- *   guarded compare-and-swap transitions of the work-execution state machine
- *   (ACCEPTED -> IN_PROGRESS -> PENDING_CUSTOMER_CONFIRMATION). Each also
- *   takes an EXTERNALLY-opened `tx`, called only from inside its own
- *   application service's `prisma.$transaction` (`StartEngagementWorkService`
- *   / `MarkEngagementWorkFinishedService`) — same idiom as
+ * - `startWorkIfAccepted` / `finishWorkIfInProgress` (GOS-111) /
+ *   `completeIfPendingCustomerConfirmation` (GOS-113) are the guarded
+ *   compare-and-swap transitions of the work-execution state machine
+ *   (ACCEPTED -> IN_PROGRESS -> PENDING_CUSTOMER_CONFIRMATION -> COMPLETED).
+ *   Each also takes an EXTERNALLY-opened `tx`, called only from inside its
+ *   own application service's `prisma.$transaction`
+ *   (`StartEngagementWorkService` / `MarkEngagementWorkFinishedService` /
+ *   `ConfirmEngagementCompletionService`) — same idiom as
  *   `quotesRepository.transitionToAcceptedIfSent`. A `count !== 1` result
  *   means the caller lost a race and must throw its conflict error + roll
  *   back the transaction.
@@ -72,6 +74,24 @@ export class EngagementsRepository {
         status: EngagementStatus.PENDING_CUSTOMER_CONFIRMATION,
         finishedAt: new Date(),
       },
+    });
+  }
+
+  /**
+   * GOS-113 — guarded CAS for `confirmEngagementCompletion`: only
+   * transitions while still `PENDING_CUSTOMER_CONFIRMATION`. `count === 0`
+   * means a lost race — `ConfirmEngagementCompletionService` throws
+   * `engagementCompletionConflict()` and rolls back. No timestamp is
+   * stamped here: unlike `startedAt`/`finishedAt`, GOS-113 adds no
+   * `completedAt` column — this ticket is logic-only, no schema change.
+   */
+  completeIfPendingCustomerConfirmation(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<{ count: number }> {
+    return tx.engagement.updateMany({
+      where: { id, status: EngagementStatus.PENDING_CUSTOMER_CONFIRMATION },
+      data: { status: EngagementStatus.COMPLETED },
     });
   }
 
