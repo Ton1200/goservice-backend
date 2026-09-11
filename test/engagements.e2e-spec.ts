@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   AuthProvider,
   CountryCode,
+  EngagementStatus,
   ProfessionalVerificationStatus,
   SpecializationRole,
   UserAccountStatus,
@@ -78,6 +79,12 @@ const MARK_ENGAGEMENT_WORK_FINISHED_MUTATION = `
   }
 `;
 
+const CONFIRM_ENGAGEMENT_COMPLETION_MUTATION = `
+  mutation ConfirmEngagementCompletion($engagementId: ID!) {
+    confirmEngagementCompletion(engagementId: $engagementId) { ${ENGAGEMENT_FIELDS} }
+  }
+`;
+
 const MY_ENGAGEMENTS_AS_PROFESSIONAL_QUERY = `
   query {
     myEngagementsAsProfessional { ${ENGAGEMENT_FIELDS} }
@@ -107,18 +114,20 @@ function uniqueCategoryName(label: string): string {
 }
 
 /**
- * e2e coverage for GOS-111 — the Engagement work-execution state machine:
- * `startEngagementWork` (ACCEPTED -> IN_PROGRESS, requires a CONFIRMED
- * Appointment) and `markEngagementWorkFinished` (IN_PROGRESS ->
- * PENDING_CUSTOMER_CONFIRMATION). Same "ad hoc seedX() helper, no shared
- * factory library" convention as `test/appointments.e2e-spec.ts`, whose
- * `seedEngagement` (publish -> submit -> accept, a real Engagement, never a
- * hand-inserted row) and appointment propose/accept flow are reused here.
+ * e2e coverage for GOS-111/GOS-113 — the Engagement work-execution state
+ * machine: `startEngagementWork` (ACCEPTED -> IN_PROGRESS, requires a
+ * CONFIRMED Appointment), `markEngagementWorkFinished` (IN_PROGRESS ->
+ * PENDING_CUSTOMER_CONFIRMATION), and `confirmEngagementCompletion`
+ * (PENDING_CUSTOMER_CONFIRMATION -> COMPLETED, Customer-driven, GOS-113).
+ * Same "ad hoc seedX() helper, no shared factory library" convention as
+ * `test/appointments.e2e-spec.ts`, whose `seedEngagement` (publish -> submit
+ * -> accept, a real Engagement, never a hand-inserted row) and appointment
+ * propose/accept flow are reused here.
  *
  * Runs against the isolated `postgres_test` database (port 5433), never the
  * shared dev Postgres. The `redis` container must be up (@nestjs/throttler).
  */
-describe('GraphQL Engagement work execution (GOS-111, e2e)', () => {
+describe('GraphQL Engagement work execution (GOS-111/113, e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   const createdCategoryIds: string[] = [];
@@ -357,6 +366,33 @@ describe('GraphQL Engagement work execution (GOS-111, e2e)', () => {
   function errorCode(body: unknown): string | undefined {
     return (body as { errors?: GraphQLErrorEntry[] }).errors?.[0]?.extensions
       ?.code;
+  }
+
+  /**
+   * Drives a fresh Engagement all the way to PENDING_CUSTOMER_CONFIRMATION
+   * via the real GraphQL flow (seedEngagement -> confirmAnAppointment ->
+   * startEngagementWork -> markEngagementWorkFinished), for
+   * `confirmEngagementCompletion` tests below.
+   */
+  async function seedPendingCustomerConfirmationEngagement(): Promise<{
+    engagementId: string;
+    customerToken: string;
+    professionalToken: string;
+  }> {
+    const { engagementId, customerToken, professionalToken } =
+      await seedEngagement();
+    await confirmAnAppointment(engagementId, customerToken, professionalToken);
+    await gqlRequest(
+      START_ENGAGEMENT_WORK_MUTATION,
+      { engagementId },
+      professionalToken,
+    ).expect(200);
+    await gqlRequest(
+      MARK_ENGAGEMENT_WORK_FINISHED_MUTATION,
+      { engagementId },
+      professionalToken,
+    ).expect(200);
+    return { engagementId, customerToken, professionalToken };
   }
 
   describe('startEngagementWork', () => {
@@ -671,6 +707,210 @@ describe('GraphQL Engagement work execution (GOS-111, e2e)', () => {
       ).expect(200);
 
       expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+  });
+
+  describe('confirmEngagementCompletion', () => {
+    it('PENDING_CUSTOMER_CONFIRMATION -> COMPLETED for the owning Customer', async () => {
+      const { engagementId, customerToken } =
+        await seedPendingCustomerConfirmationEngagement();
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+      const body = response.body as {
+        data: { confirmEngagementCompletion: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.confirmEngagementCompletion.status).toBe('COMPLETED');
+
+      const row = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+      expect(row?.status).toBe('COMPLETED');
+    });
+
+    it('rejects the Professional owner with ENGAGEMENT_NOT_FOUND', async () => {
+      const { engagementId, professionalToken } =
+        await seedPendingCustomerConfirmationEngagement();
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects an unrelated third-party Customer with ENGAGEMENT_NOT_FOUND', async () => {
+      const { engagementId } =
+        await seedPendingCustomerConfirmationEngagement();
+      const thirdParty = await seedApprovedCustomer();
+      const thirdPartyToken = await loginSessionToken(thirdParty.email);
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        thirdPartyToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects a random engagementId with ENGAGEMENT_NOT_FOUND', async () => {
+      const { customerToken } =
+        await seedPendingCustomerConfirmationEngagement();
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId: '00000000-0000-0000-0000-000000000000' },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_NOT_FOUND');
+    });
+
+    it('rejects an unauthenticated call with UNAUTHENTICATED', async () => {
+      const { engagementId } =
+        await seedPendingCustomerConfirmationEngagement();
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        {
+          engagementId,
+        },
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('UNAUTHENTICATED');
+    });
+
+    it('rejects an ACCEPTED Engagement with ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe(
+        'ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION',
+      );
+    });
+
+    it('rejects an IN_PROGRESS Engagement with ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedEngagement();
+      await confirmAnAppointment(
+        engagementId,
+        customerToken,
+        professionalToken,
+      );
+      await gqlRequest(
+        START_ENGAGEMENT_WORK_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe(
+        'ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION',
+      );
+    });
+
+    it('rejects an already-COMPLETED Engagement (second confirm) with ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION', async () => {
+      const { engagementId, customerToken } =
+        await seedPendingCustomerConfirmationEngagement();
+      await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+
+      const second = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(second.body)).toBe(
+        'ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION',
+      );
+    });
+
+    it('rejects a CANCELLED Engagement with ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+      // No cancel mutation exists yet (GOS-114/117), so this deliberately
+      // bypasses the real GraphQL flow with a direct write — a temporary
+      // exception to this file's "always drive through GraphQL" convention,
+      // to be replaced once a real cancel mutation ships.
+      await prisma.engagement.update({
+        where: { id: engagementId },
+        data: { status: EngagementStatus.CANCELLED },
+      });
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe(
+        'ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION',
+      );
+    });
+
+    it('two concurrent confirmEngagementCompletion calls: exactly one wins, the other gets ENGAGEMENT_COMPLETION_CONFLICT', async () => {
+      const { engagementId, customerToken } =
+        await seedPendingCustomerConfirmationEngagement();
+
+      const [a, b] = await Promise.all([
+        gqlRequest(
+          CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+          { engagementId },
+          customerToken,
+        ),
+        gqlRequest(
+          CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+          { engagementId },
+          customerToken,
+        ),
+      ]);
+
+      const bodyA = a.body as {
+        data: { confirmEngagementCompletion: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+      const bodyB = b.body as {
+        data: { confirmEngagementCompletion: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      const wonA =
+        !bodyA.errors &&
+        bodyA.data?.confirmEngagementCompletion.status === 'COMPLETED';
+      const wonB =
+        !bodyB.errors &&
+        bodyB.data?.confirmEngagementCompletion.status === 'COMPLETED';
+      expect(wonA).toBe(!wonB);
+
+      const loserCode = wonA ? errorCode(bodyB) : errorCode(bodyA);
+      expect(loserCode).toBe('ENGAGEMENT_COMPLETION_CONFLICT');
+
+      const row = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+      expect(row?.status).toBe('COMPLETED');
     });
   });
 
