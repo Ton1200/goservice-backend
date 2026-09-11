@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AppointmentsRepository } from '../appointments/appointments.repository';
 import { AuthModule } from '../auth/auth.module';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
 import { ProfilesModule } from '../profiles/profiles.module';
@@ -7,6 +8,8 @@ import { EngagementsRepository } from './engagements.repository';
 import { EngagementsResolver } from './engagements.resolver';
 import { ListMyEngagementsAsCustomerService } from './services/list-my-engagements-as-customer.service';
 import { ListMyEngagementsAsProfessionalService } from './services/list-my-engagements-as-professional.service';
+import { MarkEngagementWorkFinishedService } from './services/mark-engagement-work-finished.service';
+import { StartEngagementWorkService } from './services/start-engagement-work.service';
 
 /**
  * `PrismaModule` (`src/prisma/`) is `@Global()`, so `PrismaService` doesn't
@@ -18,6 +21,15 @@ import { ListMyEngagementsAsProfessionalService } from './services/list-my-engag
  * needs `UsersRepository` resolvable from THIS module's injector, not only
  * `IdentityVerificationModule`'s own); `ProfilesModule` for
  * `ProfilesRepository`.
+ *
+ * `AppointmentsRepository` is listed directly in `providers` (a second,
+ * stateless instance — it injects only the `@Global()` `PrismaService`) so
+ * `StartEngagementWorkService` can check "does this Engagement have a
+ * CONFIRMED Appointment" without importing `AppointmentsModule` — same
+ * "reuse the concrete repository class, never the resolver-bearing module"
+ * rule this comment already states, and the mirror image of
+ * `AppointmentsModule` already listing `EngagementsRepository` in its own
+ * providers.
  *
  * Deliberately does NOT import `ServiceRequestsModule` or `QuotesModule` —
  * this module is a lean, leaf "repository + GraphQL type + read queries"
@@ -41,8 +53,11 @@ import { ListMyEngagementsAsProfessionalService } from './services/list-my-engag
   providers: [
     EngagementsResolver,
     EngagementsRepository,
+    AppointmentsRepository,
     ListMyEngagementsAsCustomerService,
     ListMyEngagementsAsProfessionalService,
+    StartEngagementWorkService,
+    MarkEngagementWorkFinishedService,
   ],
   exports: [EngagementsRepository],
 })

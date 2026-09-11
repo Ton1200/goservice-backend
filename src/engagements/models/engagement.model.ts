@@ -33,6 +33,21 @@ export class EngagementModel {
   @Field(() => EngagementStatus)
   status!: EngagementStatus;
 
+  /**
+   * GOS-111 — set the moment the Professional calls `startEngagementWork`
+   * (ACCEPTED → IN_PROGRESS); `null` before then.
+   */
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  startedAt?: Date | null;
+
+  /**
+   * GOS-111 — set the moment the Professional calls
+   * `markEngagementWorkFinished` (IN_PROGRESS → PENDING_CUSTOMER_CONFIRMATION);
+   * `null` before then.
+   */
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  finishedAt?: Date | null;
+
   @Field(() => GraphQLISODateTime)
   createdAt!: Date;
 

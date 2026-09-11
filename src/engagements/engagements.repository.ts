@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Engagement, Prisma } from '@prisma/client';
+import { Engagement, EngagementStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -7,12 +7,21 @@ import { PrismaService } from '../prisma/prisma.service';
  * `Engagement` — same data-ownership rule as `ServiceRequestsRepository`/
  * `ProfilesRepository` (see goservice-docs/architecture/backend.md).
  *
- * `create` is deliberately the only write, and it deliberately takes an
- * EXTERNALLY-opened `tx` — it is only ever called from inside
- * `AcceptQuoteService`'s single transaction (see that service's own header
- * comment), never on its own: an `Engagement` must never be created except
- * atomically alongside the ServiceRequest OPEN->ENGAGED and Quote
- * SENT->ACCEPTED CAS transitions.
+ * Writes:
+ * - `create` takes an EXTERNALLY-opened `tx` — only ever called from inside
+ *   `AcceptQuoteService`'s single transaction (see that service's own header
+ *   comment), never on its own: an `Engagement` must never be created except
+ *   atomically alongside the ServiceRequest OPEN->ENGAGED and Quote
+ *   SENT->ACCEPTED CAS transitions.
+ * - `startWorkIfAccepted` / `finishWorkIfInProgress` (GOS-111) are the
+ *   guarded compare-and-swap transitions of the work-execution state machine
+ *   (ACCEPTED -> IN_PROGRESS -> PENDING_CUSTOMER_CONFIRMATION). Each also
+ *   takes an EXTERNALLY-opened `tx`, called only from inside its own
+ *   application service's `prisma.$transaction` (`StartEngagementWorkService`
+ *   / `MarkEngagementWorkFinishedService`) — same idiom as
+ *   `quotesRepository.transitionToAcceptedIfSent`. A `count !== 1` result
+ *   means the caller lost a race and must throw its conflict error + roll
+ *   back the transaction.
  */
 @Injectable()
 export class EngagementsRepository {
@@ -28,6 +37,42 @@ export class EngagementsRepository {
     },
   ): Promise<Engagement> {
     return tx.engagement.create({ data });
+  }
+
+  /**
+   * GOS-111 — guarded CAS for `startEngagementWork`: only transitions while
+   * still `ACCEPTED`. `count === 0` (no thrown error) means the Engagement
+   * was no longer `ACCEPTED` when the write ran (a lost race) —
+   * `StartEngagementWorkService` throws `engagementWorkStartConflict()` and
+   * rolls back the surrounding `prisma.$transaction`.
+   */
+  startWorkIfAccepted(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<{ count: number }> {
+    return tx.engagement.updateMany({
+      where: { id, status: EngagementStatus.ACCEPTED },
+      data: { status: EngagementStatus.IN_PROGRESS, startedAt: new Date() },
+    });
+  }
+
+  /**
+   * GOS-111 — guarded CAS for `markEngagementWorkFinished`: only transitions
+   * while still `IN_PROGRESS`. `count === 0` means a lost race —
+   * `MarkEngagementWorkFinishedService` throws
+   * `engagementWorkFinishConflict()` and rolls back.
+   */
+  finishWorkIfInProgress(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<{ count: number }> {
+    return tx.engagement.updateMany({
+      where: { id, status: EngagementStatus.IN_PROGRESS },
+      data: {
+        status: EngagementStatus.PENDING_CUSTOMER_CONFIRMATION,
+        finishedAt: new Date(),
+      },
+    });
   }
 
   /**
