@@ -6,6 +6,7 @@ import { ProfilesModule } from '../profiles/profiles.module';
 import { UsersModule } from '../users/users.module';
 import { EngagementsRepository } from './engagements.repository';
 import { EngagementsResolver } from './engagements.resolver';
+import { CancelEngagementByCustomerService } from './services/cancel-engagement-by-customer.service';
 import { ConfirmEngagementCompletionService } from './services/confirm-engagement-completion.service';
 import { ListMyEngagementsAsCustomerService } from './services/list-my-engagements-as-customer.service';
 import { ListMyEngagementsAsProfessionalService } from './services/list-my-engagements-as-professional.service';
@@ -60,6 +61,7 @@ import { StartEngagementWorkService } from './services/start-engagement-work.ser
     StartEngagementWorkService,
     MarkEngagementWorkFinishedService,
     ConfirmEngagementCompletionService,
+    CancelEngagementByCustomerService,
   ],
   exports: [EngagementsRepository],
 })

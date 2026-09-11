@@ -4,6 +4,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { AccountApprovedGuard } from '../identity-verification/guards/account-approved.guard';
 import { EngagementModel } from './models/engagement.model';
+import { CancelEngagementByCustomerService } from './services/cancel-engagement-by-customer.service';
 import { ConfirmEngagementCompletionService } from './services/confirm-engagement-completion.service';
 import { ListMyEngagementsAsCustomerService } from './services/list-my-engagements-as-customer.service';
 import { ListMyEngagementsAsProfessionalService } from './services/list-my-engagements-as-professional.service';
@@ -17,7 +18,8 @@ import { StartEngagementWorkService } from './services/start-engagement-work.ser
  * per-method (this resolver is not decorated at the class level). The two
  * read queries take no arguments; the three GOS-111/GOS-113 work-execution
  * mutations take only `engagementId` — ownership/role is always derived
- * from `@CurrentUser()`, never passed in.
+ * from `@CurrentUser()`, never passed in. `cancelEngagementByCustomer`
+ * (GOS-114) additionally takes a required `reason`.
  */
 @Resolver()
 export class EngagementsResolver {
@@ -27,6 +29,7 @@ export class EngagementsResolver {
     private readonly startEngagementWorkService: StartEngagementWorkService,
     private readonly markEngagementWorkFinishedService: MarkEngagementWorkFinishedService,
     private readonly confirmEngagementCompletionService: ConfirmEngagementCompletionService,
+    private readonly cancelEngagementByCustomerService: CancelEngagementByCustomerService,
   ) {}
 
   @UseGuards(SessionGuard, AccountApprovedGuard)
@@ -97,6 +100,23 @@ export class EngagementsResolver {
     return this.confirmEngagementCompletionService.confirmEngagementCompletion(
       userId,
       engagementId,
+    );
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Mutation(() => EngagementModel, {
+    description:
+      'The Customer owner of a still-open Engagement (ACCEPTED or IN_PROGRESS) cancels it, recording a required reason: → CANCELLED. A caller who is not this Engagement’s Customer — the Professional or a third party — gets ENGAGEMENT_NOT_FOUND (anti-enumeration). Wrong current state (PENDING_CUSTOMER_CONFIRMATION, COMPLETED, or already CANCELLED) → ENGAGEMENT_NOT_CANCELLABLE_BY_CUSTOMER; lost concurrent race → ENGAGEMENT_CANCEL_CONFLICT. Financial charge/refund calculation is out of scope (GOS-109).',
+  })
+  cancelEngagementByCustomer(
+    @CurrentUser() userId: string,
+    @Args('engagementId', { type: () => ID }) engagementId: string,
+    @Args('reason') reason: string,
+  ): Promise<EngagementModel> {
+    return this.cancelEngagementByCustomerService.cancelEngagementByCustomer(
+      userId,
+      engagementId,
+      reason,
     );
   }
 }

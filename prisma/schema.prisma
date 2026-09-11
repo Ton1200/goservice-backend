@@ -782,6 +782,12 @@ model Engagement {
   // Appointment.confirmedAt/cancelledAt. Existing rows stay NULL / ACCEPTED.
   startedAt             DateTime?
   finishedAt            DateTime?
+  // GOS-114 — stamped exactly once, by cancelEngagementByCustomer
+  // (ACCEPTED|IN_PROGRESS -> CANCELLED). Nullable, no @default — same
+  // criterion as startedAt/finishedAt above and as
+  // Appointment.cancelReason/cancelledAt. Existing rows stay NULL.
+  cancelledAt           DateTime?
+  cancelReason          String?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
