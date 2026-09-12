@@ -1438,9 +1438,9 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
         body.data!.reportEngagementNoShow.professionalProfileId;
       const customerProfileId =
         body.data!.reportEngagementNoShow.customerProfileId;
-      const professionalProfile = await prisma.professionalProfile.findUnique(
-        { where: { id: professionalProfileId } },
-      );
+      const professionalProfile = await prisma.professionalProfile.findUnique({
+        where: { id: professionalProfileId },
+      });
       const customerProfile = await prisma.customerProfile.findUnique({
         where: { id: customerProfileId },
       });
@@ -1487,9 +1487,9 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
         body.data!.reportEngagementNoShow.professionalProfileId;
       const customerProfileId =
         body.data!.reportEngagementNoShow.customerProfileId;
-      const professionalProfile = await prisma.professionalProfile.findUnique(
-        { where: { id: professionalProfileId } },
-      );
+      const professionalProfile = await prisma.professionalProfile.findUnique({
+        where: { id: professionalProfileId },
+      });
       const customerProfile = await prisma.customerProfile.findUnique({
         where: { id: customerProfileId },
       });
@@ -1565,9 +1565,9 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
         customerToken,
       ).expect(200);
 
-      const professionalProfile = await prisma.professionalProfile.findUnique(
-        { where: { id: professionalProfileId } },
-      );
+      const professionalProfile = await prisma.professionalProfile.findUnique({
+        where: { id: professionalProfileId },
+      });
       expect(professionalProfile?.noShowReportedCount).toBe(2);
     });
 

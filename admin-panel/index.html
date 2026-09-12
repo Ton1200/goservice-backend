@@ -171,6 +171,16 @@
               </a>
             </li>
             <li class="nav-item">
+              <a class="nav-link" href="#reviews" data-nav-target="reviews-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 17.75l-6.172 3.245 1.179-6.873L2 9.755l6.9-1.002L12 2.5l3.1 6.253 6.9 1.002-5.007 4.367 1.179 6.873z" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Reviews</span>
+              </a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link" href="#categories" data-nav-target="categories-section">
                 <span class="nav-link-icon d-md-none d-lg-inline-block">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -572,6 +582,45 @@
               <p id="quotes-detail-loading" class="text-secondary" hidden>Loading…</p>
               <div id="quotes-detail-content"></div>
             </dialog>
+          </section>
+
+          <!-- Reviews (GOS-121 admin follow-up, human-requested) — a real,
+               functional data grid over `Review` (adminReviews/
+               moderateEngagementReviewComment, js/reviews.js), mirroring the
+               Quotes section above (no create dialog — Reviews are always
+               consumer-authored) but with real per-row Approve/Reject
+               actions instead of a "View" button, plus a status filter
+               (the FIRST real server-side filter argument in this admin
+               panel — see js/reviews.js's own header comment). The SAME
+               data also surfaces per-Engagement inside the Quotes grid's own
+               detail modal ("Reviews" tab, js/quotes.js) for in-context
+               moderation while looking at the rest of that deal. -->
+          <section id="reviews-section" class="gs-section" hidden aria-labelledby="reviews-heading">
+            <div class="page-header d-print-none">
+              <h2 id="reviews-heading" class="page-title">Reviews</h2>
+            </div>
+
+            <p id="reviews-error" class="alert alert-danger" role="alert" hidden></p>
+            <p id="reviews-success" class="alert alert-success" role="status" hidden></p>
+
+            <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+              <select id="reviews-status-filter" class="form-select w-auto" aria-label="Filter by comment moderation status">
+                <option value="">All comments</option>
+                <option value="PENDING">Pending moderation</option>
+                <option value="APPROVED">Approved</option>
+                <option value="REJECTED">Rejected</option>
+              </select>
+              <button id="reviews-columns-button" type="button" class="btn btn-outline-secondary" aria-haspopup="menu" aria-expanded="false">
+                Columns
+              </button>
+            </div>
+
+            <div class="card">
+              <!-- Tabulator mounts into this container (js/reviews.js).
+                   No mock rows here — the grid is empty until the first
+                   fetch resolves. -->
+              <div id="reviews-grid"></div>
+            </div>
           </section>
 
           <!-- Categories (category-tree follow-up, 2026-08-18) — full CRUD

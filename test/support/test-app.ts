@@ -231,6 +231,19 @@ export async function cleanAppointmentsData(
 }
 
 /**
+ * GOS-121 — deletes all `Review` rows. Call BEFORE
+ * `cleanQuotesAndEngagementsData` below (`Review.engagementId` is
+ * `onDelete: Cascade` toward `Engagement`, so that helper's own
+ * `engagement.deleteMany()` would sweep these away too — this explicit
+ * helper exists anyway, same "independently callable, matches every other
+ * `clean*Data` helper's own convention" reasoning `cleanIdentityVerificationData`
+ * already documents for its own Cascade-redundant cleanup).
+ */
+export async function cleanReviewsData(prisma: PrismaService): Promise<void> {
+  await prisma.review.deleteMany();
+}
+
+/**
  * GOS-41 — deletes all `quotes`/`engagements`-module rows, in FK-safe order
  * (`Engagement` first — it references both `ServiceRequest` and `Quote` —
  * then `Quote`). Call BEFORE `cleanServiceRequestsData` below. Strictly

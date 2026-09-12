@@ -22,6 +22,13 @@ import { engagementNotPendingCustomerConfirmation } from '../errors/engagement-n
  * `engagementNotPendingCustomerConfirmation()`) + the guarded CAS
  * (`engagementCompletionConflict()` on a lost race, full rollback) — no
  * re-gate on anything else (e.g. no re-check of `finishedAt` age).
+ *
+ * GOS-121 — `completeIfPendingCustomerConfirmation` now also stamps
+ * `Engagement.completedAt` in that same guarded write (a column GOS-113
+ * itself explicitly shipped without — see that migration's own comment).
+ * No logic change here: the repository does the stamping, this service is
+ * unchanged. GOS-121 (mutual Reviews) is the first real consumer of "an
+ * Engagement just became COMPLETED" this comment anticipated below.
  */
 @Injectable()
 export class ConfirmEngagementCompletionService {
@@ -72,13 +79,15 @@ export class ConfirmEngagementCompletionService {
       outcome: 'success',
       engagementId,
     });
-    // GOS-106 (enabling ratings), GOS-107 (Engagement Chat close
-    // orchestration), and GOS-109 (making the commission firm) will consume
-    // an "Engagement COMPLETED" domain event here. There is no event bus /
-    // outbox / EventEmitter in this codebase yet (the CAS accept/work
-    // services do the same structured post-commit log and nothing more);
-    // `@nestjs/event-emitter` is deliberately NOT introduced by GOS-113 —
-    // out of scope.
+    // GOS-121 (mutual Reviews) is now the first real consumer of "an
+    // Engagement just became COMPLETED" this comment anticipated — NOT via
+    // an event bus/outbox/EventEmitter (still none exists in this codebase),
+    // just `SubmitEngagementReviewService` reading `Engagement.status`/
+    // `completedAt` directly at call time (`src/reviews/`). GOS-107
+    // (Engagement Chat close orchestration) and GOS-109 (making the
+    // commission firm) remain future consumers of this same transition.
+    // `@nestjs/event-emitter` is still deliberately NOT introduced — out of
+    // scope.
 
     return updated!;
   }

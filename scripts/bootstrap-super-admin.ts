@@ -133,6 +133,19 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // every permission.
       Permission.STORAGE_SETTINGS_READ,
       Permission.STORAGE_SETTINGS_WRITE,
+      // Mutual Engagement Reviews admin audit/moderation surface follow-up
+      // (GOS-121, 2026-09-11) — adminReviews/moderateEngagementReviewComment,
+      // its own dedicated permission pair (NOT SERVICE_REQUESTS_READ/WRITE —
+      // see the Permission enum's own comment in schema.prisma). SUPER_ADMIN
+      // gets every permission. FLAGGED FOR HUMAN REVIEW — same judgment-call
+      // posture already documented for APPOINTMENTS_READ/STORAGE_SETTINGS_*'s
+      // own additions here: per this file's own "PERMISSIONS GUARANTEE —
+      // NARROWED" header comment, this bootstrap script only grants a
+      // brand-new Permission value automatically on a FRESH environment's
+      // first run; on an ALREADY-BOOTSTRAPPED environment it must be granted
+      // by hand through the Roles UI (`updateAdminRolePermissions`).
+      Permission.REVIEWS_READ,
+      Permission.REVIEWS_WRITE,
     ],
   },
   {
@@ -185,6 +198,15 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // EMAIL_TEMPLATES_* on this role.
       Permission.STORAGE_SETTINGS_READ,
       Permission.STORAGE_SETTINGS_WRITE,
+      // GOS-121 — FLAGGED FOR HUMAN REVIEW: explicit judgment call that
+      // CONFIG_MANAGER-and-above can audit AND moderate review comments,
+      // mirroring EMAIL_TEMPLATES_READ/WRITE's own "full read/write config
+      // capability" presence on this role rather than QUOTES_READ's
+      // read-only-only presence — moderation is itself a content-governance
+      // action, closer in kind to editing email content than to passively
+      // viewing a Quotes grid.
+      Permission.REVIEWS_READ,
+      Permission.REVIEWS_WRITE,
     ],
   },
   {
@@ -217,6 +239,17 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // GOS-70 — FLAGGED FOR HUMAN REVIEW: read-only semantics, this role
       // can VIEW the storage/image settings but never change them.
       Permission.STORAGE_SETTINGS_READ,
+      // GOS-121 — deliberately NOT granted Permission.REVIEWS_READ.
+      // Judgment call, flagged for human review: `adminReviews` exposes
+      // PENDING/REJECTED comment text an admin has not yet vetted (or has
+      // already rejected, often for inappropriate content) — closer in
+      // sensitivity to a private Engagement Chat coordination thread than
+      // to a Quotes/negotiation grid. This role already has
+      // QUOTE_NEGOTIATION_READ (unredacted PRICE negotiation) but
+      // deliberately NOT ENGAGEMENT_CHAT_READ/APPOINTMENTS_READ (private
+      // coordination content) — REVIEWS_READ follows that SAME "private
+      // content, not just business/commercial data" precedent, withheld
+      // from this role rather than granted.
     ],
   },
 ];

@@ -27,7 +27,8 @@
     "demo:seed": "ts-node --project tsconfig.scripts.json scripts/seed-demo-data.ts",
     "demo:seed:negotiation": "ts-node --project tsconfig.scripts.json scripts/seed-negotiation-scenarios.ts",
     "demo:seed:engagement-chat": "ts-node --project tsconfig.scripts.json scripts/seed-engagement-chat-scenarios.ts",
-    "demo:seed:appointments": "ts-node --project tsconfig.scripts.json scripts/seed-appointment-scenarios.ts"
+    "demo:seed:appointments": "ts-node --project tsconfig.scripts.json scripts/seed-appointment-scenarios.ts",
+    "demo:seed:reviews": "ts-node --project tsconfig.scripts.json scripts/seed-review-scenarios.ts"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",
