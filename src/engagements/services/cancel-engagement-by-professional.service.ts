@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Engagement, EngagementStatus } from '@prisma/client';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
+import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
+import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -52,6 +54,7 @@ export class CancelEngagementByProfessionalService {
     private readonly prisma: PrismaService,
     private readonly profilesRepository: ProfilesRepository,
     private readonly engagementsRepository: EngagementsRepository,
+    private readonly emitEngagementLifecycleSystemMessageService: EmitEngagementLifecycleSystemMessageService,
   ) {}
 
   async cancelEngagementByProfessional(
@@ -88,6 +91,15 @@ export class CancelEngagementByProfessionalService {
       if (cas.count !== 1) {
         throw engagementCancelConflict();
       }
+
+      // GOS-125 — emits the "Trabajo cancelado por el profesional" system
+      // chat message inside this SAME transaction — see
+      // `StartEngagementWorkService`'s identical note.
+      await this.emitEngagementLifecycleSystemMessageService.emit(
+        tx,
+        engagementId,
+        ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.CANCELLED_BY_PROFESSIONAL,
+      );
     });
 
     const updated = await this.engagementsRepository.findById(engagementId);

@@ -1,9 +1,11 @@
+import { randomUUID } from 'crypto';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   AdminUserStatus,
   AuthProvider,
   CountryCode,
+  EngagementStatus,
   Permission,
   ProfessionalVerificationStatus,
   SpecializationRole,
@@ -14,6 +16,9 @@ import Redis from 'ioredis';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import type { AppConfig } from '../src/config/configuration';
+import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../src/engagement-chat/constants/engagement-lifecycle-system-messages.constants';
+import { EngagementChatRepository } from '../src/engagement-chat/engagement-chat.repository';
+import { EngagementsRepository } from '../src/engagements/engagements.repository';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
   cleanAdminUsersData,
@@ -67,7 +72,7 @@ const SEND_ENGAGEMENT_MESSAGE_MUTATION = `
 const ENGAGEMENT_MESSAGES_QUERY = `
   query EngagementMessages($engagementId: ID!) {
     engagementMessages(engagementId: $engagementId) {
-      id senderRole content createdAt
+      id senderRole content createdAt engagementStatus
     }
   }
 `;
@@ -540,5 +545,363 @@ describe('GraphQL Engagement Chat (GOS-46, e2e)', () => {
 
     expect(body.data).toBeNull();
     expect(body.errors?.[0]?.extensions?.code).toBe('ADMIN_FORBIDDEN');
+  });
+
+  /**
+   * GOS-125 — exposes `Engagement.status` on `Appointment`/`EngagementMessage`
+   * via `engagementStatus` (@ResolveField, no new query), and emits a SYSTEM
+   * chat message from inside each of the 5 lifecycle-transition transactions
+   * (`src/engagements/services/*.ts`), find-or-skip if no Conversation exists
+   * yet. Same "ad hoc seedX() helper" convention as the rest of this file —
+   * `confirmAppointment` below reuses this suite's `seedEngagement` plus the
+   * propose/accept mutations `test/appointments.e2e-spec.ts` already
+   * establishes, just enough of them to get a CONFIRMED Appointment (needed
+   * for `startEngagementWork`).
+   */
+  describe('GOS-125 — lifecycle system messages + engagementStatus', () => {
+    const PROPOSE_APPOINTMENT_MUTATION = `
+      mutation ProposeAppointment($engagementId: ID!, $input: ProposeAppointmentInput!) {
+        proposeAppointment(engagementId: $engagementId, input: $input) { id status }
+      }
+    `;
+
+    const ACCEPT_APPOINTMENT_MUTATION = `
+      mutation AcceptAppointment($id: ID!) {
+        acceptAppointment(id: $id) { id status }
+      }
+    `;
+
+    const APPOINTMENTS_BY_ENGAGEMENT_QUERY = `
+      query AppointmentsByEngagement($engagementId: ID!) {
+        appointmentsByEngagement(engagementId: $engagementId) { id status engagementStatus }
+      }
+    `;
+
+    const START_ENGAGEMENT_WORK_MUTATION = `
+      mutation StartEngagementWork($engagementId: ID!) {
+        startEngagementWork(engagementId: $engagementId) { id status }
+      }
+    `;
+
+    const MARK_ENGAGEMENT_WORK_FINISHED_MUTATION = `
+      mutation MarkEngagementWorkFinished($engagementId: ID!) {
+        markEngagementWorkFinished(engagementId: $engagementId) { id status }
+      }
+    `;
+
+    const CONFIRM_ENGAGEMENT_COMPLETION_MUTATION = `
+      mutation ConfirmEngagementCompletion($engagementId: ID!) {
+        confirmEngagementCompletion(engagementId: $engagementId) { id status }
+      }
+    `;
+
+    const CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION = `
+      mutation CancelEngagementByCustomer($engagementId: ID!, $reason: String!) {
+        cancelEngagementByCustomer(engagementId: $engagementId, reason: $reason) { id status }
+      }
+    `;
+
+    const CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION = `
+      mutation CancelEngagementByProfessional($engagementId: ID!, $reason: String!) {
+        cancelEngagementByProfessional(engagementId: $engagementId, reason: $reason) { id status }
+      }
+    `;
+
+    /** Proposed by the Professional, confirmed by the Customer (the OTHER
+     * party — `acceptAppointment` forbids confirming your own proposal). */
+    async function confirmAppointment(
+      engagementId: string,
+      professionalToken: string,
+      customerToken: string,
+    ): Promise<void> {
+      const proposeResponse = await gqlRequest(
+        PROPOSE_APPOINTMENT_MUTATION,
+        {
+          engagementId,
+          input: {
+            startsAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            endsAt: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString(),
+          },
+        },
+        professionalToken,
+      ).expect(200);
+      const appointmentId = (
+        proposeResponse.body as {
+          data: { proposeAppointment: { id: string } };
+        }
+      ).data.proposeAppointment.id;
+
+      await gqlRequest(
+        ACCEPT_APPOINTMENT_MUTATION,
+        { id: appointmentId },
+        customerToken,
+      ).expect(200);
+    }
+
+    it('the full happy-path lifecycle (start → finish → confirm) appends exactly one correctly-worded SYSTEM message per transition, in order, when a Conversation already exists', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedEngagement();
+      await gqlRequest(
+        SEND_ENGAGEMENT_MESSAGE_MUTATION,
+        { engagementId, input: { content: 'Hola, coordinemos la visita.' } },
+        customerToken,
+      ).expect(200);
+      await confirmAppointment(engagementId, professionalToken, customerToken);
+
+      await gqlRequest(
+        START_ENGAGEMENT_WORK_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+      await gqlRequest(
+        MARK_ENGAGEMENT_WORK_FINISHED_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+      await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+
+      const messagesResponse = await gqlRequest(
+        ENGAGEMENT_MESSAGES_QUERY,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+      const messages = (
+        messagesResponse.body as {
+          data: {
+            engagementMessages: {
+              senderRole: string;
+              content: string;
+              engagementStatus: string;
+            }[];
+          };
+        }
+      ).data.engagementMessages;
+
+      // [0] the real party message, [1..3] one SYSTEM message per transition.
+      expect(messages).toHaveLength(4);
+      expect(messages[1]).toMatchObject({
+        senderRole: 'SYSTEM',
+        content: ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.WORK_STARTED,
+      });
+      expect(messages[2]).toMatchObject({
+        senderRole: 'SYSTEM',
+        content: ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.WORK_FINISHED,
+      });
+      expect(messages[3]).toMatchObject({
+        senderRole: 'SYSTEM',
+        content: ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.COMPLETION_CONFIRMED,
+      });
+      // engagementStatus on every message reflects the Engagement's CURRENT
+      // status (COMPLETED by now), not a historical snapshot at send time.
+      for (const message of messages) {
+        expect(message.engagementStatus).toBe('COMPLETED');
+      }
+    });
+
+    it('cancelEngagementByCustomer appends the correct SYSTEM message when a Conversation already exists', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+      await gqlRequest(
+        SEND_ENGAGEMENT_MESSAGE_MUTATION,
+        { engagementId, input: { content: 'Hola.' } },
+        customerToken,
+      ).expect(200);
+
+      await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'ya no lo necesito' },
+        customerToken,
+      ).expect(200);
+
+      const messagesResponse = await gqlRequest(
+        ENGAGEMENT_MESSAGES_QUERY,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+      const messages = (
+        messagesResponse.body as {
+          data: {
+            engagementMessages: { senderRole: string; content: string }[];
+          };
+        }
+      ).data.engagementMessages;
+      expect(messages).toHaveLength(2);
+      expect(messages[1]).toMatchObject({
+        senderRole: 'SYSTEM',
+        content: ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.CANCELLED_BY_CUSTOMER,
+      });
+    });
+
+    it('cancelEngagementByProfessional appends the correct SYSTEM message when a Conversation already exists', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedEngagement();
+      await gqlRequest(
+        SEND_ENGAGEMENT_MESSAGE_MUTATION,
+        { engagementId, input: { content: 'Hola.' } },
+        customerToken,
+      ).expect(200);
+
+      await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+        { engagementId, reason: 'no puedo tomar el trabajo' },
+        professionalToken,
+      ).expect(200);
+
+      const messagesResponse = await gqlRequest(
+        ENGAGEMENT_MESSAGES_QUERY,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+      const messages = (
+        messagesResponse.body as {
+          data: {
+            engagementMessages: { senderRole: string; content: string }[];
+          };
+        }
+      ).data.engagementMessages;
+      expect(messages).toHaveLength(2);
+      expect(messages[1]).toMatchObject({
+        senderRole: 'SYSTEM',
+        content: ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.CANCELLED_BY_PROFESSIONAL,
+      });
+    });
+
+    it('a transition on an Engagement with no prior Conversation does NOT create one', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+
+      await gqlRequest(
+        CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+        { engagementId, reason: 'sin conversación previa' },
+        customerToken,
+      ).expect(200);
+
+      const conversations = await prisma.engagementChatConversation.findMany({
+        where: { engagementId },
+      });
+      expect(conversations).toHaveLength(0);
+    });
+
+    it('appointmentsByEngagement and engagementMessages resolve engagementStatus matching the real, current Engagement status', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedEngagement();
+      await gqlRequest(
+        SEND_ENGAGEMENT_MESSAGE_MUTATION,
+        { engagementId, input: { content: 'Hola.' } },
+        customerToken,
+      ).expect(200);
+      await confirmAppointment(engagementId, professionalToken, customerToken);
+      await gqlRequest(
+        START_ENGAGEMENT_WORK_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+
+      const appointmentsResponse = await gqlRequest(
+        APPOINTMENTS_BY_ENGAGEMENT_QUERY,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+      const appointments = (
+        appointmentsResponse.body as {
+          data: { appointmentsByEngagement: { engagementStatus: string }[] };
+        }
+      ).data.appointmentsByEngagement;
+      expect(appointments.length).toBeGreaterThan(0);
+      for (const appointment of appointments) {
+        expect(appointment.engagementStatus).toBe('IN_PROGRESS');
+      }
+
+      const messagesResponse = await gqlRequest(
+        ENGAGEMENT_MESSAGES_QUERY,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+      const messages = (
+        messagesResponse.body as {
+          data: { engagementMessages: { engagementStatus: string }[] };
+        }
+      ).data.engagementMessages;
+      for (const message of messages) {
+        expect(message.engagementStatus).toBe('IN_PROGRESS');
+      }
+    });
+
+    it('the DB CHECK constraint rejects a SYSTEM message with a non-null sender profile id, independent of application code', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+      await gqlRequest(
+        SEND_ENGAGEMENT_MESSAGE_MUTATION,
+        { engagementId, input: { content: 'Hola.' } },
+        customerToken,
+      ).expect(200);
+      const conversation =
+        await prisma.engagementChatConversation.findUniqueOrThrow({
+          where: { engagementId },
+        });
+      const engagement = await prisma.engagement.findUniqueOrThrow({
+        where: { id: engagementId },
+      });
+
+      await expect(
+        prisma.$executeRawUnsafe(
+          `INSERT INTO "EngagementChatMessage" (id, "conversationId", "senderRole", "senderCustomerProfileId", content, "createdAt")
+           VALUES ($1::uuid, $2::uuid, 'SYSTEM', $3::uuid, 'esto debe fallar', now())`,
+          randomUUID(),
+          conversation.id,
+          engagement.customerProfileId,
+        ),
+      ).rejects.toThrow(/constraint|check/i);
+    });
+
+    it('rolls back the whole transaction (Engagement status included) if the system message insert step fails, proving the mechanism the 5 transition services rely on', async () => {
+      const { engagementId, customerToken } = await seedEngagement();
+      await gqlRequest(
+        SEND_ENGAGEMENT_MESSAGE_MUTATION,
+        { engagementId, input: { content: 'Mensaje previo.' } },
+        customerToken,
+      ).expect(200);
+
+      const engagementsRepository = app.get(EngagementsRepository);
+      const engagementChatRepository = app.get(EngagementChatRepository);
+
+      await expect(
+        prisma.$transaction(async (tx) => {
+          const cas = await engagementsRepository.cancelIfActive(
+            tx,
+            engagementId,
+            'simulated failure test',
+          );
+          expect(cas.count).toBe(1);
+          const conversation =
+            await engagementChatRepository.findConversationByEngagementId(
+              engagementId,
+              tx,
+            );
+          await engagementChatRepository.createSystemMessage(
+            tx,
+            conversation!.id,
+            'a system message that should never be persisted',
+          );
+          throw new Error('simulated post-write failure');
+        }),
+      ).rejects.toThrow('simulated post-write failure');
+
+      const engagement = await prisma.engagement.findUniqueOrThrow({
+        where: { id: engagementId },
+      });
+      expect(engagement.status).toBe(EngagementStatus.ACCEPTED);
+
+      const messages = await prisma.engagementChatMessage.findMany({
+        where: { conversation: { engagementId } },
+      });
+      expect(
+        messages.some(
+          (m) =>
+            m.content === 'a system message that should never be persisted',
+        ),
+      ).toBe(false);
+    });
   });
 });

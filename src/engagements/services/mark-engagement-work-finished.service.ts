@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Engagement, EngagementStatus } from '@prisma/client';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
+import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
+import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -30,6 +32,7 @@ export class MarkEngagementWorkFinishedService {
     private readonly prisma: PrismaService,
     private readonly profilesRepository: ProfilesRepository,
     private readonly engagementsRepository: EngagementsRepository,
+    private readonly emitEngagementLifecycleSystemMessageService: EmitEngagementLifecycleSystemMessageService,
   ) {}
 
   async markEngagementWorkFinished(
@@ -61,6 +64,15 @@ export class MarkEngagementWorkFinishedService {
       if (cas.count !== 1) {
         throw engagementWorkFinishConflict();
       }
+
+      // GOS-125 — emits the "Trabajo terminado" system chat message inside
+      // this SAME transaction — see `StartEngagementWorkService`'s identical
+      // note.
+      await this.emitEngagementLifecycleSystemMessageService.emit(
+        tx,
+        engagementId,
+        ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.WORK_FINISHED,
+      );
     });
 
     const updated = await this.engagementsRepository.findById(engagementId);
@@ -70,11 +82,10 @@ export class MarkEngagementWorkFinishedService {
       outcome: 'success',
       engagementId,
     });
-    // GOS-108 (system messages in Engagement Chat) and GOS-98 (push
-    // notifications) will consume an "Engagement entered
-    // PENDING_CUSTOMER_CONFIRMATION" domain event here — see
-    // `StartEngagementWorkService`'s identical note. No event bus exists yet;
-    // `@nestjs/event-emitter` is deliberately NOT introduced by GOS-111.
+    // GOS-125 now emits the Engagement Chat system message inline, above —
+    // see `StartEngagementWorkService`'s identical note. GOS-98 (push
+    // notifications) remains the only unfulfilled part of this transition's
+    // original forward reference.
 
     return updated!;
   }

@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { EngagementStatus } from '@prisma/client';
+import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
+import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -78,10 +80,16 @@ describe('CancelEngagementByProfessionalService', () => {
       cancelIfActive,
     } as unknown as EngagementsRepository;
 
+    const emit = jest.fn().mockResolvedValue(undefined);
+    const emitEngagementLifecycleSystemMessageService = {
+      emit,
+    } as unknown as EmitEngagementLifecycleSystemMessageService;
+
     const service = new CancelEngagementByProfessionalService(
       prisma,
       profilesRepository,
       engagementsRepository,
+      emitEngagementLifecycleSystemMessageService,
     );
 
     return {
@@ -90,6 +98,7 @@ describe('CancelEngagementByProfessionalService', () => {
       findProfessionalProfileByUserId,
       findById,
       cancelIfActive,
+      emit,
     };
   }
 
@@ -102,7 +111,7 @@ describe('CancelEngagementByProfessionalService', () => {
   });
 
   it('transitions an ACCEPTED Engagement to CANCELLED and logs the event', async () => {
-    const { service, cancelIfActive, findById } = makeService();
+    const { service, cancelIfActive, findById, emit } = makeService();
 
     const result = await service.cancelEngagementByProfessional(
       'user-1',
@@ -121,6 +130,12 @@ describe('CancelEngagementByProfessionalService', () => {
       expect.objectContaining({
         event: 'engagement_cancelled_by_professional',
       }),
+    );
+    // GOS-125
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({ __fakeTransactionClient: true }),
+      'engagement-1',
+      ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.CANCELLED_BY_PROFESSIONAL,
     );
   });
 
@@ -201,8 +216,8 @@ describe('CancelEngagementByProfessionalService', () => {
     },
   );
 
-  it('throws ENGAGEMENT_CANCEL_CONFLICT when the guarded CAS loses the race (count 0)', async () => {
-    const { service, cancelIfActive } = makeService({ casCount: 0 });
+  it('throws ENGAGEMENT_CANCEL_CONFLICT when the guarded CAS loses the race (count 0), and never emits the system message', async () => {
+    const { service, cancelIfActive, emit } = makeService({ casCount: 0 });
 
     await expect(
       service.cancelEngagementByProfessional(
@@ -212,5 +227,6 @@ describe('CancelEngagementByProfessionalService', () => {
       ),
     ).rejects.toMatchObject({ code: 'ENGAGEMENT_CANCEL_CONFLICT' });
     expect(cancelIfActive).toHaveBeenCalledTimes(1);
+    expect(emit).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import { ProfilesModule } from '../profiles/profiles.module';
 import { UsersModule } from '../users/users.module';
 import { EngagementsRepository } from '../engagements/engagements.repository';
 import { AppointmentAccessService } from './appointment-access.service';
+import { AppointmentFieldResolver } from './appointment-field.resolver';
 import { AppointmentsModuleEnabledGuard } from './guards/appointments-module-enabled.guard';
 import { AppointmentsRepository } from './appointments.repository';
 import { AppointmentsResolver } from './appointments.resolver';
@@ -63,6 +64,8 @@ import { ProposeAppointmentService } from './services/propose-appointment.servic
     AcceptAppointmentService,
     CancelAppointmentService,
     ListAppointmentsByEngagementService,
+    // GOS-125
+    AppointmentFieldResolver,
   ],
   exports: [AppointmentsRepository],
 })

@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Engagement, EngagementStatus } from '@prisma/client';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
+import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
+import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -38,6 +40,7 @@ export class ConfirmEngagementCompletionService {
     private readonly prisma: PrismaService,
     private readonly profilesRepository: ProfilesRepository,
     private readonly engagementsRepository: EngagementsRepository,
+    private readonly emitEngagementLifecycleSystemMessageService: EmitEngagementLifecycleSystemMessageService,
   ) {}
 
   async confirmEngagementCompletion(
@@ -70,6 +73,15 @@ export class ConfirmEngagementCompletionService {
       if (cas.count !== 1) {
         throw engagementCompletionConflict();
       }
+
+      // GOS-125 — emits the "Finalización confirmada" system chat message
+      // inside this SAME transaction — see
+      // `StartEngagementWorkService`'s identical note.
+      await this.emitEngagementLifecycleSystemMessageService.emit(
+        tx,
+        engagementId,
+        ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.COMPLETION_CONFIRMED,
+      );
     });
 
     const updated = await this.engagementsRepository.findById(engagementId);
@@ -79,12 +91,13 @@ export class ConfirmEngagementCompletionService {
       outcome: 'success',
       engagementId,
     });
-    // GOS-121 (mutual Reviews) is now the first real consumer of "an
-    // Engagement just became COMPLETED" this comment anticipated — NOT via
-    // an event bus/outbox/EventEmitter (still none exists in this codebase),
-    // just `SubmitEngagementReviewService` reading `Engagement.status`/
-    // `completedAt` directly at call time (`src/reviews/`). GOS-107
-    // (Engagement Chat close orchestration) and GOS-109 (making the
+    // GOS-121 (mutual Reviews) is the first real consumer of "an Engagement
+    // just became COMPLETED" — NOT via an event bus/outbox/EventEmitter
+    // (still none exists in this codebase), just
+    // `SubmitEngagementReviewService` reading `Engagement.status`/
+    // `completedAt` directly at call time (`src/reviews/`). GOS-125 now
+    // separately emits the Engagement Chat system message inline, above.
+    // GOS-107 (Engagement Chat close orchestration) and GOS-109 (making the
     // commission firm) remain future consumers of this same transition.
     // `@nestjs/event-emitter` is still deliberately NOT introduced — out of
     // scope.

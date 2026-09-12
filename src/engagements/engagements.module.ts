@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AppointmentsRepository } from '../appointments/appointments.repository';
 import { AuthModule } from '../auth/auth.module';
+import { EngagementChatRepository } from '../engagement-chat/engagement-chat.repository';
+import { EmitEngagementLifecycleSystemMessageService } from '../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
 import { ProfilesModule } from '../profiles/profiles.module';
 import { UsersModule } from '../users/users.module';
@@ -35,6 +37,17 @@ import { StartEngagementWorkService } from './services/start-engagement-work.ser
  * `AppointmentsModule` already listing `EngagementsRepository` in its own
  * providers.
  *
+ * **GOS-125**: `EngagementChatRepository`/`EmitEngagementLifecycleSystemMessageService`
+ * are ALSO listed directly here, as concrete provider classes — same
+ * "reuse the concrete repository/service class directly, never import the
+ * resolver-bearing Module" rule as `AppointmentsRepository` above, mirrored
+ * the other way: `EngagementChatModule` already reuses `EngagementsRepository`
+ * this same way. Every one of the 5 lifecycle-transition services below
+ * calls `EmitEngagementLifecycleSystemMessageService.emit(tx, ...)` from
+ * inside its own `prisma.$transaction`, right after its guarded CAS status
+ * write succeeds. `EngagementChatRepository` depends only on the `@Global()`
+ * `PrismaService`, so this introduces no import cycle.
+ *
  * Deliberately does NOT import `ServiceRequestsModule` or `QuotesModule` —
  * this module is a lean, leaf "repository + GraphQL type + read queries"
  * module, reused by BOTH `quotes/` (`AcceptQuoteService`, via
@@ -66,6 +79,9 @@ import { StartEngagementWorkService } from './services/start-engagement-work.ser
     CancelEngagementByCustomerService,
     CancelEngagementByProfessionalService,
     ReportEngagementNoShowService,
+    // GOS-125
+    EngagementChatRepository,
+    EmitEngagementLifecycleSystemMessageService,
   ],
   exports: [EngagementsRepository],
 })

@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { EngagementStatus } from '@prisma/client';
+import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
+import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -77,10 +79,16 @@ describe('CancelEngagementByCustomerService', () => {
       cancelIfActive,
     } as unknown as EngagementsRepository;
 
+    const emit = jest.fn().mockResolvedValue(undefined);
+    const emitEngagementLifecycleSystemMessageService = {
+      emit,
+    } as unknown as EmitEngagementLifecycleSystemMessageService;
+
     const service = new CancelEngagementByCustomerService(
       prisma,
       profilesRepository,
       engagementsRepository,
+      emitEngagementLifecycleSystemMessageService,
     );
 
     return {
@@ -89,6 +97,7 @@ describe('CancelEngagementByCustomerService', () => {
       findCustomerProfileByUserId,
       findById,
       cancelIfActive,
+      emit,
     };
   }
 
@@ -101,7 +110,7 @@ describe('CancelEngagementByCustomerService', () => {
   });
 
   it('transitions an ACCEPTED Engagement to CANCELLED and logs the event', async () => {
-    const { service, cancelIfActive, findById } = makeService();
+    const { service, cancelIfActive, findById, emit } = makeService();
 
     const result = await service.cancelEngagementByCustomer(
       'user-1',
@@ -118,6 +127,12 @@ describe('CancelEngagementByCustomerService', () => {
     expect(result.status).toBe(EngagementStatus.CANCELLED);
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'engagement_cancelled_by_customer' }),
+    );
+    // GOS-125
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({ __fakeTransactionClient: true }),
+      'engagement-1',
+      ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.CANCELLED_BY_CUSTOMER,
     );
   });
 
@@ -186,12 +201,13 @@ describe('CancelEngagementByCustomerService', () => {
     },
   );
 
-  it('throws ENGAGEMENT_CANCEL_CONFLICT when the guarded CAS loses the race (count 0)', async () => {
-    const { service, cancelIfActive } = makeService({ casCount: 0 });
+  it('throws ENGAGEMENT_CANCEL_CONFLICT when the guarded CAS loses the race (count 0), and never emits the system message', async () => {
+    const { service, cancelIfActive, emit } = makeService({ casCount: 0 });
 
     await expect(
       service.cancelEngagementByCustomer('user-1', 'engagement-1', 'reason'),
     ).rejects.toMatchObject({ code: 'ENGAGEMENT_CANCEL_CONFLICT' });
     expect(cancelIfActive).toHaveBeenCalledTimes(1);
+    expect(emit).not.toHaveBeenCalled();
   });
 });

@@ -41,11 +41,36 @@ export class EngagementChatRepository {
     });
   }
 
+  /**
+   * GOS-125 — the optional trailing `tx` lets
+   * `EmitEngagementLifecycleSystemMessageService` run this SAME read inside
+   * the transition's own transaction (so its "does a conversation already
+   * exist" check is atomic with the rest of that transaction), while every
+   * other existing caller (e.g. `findMessagesByEngagementId` below) keeps
+   * calling it untouched, outside any transaction.
+   */
   findConversationByEngagementId(
     engagementId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<EngagementChatConversation | null> {
+    const client = tx ?? this.prisma;
+    return client.engagementChatConversation.findUnique({
+      where: { engagementId },
+    });
+  }
+
+  /**
+   * GOS-125 — powers `EngagementMessageFieldResolver.engagementStatus`: a
+   * message links to `Engagement` only through its Conversation
+   * (`EngagementChatMessage.conversationId` -&gt;
+   * `EngagementChatConversation.engagementId`), so resolving that field
+   * needs this lookup by conversation id first.
+   */
+  findConversationById(
+    conversationId: string,
   ): Promise<EngagementChatConversation | null> {
     return this.prisma.engagementChatConversation.findUnique({
-      where: { engagementId },
+      where: { id: conversationId },
     });
   }
 
@@ -67,6 +92,30 @@ export class EngagementChatRepository {
     },
   ): Promise<EngagementChatMessage> {
     return tx.engagementChatMessage.create({ data });
+  }
+
+  /**
+   * GOS-125 — `EmitEngagementLifecycleSystemMessageService`'s write
+   * primitive: a SYSTEM-authored message, both sender-profile columns
+   * `null` (matching the updated `engagement_chat_message_sender_shape_check`
+   * CHECK constraint's third branch). Runs inside the caller-owned `tx` —
+   * never opens its own transaction, same convention as `createMessage`
+   * above.
+   */
+  createSystemMessage(
+    tx: Prisma.TransactionClient,
+    conversationId: string,
+    content: string,
+  ): Promise<EngagementChatMessage> {
+    return tx.engagementChatMessage.create({
+      data: {
+        conversationId,
+        senderRole: EngagementChatParty.SYSTEM,
+        senderCustomerProfileId: null,
+        senderProfessionalProfileId: null,
+        content,
+      },
+    });
   }
 
   /**
