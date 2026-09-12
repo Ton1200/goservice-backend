@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Engagement, EngagementStatus } from '@prisma/client';
 import { AppointmentsRepository } from '../../appointments/appointments.repository';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
+import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
+import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -45,6 +47,7 @@ export class StartEngagementWorkService {
     private readonly profilesRepository: ProfilesRepository,
     private readonly engagementsRepository: EngagementsRepository,
     private readonly appointmentsRepository: AppointmentsRepository,
+    private readonly emitEngagementLifecycleSystemMessageService: EmitEngagementLifecycleSystemMessageService,
   ) {}
 
   async startEngagementWork(
@@ -86,6 +89,16 @@ export class StartEngagementWorkService {
       if (cas.count !== 1) {
         throw engagementWorkStartConflict();
       }
+
+      // GOS-125 — emits the "Trabajo iniciado" system chat message inside
+      // this SAME transaction, so the Engagement can never end up
+      // IN_PROGRESS without it (or vice versa). A no-op if no Conversation
+      // exists yet for this Engagement — see that service's own comment.
+      await this.emitEngagementLifecycleSystemMessageService.emit(
+        tx,
+        engagementId,
+        ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.WORK_STARTED,
+      );
     });
 
     const updated = await this.engagementsRepository.findById(engagementId);
@@ -95,12 +108,11 @@ export class StartEngagementWorkService {
       outcome: 'success',
       engagementId,
     });
-    // GOS-108 (system messages in Engagement Chat) and GOS-98 (push
-    // notifications) will consume an "Engagement entered IN_PROGRESS" domain
-    // event here. There is no event bus / outbox / EventEmitter in this
-    // codebase yet (the CAS accept services do the same structured
-    // post-commit log and nothing more); `@nestjs/event-emitter` is
-    // deliberately NOT introduced by GOS-111 — out of scope.
+    // GOS-125 now emits the Engagement Chat system message inline, above,
+    // inside the same transaction as the CAS write — not via any event bus
+    // (still none exists in this codebase). GOS-98 (push notifications)
+    // remains the only unfulfilled part of this transition's original
+    // forward reference.
 
     return updated!;
   }

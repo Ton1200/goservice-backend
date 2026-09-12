@@ -869,9 +869,18 @@ model Engagement {
 // committed via an accepted Quote, matching this ticket's own business goal
 // ("Cliente y Profesional de un Engagement ya aceptado"). See
 // domain-model.md's own updated section for the full writeup.
+// GOS-125 — `SYSTEM` added as a third party: a system-authored message
+// narrating an Engagement lifecycle transition (e.g. "El profesional inició
+// el trabajo"), emitted by `EmitEngagementLifecycleSystemMessageService`
+// from inside the same transaction as the transition itself. Unlike
+// `CUSTOMER`/`PROFESSIONAL`, a `SYSTEM` message has BOTH
+// `senderCustomerProfileId`/`senderProfessionalProfileId` null — see the
+// updated `engagement_chat_message_sender_shape_check` CHECK constraint
+// below, which now has a third branch for this shape.
 enum EngagementChatParty {
   CUSTOMER
   PROFESSIONAL
+  SYSTEM
 }
 
 // GOS-46 — one per Engagement, created transparently (idempotent upsert
@@ -898,12 +907,16 @@ model EngagementChatConversation {
 }
 
 // GOS-46 — one free-text coordination message. `senderCustomerProfileId`/
-// `senderProfessionalProfileId` is the same nullable pair (exactly one
-// non-null, matching `senderRole`) as `QuoteNegotiationMessage`'s own
-// `authorCustomerProfileId`/`authorProfessionalProfileId`, enforced by the
-// same kind of raw-SQL CHECK constraint in the migration
-// (`engagement_chat_message_sender_shape_check`) — a structural guardrail,
-// not just application-code discipline.
+// `senderProfessionalProfileId` is the same nullable pair as
+// `QuoteNegotiationMessage`'s own `authorCustomerProfileId`/
+// `authorProfessionalProfileId` — enforced by the same kind of raw-SQL
+// CHECK constraint in the migration
+// (`engagement_chat_message_sender_shape_check`), a structural guardrail,
+// not just application-code discipline. As of GOS-125, the constraint has
+// three branches, not two: `senderRole = CUSTOMER`/`PROFESSIONAL` still each
+// require exactly the matching one of the two ids non-null, but
+// `senderRole = SYSTEM` (see `EngagementChatParty`'s own comment) requires
+// BOTH ids null — it is no longer true that exactly one is always set.
 //
 // Deliberately carries NO structured business field — no price, no status,
 // no reference back into `Quote`/`Engagement` state. `content` is the ONLY

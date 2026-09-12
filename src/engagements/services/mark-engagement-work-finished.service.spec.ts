@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { EngagementStatus } from '@prisma/client';
+import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
+import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -75,10 +77,16 @@ describe('MarkEngagementWorkFinishedService', () => {
       finishWorkIfInProgress,
     } as unknown as EngagementsRepository;
 
+    const emit = jest.fn().mockResolvedValue(undefined);
+    const emitEngagementLifecycleSystemMessageService = {
+      emit,
+    } as unknown as EmitEngagementLifecycleSystemMessageService;
+
     const service = new MarkEngagementWorkFinishedService(
       prisma,
       profilesRepository,
       engagementsRepository,
+      emitEngagementLifecycleSystemMessageService,
     );
 
     return {
@@ -86,6 +94,7 @@ describe('MarkEngagementWorkFinishedService', () => {
       $transaction,
       findById,
       finishWorkIfInProgress,
+      emit,
     };
   }
 
@@ -98,7 +107,7 @@ describe('MarkEngagementWorkFinishedService', () => {
   });
 
   it('transitions an IN_PROGRESS Engagement to PENDING_CUSTOMER_CONFIRMATION and logs the event', async () => {
-    const { service, finishWorkIfInProgress, findById } = makeService();
+    const { service, finishWorkIfInProgress, findById, emit } = makeService();
 
     const result = await service.markEngagementWorkFinished(
       'user-1',
@@ -113,6 +122,12 @@ describe('MarkEngagementWorkFinishedService', () => {
     expect(result.status).toBe(EngagementStatus.PENDING_CUSTOMER_CONFIRMATION);
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'engagement_work_finished' }),
+    );
+    // GOS-125
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({ __fakeTransactionClient: true }),
+      'engagement-1',
+      ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.WORK_FINISHED,
     );
   });
 
@@ -154,12 +169,15 @@ describe('MarkEngagementWorkFinishedService', () => {
     expect($transaction).not.toHaveBeenCalled();
   });
 
-  it('throws ENGAGEMENT_WORK_FINISH_CONFLICT when the guarded CAS loses the race (count 0)', async () => {
-    const { service, finishWorkIfInProgress } = makeService({ casCount: 0 });
+  it('throws ENGAGEMENT_WORK_FINISH_CONFLICT when the guarded CAS loses the race (count 0), and never emits the system message', async () => {
+    const { service, finishWorkIfInProgress, emit } = makeService({
+      casCount: 0,
+    });
 
     await expect(
       service.markEngagementWorkFinished('user-1', 'engagement-1'),
     ).rejects.toMatchObject({ code: 'ENGAGEMENT_WORK_FINISH_CONFLICT' });
     expect(finishWorkIfInProgress).toHaveBeenCalledTimes(1);
+    expect(emit).not.toHaveBeenCalled();
   });
 });
