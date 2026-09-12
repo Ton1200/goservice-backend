@@ -342,6 +342,33 @@ const PLATFORM_SETTINGS: {
     value: 'true',
     isPublic: false,
   },
+  // GOS-121 — Mutual Engagement Reviews. TWO independent flags, same
+  // "module-wide kill switch" + "a second, more granular flag" pattern
+  // `quote-negotiation.general.enabled` +
+  // `quote-negotiation.price-edit.*-can-propose` already establish —
+  // `reviews.comment.enabled` is checked in ADDITION to
+  // `reviews.rating.enabled`, never instead of it. Top-level `reviews.*`
+  // (not nested under `customer.*`), same "own top-level capability
+  // namespace" convention as `quote-negotiation.*` — this is a distinct
+  // capability, not a Customer-only concern (both Customer and Professional
+  // submit/receive reviews). `isPublic: false` for both — backend/admin-only
+  // gates; `goservice-mobile` just calls `submitEngagementReview` and
+  // handles `REVIEWS_MODULE_DISABLED`/`REVIEW_COMMENTS_DISABLED` like any
+  // other domain error, same reasoning as every other capability flag above.
+  {
+    key: 'reviews.rating.enabled',
+    description:
+      'Global kill switch for the mutual Engagement review capability (submitEngagementReview) — with or without a comment.',
+    value: 'true',
+    isPublic: false,
+  },
+  {
+    key: 'reviews.comment.enabled',
+    description:
+      'Controls ONLY the free-text comment field on a review — independent of reviews.rating.enabled. When false, submitEngagementReview still accepts a rating-only call but rejects any non-empty comment with REVIEW_COMMENTS_DISABLED (never silently drops it).',
+    value: 'true',
+    isPublic: false,
+  },
   // GOS-70 — storage / image-processing knobs. Managed from the admin panel
   // by the DEDICATED `updateStorageSettings` mutation (permission
   // `STORAGE_SETTINGS_WRITE`), NOT the generic `setPlatformSetting`, which

@@ -30,6 +30,7 @@ import { StorageModule } from './storage/storage.module';
 import { EngagementChatModule } from './engagement-chat/engagement-chat.module';
 import { AppointmentsModule } from './appointments/appointments.module';
 import { MediaUploadsModule } from './media-uploads/media-uploads.module';
+import { ReviewsModule } from './reviews/reviews.module';
 import type { AppConfig } from './config/configuration';
 
 @Module({
@@ -81,6 +82,7 @@ import type { AppConfig } from './config/configuration';
           EngagementChatModule,
           AppointmentsModule,
           MediaUploadsModule,
+          ReviewsModule,
         ],
         sortSchema: true,
         // GOS-8 acceptance criterion #11: error responses must never include
@@ -260,6 +262,7 @@ import type { AppConfig } from './config/configuration';
     EngagementChatModule,
     AppointmentsModule,
     MediaUploadsModule,
+    ReviewsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },

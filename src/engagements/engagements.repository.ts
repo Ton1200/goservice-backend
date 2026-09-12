@@ -87,9 +87,11 @@ export class EngagementsRepository {
    * GOS-113 — guarded CAS for `confirmEngagementCompletion`: only
    * transitions while still `PENDING_CUSTOMER_CONFIRMATION`. `count === 0`
    * means a lost race — `ConfirmEngagementCompletionService` throws
-   * `engagementCompletionConflict()` and rolls back. No timestamp is
-   * stamped here: unlike `startedAt`/`finishedAt`, GOS-113 adds no
-   * `completedAt` column — this ticket is logic-only, no schema change.
+   * `engagementCompletionConflict()` and rolls back. GOS-121 — stamps
+   * `completedAt` in the SAME write (added retroactively; GOS-113 shipped
+   * without it — see `Engagement.completedAt`'s own comment in
+   * `prisma/schema.prisma`), same "stamp in the same write" criterion
+   * `cancelIfActive` already uses for `cancelledAt`/`cancelReason`.
    */
   completeIfPendingCustomerConfirmation(
     tx: Prisma.TransactionClient,
@@ -97,7 +99,7 @@ export class EngagementsRepository {
   ): Promise<{ count: number }> {
     return tx.engagement.updateMany({
       where: { id, status: EngagementStatus.PENDING_CUSTOMER_CONFIRMATION },
-      data: { status: EngagementStatus.COMPLETED },
+      data: { status: EngagementStatus.COMPLETED, completedAt: new Date() },
     });
   }
 

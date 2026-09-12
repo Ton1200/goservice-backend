@@ -327,6 +327,10 @@ model CustomerProfile {
   // GOS-59 — purely additive back-reference, no new column here. A
   // CustomerProfile may be the proposing party on an Appointment.
   proposedAppointments        Appointment[]
+  // GOS-121 — purely additive back-reference, no new column here. A
+  // CustomerProfile may author a Review on any COMPLETED Engagement it is
+  // party to (see Review's own header comment above).
+  authoredReviews             Review[]
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -415,6 +419,13 @@ model ProfessionalProfile {
   // ProfessionalProfile itself proposed.
   appointments                Appointment[]                @relation("AppointmentProfessional")
   proposedAppointments        Appointment[]                @relation("AppointmentProposedByProfessional")
+  // GOS-121 — purely additive back-reference, no new column here. A
+  // ProfessionalProfile may author a Review on any COMPLETED Engagement it
+  // is party to (see Review's own header comment above). `averageRating`/
+  // `reviewCount` (ratings RECEIVED, i.e. authored by the Customer
+  // counterparty) are resolved separately, via `ReviewsRepository`, NOT
+  // through this relation — see `ProfessionalProfileFieldResolver`.
+  authoredReviews             Review[]
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
   // User" constraint. Indexes anticipate Discovery (by country) and a
@@ -803,6 +814,20 @@ model Engagement {
   // Appointment.cancelReason/cancelledAt. Existing rows stay NULL.
   cancelledAt           DateTime?
   cancelReason          String?
+  // GOS-121 — stamped exactly once, by confirmEngagementCompletion
+  // (PENDING_CUSTOMER_CONFIRMATION -> COMPLETED), inside the SAME guarded
+  // CAS write `completeIfPendingCustomerConfirmation` already performs (see
+  // `EngagementsRepository`'s own comment on that method) — never a second,
+  // separate write. `null` before then. Added retroactively, expanding
+  // GOS-121's own scope beyond `src/reviews/` — GOS-113 explicitly shipped
+  // WITHOUT this column (see that migration's own comment), and GOS-121's
+  // 14-day double-blind review window needs a real "when did this Engagement
+  // finish" timestamp to measure against. No backfill: no existing COMPLETED
+  // Engagement in test data has a real completion moment to reconstruct —
+  // same accepted "nullable retroactive column, no backfill" criterion this
+  // schema already uses elsewhere (e.g. `locationSharingEnabled`'s own
+  // migration note).
+  completedAt           DateTime?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
@@ -818,6 +843,11 @@ model Engagement {
   // Engagement (deliberately NOT a single 1:1 field — see
   // Appointment.engagementId's own comment for why it's not `@unique`).
   appointments Appointment[]
+
+  // GOS-121 — at most two rows (one per EngagementReviewParty, enforced by
+  // Review's own `@@unique([engagementId, authorRole])`), only ever created
+  // once this Engagement is COMPLETED.
+  reviews Review[]
 
   // Supports myEngagementsAsCustomer/myEngagementsAsProfessional (WHERE
   // <profile>Id = ? ORDER BY createdAt DESC). serviceRequestId/quoteId
@@ -1139,6 +1169,92 @@ model MediaUploadRef {
   @@index([userId, status])
 }
 
+// GOS-121 — mutual Engagement ratings/reviews, with admin comment moderation.
+// Both parties of a COMPLETED Engagement may rate each other exactly once
+// each (1-5 stars, optional free-text comment) — double-blind (see
+// `ListMyReceivedReviewsService`'s own header comment for the exact
+// resolution rule) — and, a NEW rule confirmed for this ticket (still
+// pending a DEC-002 documentation update — see `domain-model.md`), a
+// non-empty `comment`'s TEXT is held `PENDING` admin moderation before the
+// counterparty can ever read it; the numeric `rating` is NEVER moderated.
+enum EngagementReviewParty {
+  CUSTOMER
+  PROFESSIONAL
+}
+
+enum ReviewCommentModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// One party's rating (+ optional moderated comment) of the OTHER party on
+// one COMPLETED Engagement. `authorCustomerProfileId`/
+// `authorProfessionalProfileId` are the same nullable-pair-exactly-one-set
+// shape `QuoteNegotiationMessage`/`EngagementChatMessage` already establish
+// for "who acted, relative to a specific parent entity" — enforced
+// structurally by `review_author_shape_check` (see the migration), not just
+// application discipline.
+//
+// **Deliberately NO "reviews received" relation/FK.** Who RECEIVED a given
+// Review is never stored directly — it's always the OTHER party on
+// `engagement` (if `authorRole = CUSTOMER`, the recipient is
+// `engagement.professionalProfileId`, and vice versa), resolved via a join
+// to `Engagement`, same as every other "who is the counterparty" lookup in
+// this schema. Do NOT "fix" this later with a redundant `recipientProfileId`
+// column — it would just be a second, driftable copy of information already
+// fully derivable from `authorRole` + `engagement`.
+//
+// `@@unique([engagementId, authorRole])` is the physical "each party may
+// rate this Engagement at most once" constraint the ticket requires — no
+// edit, no retraction, no second attempt (P2002 on a repeat `create()` —
+// see `SubmitEngagementReviewService`'s own header comment for why this is
+// the first place in this codebase that catches `P2002` directly instead of
+// a pre-check `findFirst`/CAS, a deliberate, ticket-instructed exception).
+//
+// `commentModerationStatus` is `NULL` exactly when `comment` is `NULL`
+// (nothing to moderate); the instant a non-empty `comment` is submitted
+// (with `reviews.comment.enabled` on), it starts `PENDING` and can only ever
+// move to `APPROVED`/`REJECTED` via `moderateEngagementReviewComment` — see
+// `review_comment_moderation_status_shape_check` in the migration. This is
+// this schema's 4th "make an invariant physically impossible, not just an
+// application rule" CHECK constraint, matching the precedent already set by
+// `quote_negotiation_message_author_shape_check`/
+// `quote_price_proposal_proposed_by_shape_check`/
+// `quote_price_proposal_resolved_by_shape_check`/
+// `platform_setting_encrypted_shape_check`.
+model Review {
+  id           String     @id @default(uuid()) @db.Uuid
+  engagementId String     @db.Uuid
+  engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  authorRole                   EngagementReviewParty
+  authorCustomerProfileId      String?               @db.Uuid
+  authorCustomerProfile        CustomerProfile?      @relation(fields: [authorCustomerProfileId], references: [id], onDelete: Cascade)
+  authorProfessionalProfileId  String?               @db.Uuid
+  authorProfessionalProfile    ProfessionalProfile?  @relation(fields: [authorProfessionalProfileId], references: [id], onDelete: Cascade)
+
+  rating Int
+  // Free-text, optional. `NULL` means "rating only, nothing to moderate" —
+  // see `commentModerationStatus`'s own comment above.
+  comment String?
+  // `NULL` iff `comment` is `NULL`. `PENDING` the instant a non-empty
+  // comment is submitted; `APPROVED`/`REJECTED` ONLY via
+  // `moderateEngagementReviewComment` — never reverted, never resubmitted.
+  commentModerationStatus ReviewCommentModerationStatus?
+  // Same `onDelete: SetNull` pattern already used 3 times in this schema for
+  // "which admin last touched this row" (`PlatformSetting.updatedByAdminUser`/
+  // `EmailTemplate.updatedByAdminUser`/`EmailLayout.updatedByAdminUser`) — an
+  // admin account being deleted must never block/cascade-delete a Review.
+  moderatedByAdminUserId String?    @db.Uuid
+  moderatedByAdminUser   AdminUser? @relation(fields: [moderatedByAdminUserId], references: [id], onDelete: SetNull)
+  moderatedAt            DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([engagementId, authorRole])
+}
+
 // Identity Verification (Didit integration) — DEC-006's own "open question"
 // (automated KYC). See `src/identity-verification/` for the full
 // Port/Registry/Adapter design. `User.accountStatus` (PENDING_APPROVAL ->
@@ -1353,6 +1469,22 @@ enum Permission {
   // access. Same "its own dedicated permission" reasoning as
   // `EMAIL_TEMPLATES_WRITE` above.
   STORAGE_SETTINGS_WRITE
+  // Mutual Engagement Reviews admin audit/moderation surface (GOS-121,
+  // 2026-09-11) — gates the read-only `adminReviews` query
+  // (`src/platform-admin/reviews/`): full visibility into every Review,
+  // including `PENDING`/`REJECTED` comments a Customer/Professional can
+  // never see. A genuinely NEW, dedicated permission — same "its own
+  // dedicated permission, not reused from a sibling read permission"
+  // reasoning already established throughout this enum (see
+  // `QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ`/`APPOINTMENTS_READ`
+  // above) — deliberately NOT `SERVICE_REQUESTS_READ`.
+  REVIEWS_READ
+  // GOS-121 — gates `moderateEngagementReviewComment` (approve/reject a
+  // PENDING comment). Separate from `REVIEWS_READ`, mirroring every other
+  // `*_READ`/`*_WRITE` split in this enum (e.g. `EMAIL_TEMPLATES_READ`/
+  // `EMAIL_TEMPLATES_WRITE`) — a role can audit Reviews without being able
+  // to moderate them.
+  REVIEWS_WRITE
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see
@@ -1411,6 +1543,11 @@ model AdminUser {
   // a relation declared together" requirement as `updatedEmailTemplates`
   // above. See `EmailLayout`'s own header comment below.
   updatedEmailLayouts     EmailLayout[]
+  // GOS-121 — `Review.moderatedByAdminUser`'s inverse relation, same "both
+  // sides of a relation declared together" requirement as
+  // `updatedEmailTemplates`/`updatedEmailLayouts` above. See `Review`'s own
+  // header comment above.
+  moderatedReviews        Review[]
 
   @@index([status])
 }

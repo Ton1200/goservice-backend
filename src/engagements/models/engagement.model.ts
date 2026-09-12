@@ -63,6 +63,16 @@ export class EngagementModel {
   @Field(() => String, { nullable: true })
   cancelReason?: string | null;
 
+  /**
+   * GOS-121 — set the moment `confirmEngagementCompletion` succeeds
+   * (PENDING_CUSTOMER_CONFIRMATION → COMPLETED); `null` before then. Added
+   * retroactively for GOS-121's 14-day double-blind review window — GOS-113
+   * itself shipped without this column (see `Engagement.completedAt`'s own
+   * comment in `prisma/schema.prisma`).
+   */
+  @Field(() => GraphQLISODateTime, { nullable: true })
+  completedAt?: Date | null;
+
   @Field(() => GraphQLISODateTime)
   createdAt!: Date;
 

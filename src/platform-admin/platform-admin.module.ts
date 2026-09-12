@@ -19,6 +19,8 @@ import '../quote-negotiation/models/quote-price-proposal-status.enum'; // GraphQ
 import '../engagement-chat/models/engagement-chat-party.enum'; // GraphQL enum registration side effect
 import '../appointments/models/appointment-status.enum'; // GraphQL enum registration side effect
 import '../appointments/models/appointment-party.enum'; // GraphQL enum registration side effect
+import '../reviews/models/engagement-review-party.enum'; // GraphQL enum registration side effect
+import '../reviews/models/review-comment-moderation-status.enum'; // GraphQL enum registration side effect
 import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
@@ -104,6 +106,10 @@ import { SendTestEmailTemplateService } from './email-templates/services/send-te
 import { GetEmailLayoutService } from './email-templates/services/get-email-layout.service';
 import { UpdateEmailLayoutService } from './email-templates/services/update-email-layout.service';
 import { RequestEmailLogoUploadUrlService } from './email-templates/services/request-email-logo-upload-url.service';
+import { ReviewsRepository } from '../reviews/reviews.repository';
+import { AdminReviewsResolver } from './reviews/admin-reviews.resolver';
+import { ListAdminReviewsService } from './reviews/services/list-admin-reviews.service';
+import { ModerateEngagementReviewCommentService } from './reviews/services/moderate-engagement-review-comment.service';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -541,6 +547,25 @@ import { RequestEmailLogoUploadUrlService } from './email-templates/services/req
     // random signing secret whenever `STORAGE_LOCAL_SIGNING_SECRET` is
     // unset, breaking upload-token verification across modules).
     RequestEmailLogoUploadUrlService,
+
+    // Mutual Engagement Reviews admin audit/moderation surface (GOS-121,
+    // 2026-09-11) — `adminReviews`/`moderateEngagementReviewComment`, gated
+    // by its own dedicated `Permission.REVIEWS_READ`/`REVIEWS_WRITE` (see
+    // the `Permission` enum's own comment in `prisma/schema.prisma`). No
+    // module-enabled kill switch — `adminReviews` is deliberately NOT gated
+    // by `reviews.rating.enabled`/`reviews.comment.enabled` (see
+    // `ListAdminReviewsService`'s own header comment for the reasoning,
+    // same "not gated" choice as `adminEngagementChatThread`, the opposite
+    // of `adminQuoteNegotiationThread`). `ReviewsRepository` is reused
+    // CONCRETE CLASS from `src/reviews/` — same "never import the
+    // resolver-bearing module" pattern as every other admin submodule in
+    // this file; `ReviewsModule` itself is never imported here (it has its
+    // own `ReviewsResolver`/`ReviewsQueriesResolver`, the same leak class
+    // documented throughout this file).
+    ReviewsRepository,
+    AdminReviewsResolver,
+    ListAdminReviewsService,
+    ModerateEngagementReviewCommentService,
   ],
 })
 export class PlatformAdminModule {}
