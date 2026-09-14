@@ -3,6 +3,8 @@ import { Engagement, EngagementStatus } from '@prisma/client';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
 import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
 import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
+import { CURRENCY_BY_COUNTRY } from '../../ledger/constants/country-currency.constants';
+import { RecordProfessionalCancellationRefundService } from '../../ledger/services/record-professional-cancellation-refund.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -32,17 +34,22 @@ import { engagementNotCancellableByProfessional } from '../errors/engagement-not
  * `engagementNotFound()`, reused unchanged from GOS-111/113/114/46.
  *
  * Deliberately ONE precheck error (`engagementNotCancellableByProfessional()`)
- * for all three disallowed states — same idiom as the Customer side, and its
- * own code (NOT shared with `engagementNotCancellableByCustomer()`) per this
- * ticket's own AC.
+ * for all three disallowed states, per this ticket's own AC.
  *
  * Does NOT touch `src/engagement-chat/` — closing the coordination
- * conversation is GOS-107, out of scope here. Does NOT compute or move any
- * money — see `recordProfessionalCancellationRefund` below. No
- * `cancelledByRole` column and no new `EngagementsRepository` method exist
- * for this — nothing downstream needs to know "who cancelled" from the
- * `Engagement` row itself; this service's own distinct log event name
- * already captures that operationally.
+ * conversation is GOS-107, out of scope here. No `cancelledByRole` column
+ * and no new `EngagementsRepository` method exist for this — nothing
+ * downstream needs to know "who cancelled" from the `Engagement` row
+ * itself; this service's own distinct log event name already captures that
+ * operationally.
+ *
+ * **GOS-109**: same restructuring as `CancelEngagementByCustomerService` —
+ * the pre-cancel ownership/state read now uses
+ * `EngagementsRepository.findByIdWithBillingContext`; inside the SAME
+ * `prisma.$transaction` as the CAS write,
+ * `recordProfessionalCancellationRefundService.record` writes DEC-008's
+ * unconditional full-refund `REFUND` ledger entry — a ledger-write failure
+ * rolls back the whole cancellation.
  */
 @Injectable()
 export class CancelEngagementByProfessionalService {
@@ -55,6 +62,7 @@ export class CancelEngagementByProfessionalService {
     private readonly profilesRepository: ProfilesRepository,
     private readonly engagementsRepository: EngagementsRepository,
     private readonly emitEngagementLifecycleSystemMessageService: EmitEngagementLifecycleSystemMessageService,
+    private readonly recordProfessionalCancellationRefundService: RecordProfessionalCancellationRefundService,
   ) {}
 
   async cancelEngagementByProfessional(
@@ -64,7 +72,8 @@ export class CancelEngagementByProfessionalService {
   ): Promise<Engagement> {
     const professionalProfile =
       await this.profilesRepository.findProfessionalProfileByUserId(userId);
-    const engagement = await this.engagementsRepository.findById(engagementId);
+    const engagement =
+      await this.engagementsRepository.findByIdWithBillingContext(engagementId);
     if (
       !engagement ||
       !professionalProfile ||
@@ -81,6 +90,10 @@ export class CancelEngagementByProfessionalService {
     ) {
       throw engagementNotCancellableByProfessional();
     }
+
+    const quotedPrice =
+      engagement.quote.negotiatedPrice ?? engagement.quote.price;
+    const currency = CURRENCY_BY_COUNTRY[engagement.customerProfile.country];
 
     await this.prisma.$transaction(async (tx) => {
       const cas = await this.engagementsRepository.cancelIfActive(
@@ -100,21 +113,18 @@ export class CancelEngagementByProfessionalService {
         engagementId,
         ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.CANCELLED_BY_PROFESSIONAL,
       );
+
+      // GOS-109 — DEC-008's unconditional full-refund event, inside the
+      // same transaction as the CAS write above.
+      await this.recordProfessionalCancellationRefundService.record(tx, {
+        engagementId,
+        quotedPrice,
+        currency,
+        customerProfileId: engagement.customerProfileId,
+      });
     });
 
     const updated = await this.engagementsRepository.findById(engagementId);
-
-    // GOS-109 extension point: a Professional-initiated cancellation is
-    // expected to require a FULL reimbursement to the Customer — unlike
-    // `CancelEngagementByCustomerService.computeCustomerCancellationCharge`,
-    // this business rule is already fixed (full refund, no charge amount to
-    // calculate), so this stub is simpler. No payments/commission/ledger
-    // table exists anywhere in this schema yet, so there is nothing for this
-    // method to read, write, or even meaningfully simulate. This call exists
-    // purely as the documented, exercised (not dead-code) seam GOS-109 will
-    // replace with a `REFUND` ledger entry; its `null` return is
-    // deliberately not surfaced on any GraphQL field.
-    this.recordProfessionalCancellationRefund(updated!);
 
     this.logger.log({
       event: 'engagement_cancelled_by_professional',
@@ -123,15 +133,5 @@ export class CancelEngagementByProfessionalService {
     });
 
     return updated!;
-  }
-
-  /**
-   * GOS-109 extension point — see the call-site comment above. Always
-   * returns `null` today; reserved for a future full-refund `REFUND` ledger
-   * entry once a payments/commission ledger exists.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private recordProfessionalCancellationRefund(engagement: Engagement): null {
-    return null;
   }
 }

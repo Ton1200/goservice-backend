@@ -174,4 +174,31 @@ export class EngagementsRepository {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  /**
+   * GOS-109 — the pre-cancel billing-context read `CancelEngagementByCustomerService`/
+   * `CancelEngagementByProfessionalService` use INSTEAD OF the plain
+   * `findById` above, for their ownership/state pre-check. A narrow
+   * `select`, mirroring `ServiceRequestsRepository`'s own narrow-select
+   * pattern for admin reads — only what the ledger actually needs: the
+   * pre-cancel `status`, both denormalized profile ids, the accepted
+   * `Quote`'s `price`/`negotiatedPrice` (the pre-cancel stage is only
+   * visible BEFORE `cancelIfActive`'s CAS write flips `status` to
+   * `CANCELLED`), and the owning `CustomerProfile.country` (to derive
+   * `currency` via `CURRENCY_BY_COUNTRY`). `findById` itself is
+   * DELIBERATELY left untouched — 8+ existing callers depend on its
+   * current plain shape.
+   */
+  findByIdWithBillingContext(id: string) {
+    return this.prisma.engagement.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        customerProfileId: true,
+        professionalProfileId: true,
+        quote: { select: { price: true, negotiatedPrice: true } },
+        customerProfile: { select: { country: true } },
+      },
+    });
+  }
 }

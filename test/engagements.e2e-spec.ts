@@ -15,6 +15,7 @@ import type { AppConfig } from '../src/config/configuration';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
   cleanAppointmentsData,
+  cleanLedgerData,
   cleanProfilesData,
   cleanQuotesAndEngagementsData,
   cleanServiceRequestsData,
@@ -179,6 +180,7 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
   });
 
   afterAll(async () => {
+    await cleanLedgerData(prisma);
     await cleanAppointmentsData(prisma);
     await cleanQuotesAndEngagementsData(prisma);
     await cleanServiceRequestsData(prisma);
@@ -1621,5 +1623,366 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
     const afterFinish = await readStatus();
     expect(afterFinish.status).toBe('PENDING_CUSTOMER_CONFIRMATION');
     expect(afterFinish.finishedAt).not.toBeNull();
+  });
+});
+
+/**
+ * e2e coverage for GOS-109 — the financial ledger both cancellation paths
+ * now write through, per DEC-008. `seedEngagement` always quotes `price:
+ * 5000`, and the seeded `payments.commission.percent` defaults to `'10'`
+ * (see `prisma/seed.ts`) — 10% of 5000 is a round 500, so the fee/commission/
+ * net split below is exact, with no rounding to account for.
+ */
+describe('GraphQL Engagement financial ledger (GOS-109, e2e)', () => {
+  let app: INestApplication<App>;
+  let prisma: PrismaService;
+  const createdCategoryIds: string[] = [];
+
+  const COMMISSION_PERCENT_KEY = 'payments.commission.percent';
+
+  beforeAll(async () => {
+    const ctx = await createTestApp();
+    app = ctx.app;
+    prisma = ctx.prisma;
+  });
+
+  async function flushRedis(): Promise<void> {
+    const redisConfig = app.get(ConfigService<AppConfig, true>).get('redis', {
+      infer: true,
+    });
+    const redis = new Redis({
+      host: redisConfig.host,
+      port: redisConfig.port,
+      password: redisConfig.password,
+    });
+    await redis.flushdb();
+    await redis.quit();
+  }
+
+  beforeEach(async () => {
+    await flushRedis();
+    // Defensive — restore the seeded default before every test, in case a
+    // prior test in this file changed it (see the last test below).
+    await prisma.platformSetting.upsert({
+      where: { key: COMMISSION_PERCENT_KEY },
+      update: { value: '10' },
+      create: {
+        key: COMMISSION_PERCENT_KEY,
+        description: "GoService's global commission percentage.",
+        valueType: 'NUMBER',
+        value: '10',
+        isPublic: false,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await cleanLedgerData(prisma);
+    await cleanAppointmentsData(prisma);
+    await cleanQuotesAndEngagementsData(prisma);
+    await cleanServiceRequestsData(prisma);
+    await cleanProfilesData(prisma);
+    await prisma.category.deleteMany({
+      where: { id: { in: createdCategoryIds } },
+    });
+    await cleanUsersData(prisma);
+    await flushRedis();
+    await app.close();
+  });
+
+  function gqlRequest(
+    query: string,
+    variables: Record<string, unknown>,
+    sessionToken?: string,
+  ) {
+    const req = request(app.getHttpServer())
+      .post('/graphql')
+      .send({ query, variables });
+    if (sessionToken) {
+      req.set('Authorization', `Bearer ${sessionToken}`);
+    }
+    return req;
+  }
+
+  async function seedUser(): Promise<{ email: string; userId: string }> {
+    const email = uniqueEmail('ledger');
+    const passwordHash = await argon2.hash(PASSWORD, { type: argon2.argon2id });
+    const user = await prisma.user.create({
+      data: {
+        email,
+        firstName: 'Test',
+        lastName: 'User',
+        passwordHash,
+        acceptedTermsAndPrivacy: true,
+        authProvider: AuthProvider.PASSWORD,
+        accountStatus: UserAccountStatus.APPROVED,
+      },
+    });
+    return { email, userId: user.id };
+  }
+
+  async function seedApprovedCustomer(): Promise<{
+    email: string;
+    customerProfileId: string;
+  }> {
+    const { email, userId } = await seedUser();
+    const customerProfile = await prisma.customerProfile.create({
+      data: {
+        userId,
+        firstName: 'Cliente',
+        lastName: 'de Prueba',
+        country: CountryCode.AR,
+      },
+    });
+    return { email, customerProfileId: customerProfile.id };
+  }
+
+  async function seedApprovedProfessional(categoryIds: string[]): Promise<{
+    email: string;
+    professionalProfileId: string;
+  }> {
+    const { email, userId } = await seedUser();
+    const professionalProfile = await prisma.professionalProfile.create({
+      data: {
+        userId,
+        firstName: 'Profesional',
+        lastName: 'de Prueba',
+        country: CountryCode.AR,
+        bio: 'Con experiencia.',
+        verificationStatus: ProfessionalVerificationStatus.UNVERIFIED,
+      },
+    });
+    await prisma.professionalSpecialization.createMany({
+      data: categoryIds.map((categoryId, index) => ({
+        professionalProfileId: professionalProfile.id,
+        categoryId,
+        role:
+          index === 0
+            ? SpecializationRole.PRIMARY
+            : SpecializationRole.SECONDARY,
+        description: 'Especialista.',
+        order: index,
+      })),
+    });
+    return { email, professionalProfileId: professionalProfile.id };
+  }
+
+  async function seedCategory(): Promise<string> {
+    const category = await prisma.category.create({
+      data: { name: uniqueCategoryName('Categoria') },
+    });
+    createdCategoryIds.push(category.id);
+    return category.id;
+  }
+
+  async function loginSessionToken(email: string): Promise<string> {
+    const response = await request(app.getHttpServer())
+      .post('/graphql')
+      .send({
+        query: LOGIN_MUTATION,
+        variables: { input: { email, password: PASSWORD } },
+      })
+      .expect(200);
+    return (response.body as { data: { login: { sessionToken: string } } }).data
+      .login.sessionToken;
+  }
+
+  async function seedEngagement(): Promise<{
+    engagementId: string;
+    customerToken: string;
+    professionalToken: string;
+  }> {
+    const categoryId = await seedCategory();
+    const customer = await seedApprovedCustomer();
+    const professional = await seedApprovedProfessional([categoryId]);
+    const customerToken = await loginSessionToken(customer.email);
+    const professionalToken = await loginSessionToken(professional.email);
+
+    const publishResponse = await gqlRequest(
+      PUBLISH_SERVICE_REQUEST_MUTATION,
+      {
+        input: {
+          category: categoryId,
+          description: 'Se rompió una cañería en la cocina y pierde agua.',
+          urgency: 'URGENT',
+        },
+      },
+      customerToken,
+    ).expect(200);
+    const serviceRequestId = (
+      publishResponse.body as {
+        data: { publishServiceRequest: { id: string } };
+      }
+    ).data.publishServiceRequest.id;
+
+    const submitResponse = await gqlRequest(
+      SUBMIT_QUOTE_MUTATION,
+      {
+        input: {
+          serviceRequestId,
+          price: 5000,
+          message: 'Puedo hacerlo mañana temprano.',
+        },
+      },
+      professionalToken,
+    ).expect(200);
+    const quoteId = (
+      submitResponse.body as { data: { submitQuote: { id: string } } }
+    ).data.submitQuote.id;
+
+    const acceptResponse = await gqlRequest(
+      ACCEPT_QUOTE_MUTATION,
+      { quoteId },
+      customerToken,
+    ).expect(200);
+    const engagementId = (
+      acceptResponse.body as {
+        data: { acceptQuote: { engagement: { id: string } } };
+      }
+    ).data.acceptQuote.engagement.id;
+
+    return { engagementId, customerToken, professionalToken };
+  }
+
+  async function confirmAnAppointment(
+    engagementId: string,
+    customerToken: string,
+    professionalToken: string,
+  ): Promise<void> {
+    const proposeResponse = await gqlRequest(
+      PROPOSE_APPOINTMENT_MUTATION,
+      {
+        engagementId,
+        input: {
+          startsAt: '2026-09-15T10:00:00.000Z',
+          endsAt: '2026-09-15T12:00:00.000Z',
+        },
+      },
+      customerToken,
+    ).expect(200);
+    const appointmentId = (
+      proposeResponse.body as {
+        data: { proposeAppointment: { id: string } };
+      }
+    ).data.proposeAppointment.id;
+
+    await gqlRequest(
+      ACCEPT_APPOINTMENT_MUTATION,
+      { id: appointmentId },
+      professionalToken,
+    ).expect(200);
+  }
+
+  it('cancelEngagementByCustomer while IN_PROGRESS writes exactly 3 zero-sum LedgerEntry rows with a frozen commissionPercentApplied', async () => {
+    const { engagementId, customerToken, professionalToken } =
+      await seedEngagement();
+    await confirmAnAppointment(engagementId, customerToken, professionalToken);
+    await gqlRequest(
+      START_ENGAGEMENT_WORK_MUTATION,
+      { engagementId },
+      professionalToken,
+    ).expect(200);
+
+    await gqlRequest(
+      CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+      { engagementId, reason: 'cliente cancela en curso' },
+      customerToken,
+    ).expect(200);
+
+    const rows = await prisma.ledgerEntry.findMany({
+      where: { engagementId },
+      orderBy: { type: 'asc' },
+    });
+    expect(rows).toHaveLength(3);
+
+    const sum = rows.reduce((acc, row) => acc + row.amount, 0);
+    expect(sum).toBe(0);
+
+    const fee = rows.find((r) => r.type === 'CUSTOMER_CANCELLATION_FEE')!;
+    const commission = rows.find((r) => r.type === 'PLATFORM_COMMISSION')!;
+    const net = rows.find((r) => r.type === 'PROFESSIONAL_NET_CREDIT')!;
+    expect(fee.amount).toBe(-500);
+    expect(commission.amount).toBe(50);
+    expect(net.amount).toBe(450);
+    for (const row of rows) {
+      expect(row.commissionPercentApplied).toBe(10);
+      expect(row.currency).toBe('ARS');
+    }
+  });
+
+  it('cancelEngagementByCustomer while ACCEPTED writes zero LedgerEntry rows', async () => {
+    const { engagementId, customerToken } = await seedEngagement();
+
+    await gqlRequest(
+      CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+      { engagementId, reason: 'cliente cancela antes de empezar' },
+      customerToken,
+    ).expect(200);
+
+    const rows = await prisma.ledgerEntry.findMany({
+      where: { engagementId },
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('cancelEngagementByProfessional writes exactly one positive REFUND LedgerEntry row for the full quoted price', async () => {
+    const { engagementId, professionalToken } = await seedEngagement();
+
+    await gqlRequest(
+      CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION,
+      { engagementId, reason: 'no puedo cumplir' },
+      professionalToken,
+    ).expect(200);
+
+    const rows = await prisma.ledgerEntry.findMany({
+      where: { engagementId },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type).toBe('REFUND');
+    expect(rows[0].amount).toBe(5000);
+    expect(rows[0].commissionPercentApplied).toBeNull();
+  });
+
+  it('changing payments.commission.percent AFTER entries exist never rewrites their frozen commissionPercentApplied', async () => {
+    const { engagementId, customerToken, professionalToken } =
+      await seedEngagement();
+    await confirmAnAppointment(engagementId, customerToken, professionalToken);
+    await gqlRequest(
+      START_ENGAGEMENT_WORK_MUTATION,
+      { engagementId },
+      professionalToken,
+    ).expect(200);
+    await gqlRequest(
+      CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+      { engagementId, reason: 'cliente cancela en curso' },
+      customerToken,
+    ).expect(200);
+
+    const before = await prisma.ledgerEntry.findMany({
+      where: { engagementId },
+      orderBy: { type: 'asc' },
+    });
+    expect(before).toHaveLength(3);
+
+    await prisma.platformSetting.upsert({
+      where: { key: COMMISSION_PERCENT_KEY },
+      update: { value: '25' },
+      create: {
+        key: COMMISSION_PERCENT_KEY,
+        description: "GoService's global commission percentage.",
+        valueType: 'NUMBER',
+        value: '25',
+        isPublic: false,
+      },
+    });
+
+    const after = await prisma.ledgerEntry.findMany({
+      where: { engagementId },
+      orderBy: { type: 'asc' },
+    });
+    expect(after).toEqual(before);
+    for (const row of after) {
+      expect(row.commissionPercentApplied).toBe(10);
+    }
   });
 });

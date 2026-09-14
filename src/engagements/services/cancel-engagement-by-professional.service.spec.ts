@@ -1,7 +1,8 @@
 import { Logger } from '@nestjs/common';
-import { EngagementStatus } from '@prisma/client';
+import { CountryCode, EngagementStatus } from '@prisma/client';
 import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
 import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
+import { RecordProfessionalCancellationRefundService } from '../../ledger/services/record-professional-cancellation-refund.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -13,30 +14,48 @@ describe('CancelEngagementByProfessionalService', () => {
     userId: 'user-1',
   };
 
-  function makeEngagement(
+  function makeBillingContextEngagement(
     overrides?: Partial<{
       professionalProfileId: string;
       status: EngagementStatus;
+      price: number;
+      negotiatedPrice: number | null;
+      country: CountryCode;
     }>,
   ) {
+    return {
+      customerProfileId: 'customer-profile-1',
+      professionalProfileId:
+        overrides?.professionalProfileId ?? professionalProfile.id,
+      status: overrides?.status ?? EngagementStatus.ACCEPTED,
+      quote: {
+        price: overrides?.price ?? 5000,
+        negotiatedPrice: overrides?.negotiatedPrice ?? null,
+      },
+      customerProfile: { country: overrides?.country ?? CountryCode.AR },
+    };
+  }
+
+  function makeFinalEngagement() {
     return {
       id: 'engagement-1',
       serviceRequestId: 'service-request-1',
       quoteId: 'quote-1',
       customerProfileId: 'customer-profile-1',
-      professionalProfileId:
-        overrides?.professionalProfileId ?? professionalProfile.id,
-      status: overrides?.status ?? EngagementStatus.ACCEPTED,
+      professionalProfileId: professionalProfile.id,
+      status: EngagementStatus.CANCELLED,
       startedAt: null,
       finishedAt: null,
-      cancelledAt: null,
-      cancelReason: null,
+      cancelledAt: new Date(),
+      cancelReason: 'client cancelled the job',
     };
   }
 
   function makeService(overrides?: {
     professionalProfile?: typeof professionalProfile | null;
-    engagement?: ReturnType<typeof makeEngagement> | null;
+    billingContextEngagement?: ReturnType<
+      typeof makeBillingContextEngagement
+    > | null;
     casCount?: number;
   }) {
     const fakeTx = { __fakeTransactionClient: true };
@@ -56,26 +75,19 @@ describe('CancelEngagementByProfessionalService', () => {
       findProfessionalProfileByUserId,
     } as unknown as ProfilesRepository;
 
-    const engagement =
-      overrides?.engagement === undefined
-        ? makeEngagement()
-        : overrides.engagement;
-    const cancelledEngagement = engagement
-      ? {
-          ...engagement,
-          status: EngagementStatus.CANCELLED,
-          cancelledAt: new Date(),
-          cancelReason: 'client cancelled the job',
-        }
-      : null;
-    const findById = jest
+    const billingContextEngagement =
+      overrides?.billingContextEngagement === undefined
+        ? makeBillingContextEngagement()
+        : overrides.billingContextEngagement;
+    const findByIdWithBillingContext = jest
       .fn()
-      .mockResolvedValueOnce(engagement)
-      .mockResolvedValueOnce(cancelledEngagement);
+      .mockResolvedValue(billingContextEngagement);
+    const findById = jest.fn().mockResolvedValue(makeFinalEngagement());
     const cancelIfActive = jest
       .fn()
       .mockResolvedValue({ count: overrides?.casCount ?? 1 });
     const engagementsRepository = {
+      findByIdWithBillingContext,
       findById,
       cancelIfActive,
     } as unknown as EngagementsRepository;
@@ -85,20 +97,28 @@ describe('CancelEngagementByProfessionalService', () => {
       emit,
     } as unknown as EmitEngagementLifecycleSystemMessageService;
 
+    const record = jest.fn().mockResolvedValue(undefined);
+    const recordProfessionalCancellationRefundService = {
+      record,
+    } as unknown as RecordProfessionalCancellationRefundService;
+
     const service = new CancelEngagementByProfessionalService(
       prisma,
       profilesRepository,
       engagementsRepository,
       emitEngagementLifecycleSystemMessageService,
+      recordProfessionalCancellationRefundService,
     );
 
     return {
       service,
       $transaction,
       findProfessionalProfileByUserId,
+      findByIdWithBillingContext,
       findById,
       cancelIfActive,
       emit,
+      record,
     };
   }
 
@@ -124,7 +144,7 @@ describe('CancelEngagementByProfessionalService', () => {
       'engagement-1',
       'client cancelled the job',
     );
-    expect(findById).toHaveBeenCalledTimes(2);
+    expect(findById).toHaveBeenCalledTimes(1);
     expect(result.status).toBe(EngagementStatus.CANCELLED);
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -139,9 +159,58 @@ describe('CancelEngagementByProfessionalService', () => {
     );
   });
 
+  it('calls RecordProfessionalCancellationRefundService.record inside the SAME transaction, for the full quoted price — regardless of preCancelStatus', async () => {
+    const { service, record } = makeService({
+      billingContextEngagement: makeBillingContextEngagement({
+        status: EngagementStatus.IN_PROGRESS,
+        price: 5000,
+        negotiatedPrice: 4500,
+        country: CountryCode.CO,
+      }),
+    });
+
+    await service.cancelEngagementByProfessional(
+      'user-1',
+      'engagement-1',
+      'reason',
+    );
+
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({ __fakeTransactionClient: true }),
+      {
+        engagementId: 'engagement-1',
+        quotedPrice: 4500,
+        currency: 'COP',
+        customerProfileId: 'customer-profile-1',
+      },
+    );
+  });
+
+  it('falls back to the original quote price when no negotiatedPrice exists', async () => {
+    const { service, record } = makeService({
+      billingContextEngagement: makeBillingContextEngagement({
+        price: 5000,
+        negotiatedPrice: null,
+      }),
+    });
+
+    await service.cancelEngagementByProfessional(
+      'user-1',
+      'engagement-1',
+      'reason',
+    );
+
+    expect(record).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ quotedPrice: 5000, currency: 'ARS' }),
+    );
+  });
+
   it('transitions an IN_PROGRESS Engagement to CANCELLED', async () => {
     const { service } = makeService({
-      engagement: makeEngagement({ status: EngagementStatus.IN_PROGRESS }),
+      billingContextEngagement: makeBillingContextEngagement({
+        status: EngagementStatus.IN_PROGRESS,
+      }),
     });
 
     const result = await service.cancelEngagementByProfessional(
@@ -169,7 +238,7 @@ describe('CancelEngagementByProfessionalService', () => {
   });
 
   it('throws ENGAGEMENT_NOT_FOUND for a nonexistent Engagement', async () => {
-    const { service } = makeService({ engagement: null });
+    const { service } = makeService({ billingContextEngagement: null });
 
     await expect(
       service.cancelEngagementByProfessional('user-1', 'nope', 'reason'),
@@ -178,7 +247,7 @@ describe('CancelEngagementByProfessionalService', () => {
 
   it('throws ENGAGEMENT_NOT_FOUND (same code) when the Engagement belongs to another Professional', async () => {
     const { service } = makeService({
-      engagement: makeEngagement({
+      billingContextEngagement: makeBillingContextEngagement({
         professionalProfileId: 'someone-elses-profile',
       }),
     });
@@ -200,7 +269,7 @@ describe('CancelEngagementByProfessionalService', () => {
     'throws ENGAGEMENT_NOT_CANCELLABLE_BY_PROFESSIONAL when the Engagement is %s, and never opens a transaction',
     async (status) => {
       const { service, $transaction } = makeService({
-        engagement: makeEngagement({ status }),
+        billingContextEngagement: makeBillingContextEngagement({ status }),
       });
 
       await expect(
@@ -216,8 +285,10 @@ describe('CancelEngagementByProfessionalService', () => {
     },
   );
 
-  it('throws ENGAGEMENT_CANCEL_CONFLICT when the guarded CAS loses the race (count 0), and never emits the system message', async () => {
-    const { service, cancelIfActive, emit } = makeService({ casCount: 0 });
+  it('throws ENGAGEMENT_CANCEL_CONFLICT when the guarded CAS loses the race (count 0), and never emits the system message or records a refund', async () => {
+    const { service, cancelIfActive, emit, record } = makeService({
+      casCount: 0,
+    });
 
     await expect(
       service.cancelEngagementByProfessional(
@@ -228,5 +299,6 @@ describe('CancelEngagementByProfessionalService', () => {
     ).rejects.toMatchObject({ code: 'ENGAGEMENT_CANCEL_CONFLICT' });
     expect(cancelIfActive).toHaveBeenCalledTimes(1);
     expect(emit).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
   });
 });

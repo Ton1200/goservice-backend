@@ -331,6 +331,10 @@ model CustomerProfile {
   // CustomerProfile may author a Review on any COMPLETED Engagement it is
   // party to (see Review's own header comment above).
   authoredReviews             Review[]
+  // GOS-109 — every `LedgerEntry` ever written where this CustomerProfile is
+  // the customer-side party (`onDelete: SetNull` — see that model's own
+  // header comment).
+  ledgerEntries               LedgerEntry[]
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -426,6 +430,10 @@ model ProfessionalProfile {
   // counterparty) are resolved separately, via `ReviewsRepository`, NOT
   // through this relation — see `ProfessionalProfileFieldResolver`.
   authoredReviews             Review[]
+  // GOS-109 — every `LedgerEntry` ever written where this ProfessionalProfile
+  // is the professional-side party (`onDelete: SetNull` — see that model's
+  // own header comment).
+  ledgerEntries               LedgerEntry[]
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
   // User" constraint. Indexes anticipate Discovery (by country) and a
@@ -849,6 +857,13 @@ model Engagement {
   // once this Engagement is COMPLETED.
   reviews Review[]
 
+  // GOS-109 — every `LedgerEntry` ever written against this Engagement
+  // (cancellation-charge/refund events today; a completed-job charge later,
+  // GOS-79/80). `onDelete: SetNull` on `LedgerEntry.engagementId` — see that
+  // model's own header comment for why this diverges from `reviews`/
+  // `appointments` above.
+  ledgerEntries LedgerEntry[]
+
   // Supports myEngagementsAsCustomer/myEngagementsAsProfessional (WHERE
   // <profile>Id = ? ORDER BY createdAt DESC). serviceRequestId/quoteId
   // above already get a unique index for free from `@unique`.
@@ -1241,16 +1256,16 @@ model Review {
   engagementId String     @db.Uuid
   engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
-  authorRole                   EngagementReviewParty
-  authorCustomerProfileId      String?               @db.Uuid
-  authorCustomerProfile        CustomerProfile?      @relation(fields: [authorCustomerProfileId], references: [id], onDelete: Cascade)
-  authorProfessionalProfileId  String?               @db.Uuid
-  authorProfessionalProfile    ProfessionalProfile?  @relation(fields: [authorProfessionalProfileId], references: [id], onDelete: Cascade)
+  authorRole                  EngagementReviewParty
+  authorCustomerProfileId     String?               @db.Uuid
+  authorCustomerProfile       CustomerProfile?      @relation(fields: [authorCustomerProfileId], references: [id], onDelete: Cascade)
+  authorProfessionalProfileId String?               @db.Uuid
+  authorProfessionalProfile   ProfessionalProfile?  @relation(fields: [authorProfessionalProfileId], references: [id], onDelete: Cascade)
 
-  rating Int
+  rating                  Int
   // Free-text, optional. `NULL` means "rating only, nothing to moderate" —
   // see `commentModerationStatus`'s own comment above.
-  comment String?
+  comment                 String?
   // `NULL` iff `comment` is `NULL`. `PENDING` the instant a non-empty
   // comment is submitted; `APPROVED`/`REJECTED` ONLY via
   // `moderateEngagementReviewComment` — never reverted, never resubmitted.
@@ -1259,13 +1274,109 @@ model Review {
   // "which admin last touched this row" (`PlatformSetting.updatedByAdminUser`/
   // `EmailTemplate.updatedByAdminUser`/`EmailLayout.updatedByAdminUser`) — an
   // admin account being deleted must never block/cascade-delete a Review.
-  moderatedByAdminUserId String?    @db.Uuid
-  moderatedByAdminUser   AdminUser? @relation(fields: [moderatedByAdminUserId], references: [id], onDelete: SetNull)
-  moderatedAt            DateTime?
+  moderatedByAdminUserId  String?                        @db.Uuid
+  moderatedByAdminUser    AdminUser?                     @relation(fields: [moderatedByAdminUserId], references: [id], onDelete: SetNull)
+  moderatedAt             DateTime?
 
   createdAt DateTime @default(now())
 
   @@unique([engagementId, authorRole])
+}
+
+// GOS-109 — the first real, append-only financial ledger row, unblocked by
+// DEC-008 (commission percentage + customer-cancellation-fee policy, both
+// Accepted 2026-09-12). Replaces the two documented, exercised stubs that
+// used to always return `null`:
+// `CancelEngagementByCustomerService.computeCustomerCancellationCharge`
+// (GOS-114) and `CancelEngagementByProfessionalService.recordProfessionalCancellationRefund`
+// (GOS-117). See `goservice-docs/decisions/DEC-008-commission-and-cancellation-fee.md`.
+//
+// `CUSTOMER_CHARGE`/`CASH_COMMISSION_DEBT` are RESERVED for a future
+// payment capability (GOS-79/80) — no writer exists for either yet, same
+// "reserved for later, added when the trigger exists" posture
+// `EngagementStatus.COMPLETED`/`CANCELLED` already established in GOS-111.
+// `WITHDRAWAL`/`WITHDRAWAL_HOLD_RELEASE` are likewise RESERVED for a future
+// Professional wallet/withdrawal capability (GOS-82).
+//
+// This story's two real writers:
+//   - `CUSTOMER_CANCELLATION_FEE` (negative) + `PLATFORM_COMMISSION`
+//     (positive) + `PROFESSIONAL_NET_CREDIT` (positive) — written together,
+//     atomically, by `RecordCustomerCancellationChargeService` ONLY when a
+//     Customer cancels an Engagement that was already `IN_PROGRESS` (DEC-008
+//     point 3) — a pure 2-row commission/net split can never sum to zero on
+//     its own, so the negative fee entry is the required third, balancing
+//     leg (see that service's own header comment for the exact rounding
+//     rule that keeps `-fee + commission + net === 0` exactly, even under
+//     integer rounding).
+//   - `REFUND` (positive, full quoted price) — written alone by
+//     `RecordProfessionalCancellationRefundService` on EVERY
+//     Professional-initiated cancellation (DEC-008: "unaffected by this
+//     DEC ... full refund to the Customer, no charge") — deliberately NOT
+//     run through `computeCommission`: nothing was ever charged, so there
+//     is nothing to split.
+enum LedgerEntryType {
+  CUSTOMER_CHARGE
+  PLATFORM_COMMISSION
+  PROFESSIONAL_NET_CREDIT
+  CASH_COMMISSION_DEBT
+  CUSTOMER_CANCELLATION_FEE
+  REFUND
+  WITHDRAWAL
+  WITHDRAWAL_HOLD_RELEASE
+}
+
+// One append-only ledger row. No `update`/`delete` Prisma call exists
+// anywhere for this model (see `LedgerRepository`'s own header comment) —
+// a financial audit trail is corrected by writing a NEW, offsetting entry,
+// never by mutating history.
+//
+// `amount` is a bare major-unit `Int`, the SAME convention as
+// `Quote.price`/`ServiceRequest.indicativeBudgetMin/Max` — this schema has
+// no cents/minor-unit precedent anywhere, so `LedgerEntry` does not
+// introduce one on its own. `currency` is derived at write time from
+// `CustomerProfile.country` via `CURRENCY_BY_COUNTRY`
+// (`src/ledger/constants/country-currency.constants.ts`) — the same
+// `AR -> ARS` / `CO -> COP` mapping `ServiceRequest.indicativeBudgetMin`'s
+// own comment already assumes, now made real. Flagged as a proposal (no
+// ADR/DEC formally owns this mapping) — revisit if multi-currency/FX ever
+// becomes a real concern.
+//
+// `engagementId`/`customerProfileId`/`professionalProfileId` are ALL
+// `onDelete: SetNull` — a deliberate divergence from every other
+// Engagement-adjacent model (`Review`/`Appointment` use `Cascade`). A
+// financial audit record must never be destroyed by a
+// `deleteUserAccount`/`bulkDeleteUserAccounts` hard-delete cascade; it
+// should be anonymized, not erased — same principle (not direction) as
+// `Review.moderatedByAdminUserId`'s own `SetNull`. Flagged for explicit
+// human sign-off since this is new precedent, not a copy of an existing
+// one.
+//
+// `commissionPercentApplied` freezes the `payments.commission.percent`
+// value actually used at write time — a later admin change to that
+// `PlatformSetting` must never rewrite a past entry's own frozen value.
+// `null` on a `REFUND` row (no commission was ever applied to a refund).
+model LedgerEntry {
+  id       String          @id @default(uuid()) @db.Uuid
+  type     LedgerEntryType
+  amount   Int
+  currency String
+
+  engagementId String?     @db.Uuid
+  engagement   Engagement? @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+
+  customerProfileId String?          @db.Uuid
+  customerProfile   CustomerProfile? @relation(fields: [customerProfileId], references: [id], onDelete: SetNull)
+
+  professionalProfileId String?              @db.Uuid
+  professionalProfile   ProfessionalProfile? @relation(fields: [professionalProfileId], references: [id], onDelete: SetNull)
+
+  commissionPercentApplied Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([engagementId])
+  @@index([professionalProfileId, createdAt])
+  @@index([customerProfileId, createdAt])
 }
 
 // Identity Verification (Didit integration) — DEC-006's own "open question"
@@ -1498,6 +1609,18 @@ enum Permission {
   // `EMAIL_TEMPLATES_WRITE`) — a role can audit Reviews without being able
   // to moderate them.
   REVIEWS_WRITE
+  // Financial ledger admin audit surface (GOS-109, 2026-09-12) — gates the
+  // read-only `adminLedgerEntries` query (`src/platform-admin/ledger/`):
+  // full visibility into every append-only `LedgerEntry` row. A genuinely
+  // NEW, dedicated permission — same "its own dedicated permission, not
+  // reused from a sibling read permission" reasoning already established
+  // throughout this enum (see `QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ`/
+  // `APPOINTMENTS_READ`/`REVIEWS_READ` above) — deliberately NOT
+  // `SERVICE_REQUESTS_READ`. No `LEDGER_WRITE`: nothing in this story writes
+  // a `LedgerEntry` from the admin panel — every write is a server-side
+  // consequence of a consumer-domain state transition
+  // (`cancelEngagementByCustomer`/`cancelEngagementByProfessional`).
+  LEDGER_READ
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see
