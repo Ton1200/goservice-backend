@@ -146,6 +146,22 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // by hand through the Roles UI (`updateAdminRolePermissions`).
       Permission.REVIEWS_READ,
       Permission.REVIEWS_WRITE,
+      // Financial ledger admin audit surface follow-up (GOS-109,
+      // 2026-09-12) — adminLedgerEntries, its own dedicated permission (NOT
+      // SERVICE_REQUESTS_READ — see the Permission enum's own comment in
+      // schema.prisma). SUPER_ADMIN gets every permission. FLAGGED FOR
+      // HUMAN REVIEW — same judgment-call posture already documented for
+      // APPOINTMENTS_READ/REVIEWS_READ's own additions here: per this
+      // file's own "PERMISSIONS GUARANTEE — NARROWED" header comment, this
+      // bootstrap script only grants a brand-new Permission value
+      // automatically on a FRESH environment's first run; on an
+      // ALREADY-BOOTSTRAPPED environment it must be granted by hand
+      // through the Roles UI (`updateAdminRolePermissions`). Deliberately
+      // NOT added to CONFIG_MANAGER/SUPPORT_VIEWER below, per the plan's
+      // own instruction — a financial audit trail is judged more sensitive
+      // than the read-only grids CONFIG_MANAGER otherwise holds; flagged
+      // for explicit human sign-off before ever widening this.
+      Permission.LEDGER_READ,
     ],
   },
   {

@@ -21,6 +21,7 @@ import '../appointments/models/appointment-status.enum'; // GraphQL enum registr
 import '../appointments/models/appointment-party.enum'; // GraphQL enum registration side effect
 import '../reviews/models/engagement-review-party.enum'; // GraphQL enum registration side effect
 import '../reviews/models/review-comment-moderation-status.enum'; // GraphQL enum registration side effect
+import '../ledger/models/ledger-entry-type.enum'; // GraphQL enum registration side effect
 import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
@@ -110,6 +111,9 @@ import { ReviewsRepository } from '../reviews/reviews.repository';
 import { AdminReviewsResolver } from './reviews/admin-reviews.resolver';
 import { ListAdminReviewsService } from './reviews/services/list-admin-reviews.service';
 import { ModerateEngagementReviewCommentService } from './reviews/services/moderate-engagement-review-comment.service';
+import { LedgerModule } from '../ledger/ledger.module';
+import { AdminLedgerResolver } from './ledger/admin-ledger.resolver';
+import { ListAdminLedgerEntriesService } from './ledger/services/list-admin-ledger-entries.service';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -251,7 +255,7 @@ import { ModerateEngagementReviewCommentService } from './reviews/services/moder
  * `__schema.types`") is unaffected.
  */
 @Module({
-  imports: [PlatformSettingsModule, EmailModule],
+  imports: [PlatformSettingsModule, EmailModule, LedgerModule],
   providers: [
     // admin-rbac
     AdminRolesRepository,
@@ -566,6 +570,18 @@ import { ModerateEngagementReviewCommentService } from './reviews/services/moder
     AdminReviewsResolver,
     ListAdminReviewsService,
     ModerateEngagementReviewCommentService,
+
+    // Financial ledger admin audit surface (GOS-109, 2026-09-12) —
+    // `adminLedgerEntries`, READ-ONLY, gated by its own dedicated
+    // `Permission.LEDGER_READ` (see the `Permission` enum's own comment in
+    // `prisma/schema.prisma`). No module-enabled kill switch. Unlike
+    // `ReviewsRepository`/`EngagementsRepository`/etc. above,
+    // `LedgerRepository` is NOT redeclared as a direct provider here — it
+    // comes from the imported `LedgerModule` (deliberately resolver-free,
+    // same "safe to import directly" pattern as `PlatformSettingsModule`),
+    // which already exports it.
+    AdminLedgerResolver,
+    ListAdminLedgerEntriesService,
   ],
 })
 export class PlatformAdminModule {}

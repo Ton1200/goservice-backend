@@ -347,6 +347,8 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         // Mutual Engagement Reviews admin audit/moderation surface
         // (GOS-121, 2026-09-11).
         'adminReviews',
+        // Financial ledger admin audit surface (GOS-109, 2026-09-12).
+        'adminLedgerEntries',
       ].sort(),
     );
     expect(

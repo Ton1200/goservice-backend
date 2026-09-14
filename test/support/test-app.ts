@@ -244,6 +244,23 @@ export async function cleanReviewsData(prisma: PrismaService): Promise<void> {
 }
 
 /**
+ * GOS-109 — deletes all `LedgerEntry` rows. UNLIKE every other `clean*Data`
+ * helper above, this one is NOT merely "independently callable, matches the
+ * convention" — it is load-bearing: `LedgerEntry.engagementId`/
+ * `customerProfileId`/`professionalProfileId` are ALL `onDelete: SetNull`
+ * (a deliberate divergence — see that model's own header comment in
+ * `prisma/schema.prisma`), so `cleanQuotesAndEngagementsData`/
+ * `cleanProfilesData`/`cleanUsersData` do NOT cascade-delete `LedgerEntry`
+ * rows the way they do `Review`/`Appointment` rows. Without this helper,
+ * `LedgerEntry` rows from one e2e run would silently survive (orphaned,
+ * every FK nulled) into the next, polluting `adminLedgerEntries` pagination/
+ * count assertions. Call BEFORE `cleanQuotesAndEngagementsData` below.
+ */
+export async function cleanLedgerData(prisma: PrismaService): Promise<void> {
+  await prisma.ledgerEntry.deleteMany();
+}
+
+/**
  * GOS-41 — deletes all `quotes`/`engagements`-module rows, in FK-safe order
  * (`Engagement` first — it references both `ServiceRequest` and `Quote` —
  * then `Quote`). Call BEFORE `cleanServiceRequestsData` below. Strictly

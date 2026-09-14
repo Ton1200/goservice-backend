@@ -3,6 +3,8 @@ import { Engagement, EngagementStatus } from '@prisma/client';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
 import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
 import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
+import { CURRENCY_BY_COUNTRY } from '../../ledger/constants/country-currency.constants';
+import { RecordCustomerCancellationChargeService } from '../../ledger/services/record-customer-cancellation-charge.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -33,8 +35,20 @@ import { engagementNotCancellableByCustomer } from '../errors/engagement-not-can
  * own AC.
  *
  * Does NOT touch `src/engagement-chat/` — closing the coordination
- * conversation is GOS-107, out of scope here. Does NOT compute or move any
- * money — see `computeCustomerCancellationCharge` below.
+ * conversation is GOS-107, out of scope here.
+ *
+ * **GOS-109**: the pre-cancel ownership/state read now uses
+ * `EngagementsRepository.findByIdWithBillingContext` (NOT the plain
+ * `findById` used for the final re-read below) — the pre-cancel `status`/
+ * accepted-`Quote` price/owning `CustomerProfile.country` are only visible
+ * BEFORE `cancelIfActive`'s CAS write flips `status` to `CANCELLED`, and
+ * must be captured before the transaction opens. Inside the SAME
+ * `prisma.$transaction` as the CAS write, immediately after
+ * `emitEngagementLifecycleSystemMessageService.emit`,
+ * `recordCustomerCancellationChargeService.recordIfApplicable` writes the
+ * DEC-008 cancellation-charge ledger event (a no-op while `ACCEPTED`, 3
+ * `LedgerEntry` rows while `IN_PROGRESS`) — a ledger-write failure rolls
+ * back the whole cancellation, same guarantee `emit` already has.
  */
 @Injectable()
 export class CancelEngagementByCustomerService {
@@ -45,6 +59,7 @@ export class CancelEngagementByCustomerService {
     private readonly profilesRepository: ProfilesRepository,
     private readonly engagementsRepository: EngagementsRepository,
     private readonly emitEngagementLifecycleSystemMessageService: EmitEngagementLifecycleSystemMessageService,
+    private readonly recordCustomerCancellationChargeService: RecordCustomerCancellationChargeService,
   ) {}
 
   async cancelEngagementByCustomer(
@@ -54,7 +69,8 @@ export class CancelEngagementByCustomerService {
   ): Promise<Engagement> {
     const customerProfile =
       await this.profilesRepository.findCustomerProfileByUserId(userId);
-    const engagement = await this.engagementsRepository.findById(engagementId);
+    const engagement =
+      await this.engagementsRepository.findByIdWithBillingContext(engagementId);
     if (
       !engagement ||
       !customerProfile ||
@@ -71,6 +87,11 @@ export class CancelEngagementByCustomerService {
     ) {
       throw engagementNotCancellableByCustomer();
     }
+
+    const preCancelStatus = engagement.status;
+    const quotedPrice =
+      engagement.quote.negotiatedPrice ?? engagement.quote.price;
+    const currency = CURRENCY_BY_COUNTRY[engagement.customerProfile.country];
 
     await this.prisma.$transaction(async (tx) => {
       const cas = await this.engagementsRepository.cancelIfActive(
@@ -90,19 +111,23 @@ export class CancelEngagementByCustomerService {
         engagementId,
         ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.CANCELLED_BY_CUSTOMER,
       );
+
+      // GOS-109 — DEC-008's cancellation-charge event, inside the same
+      // transaction as the CAS write above.
+      await this.recordCustomerCancellationChargeService.recordIfApplicable(
+        tx,
+        {
+          engagementId,
+          preCancelStatus,
+          quotedPrice,
+          currency,
+          customerProfileId: engagement.customerProfileId,
+          professionalProfileId: engagement.professionalProfileId,
+        },
+      );
     });
 
     const updated = await this.engagementsRepository.findById(engagementId);
-
-    // GOS-109 extension point: customer-initiated cancellation may one day
-    // trigger a charge/refund calculation (e.g. a cancellation fee if the
-    // Professional had already started work). No such trigger or
-    // calculation exists yet — there is no payments/commission/ledger table
-    // anywhere in this schema, so there is nothing for this method to read,
-    // write, or even meaningfully simulate. This call exists purely as the
-    // documented, exercised (not dead-code) seam GOS-109 will replace; its
-    // `null` return is deliberately not surfaced on any GraphQL field.
-    this.computeCustomerCancellationCharge(updated!);
 
     this.logger.log({
       event: 'engagement_cancelled_by_customer',
@@ -111,15 +136,5 @@ export class CancelEngagementByCustomerService {
     });
 
     return updated!;
-  }
-
-  /**
-   * GOS-109 extension point — see the call-site comment above. Always
-   * returns `null` today; reserved for a future customer-cancellation
-   * charge/refund calculation once a payments/commission ledger exists.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private computeCustomerCancellationCharge(engagement: Engagement): null {
-    return null;
   }
 }

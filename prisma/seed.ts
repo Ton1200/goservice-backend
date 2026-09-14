@@ -399,6 +399,25 @@ const PLATFORM_SETTINGS: {
     isPublic: false,
     valueType: 'NUMBER',
   },
+  // GOS-109 — the single, global commission percentage confirmed by
+  // DEC-008 (`goservice-docs/decisions/DEC-008-commission-and-cancellation-fee.md`),
+  // applied uniformly to a completed job's `CUSTOMER_CHARGE` (GOS-79/80,
+  // not yet built) AND to the Customer cancellation-fee amount itself
+  // (GOS-109, `RecordCustomerCancellationChargeService`) — DEC-008
+  // deliberately reuses ONE number for both rather than a separate
+  // `payments.cancellation.customerFeePercent` key. `isPublic: false` —
+  // an internal pricing/commission detail, not something `goservice-mobile`
+  // needs to branch on. Read via `PlatformSettingPort.getValue`, never
+  // cached — a later admin change never rewrites a past `LedgerEntry`'s own
+  // frozen `commissionPercentApplied`.
+  {
+    key: 'payments.commission.percent',
+    description:
+      "GoService's global commission percentage, applied to completed jobs and to the Customer cancellation fee alike (DEC-008).",
+    value: '10',
+    isPublic: false,
+    valueType: 'NUMBER',
+  },
 ];
 
 // Editable transactional-email templates follow-up (2026-08-24) — seeds the

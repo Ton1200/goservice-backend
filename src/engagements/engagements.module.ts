@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { EngagementChatRepository } from '../engagement-chat/engagement-chat.repository';
 import { EmitEngagementLifecycleSystemMessageService } from '../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
+import { LedgerModule } from '../ledger/ledger.module';
 import { ProfilesModule } from '../profiles/profiles.module';
 import { UsersModule } from '../users/users.module';
 import { EngagementsRepository } from './engagements.repository';
@@ -48,6 +49,16 @@ import { StartEngagementWorkService } from './services/start-engagement-work.ser
  * write succeeds. `EngagementChatRepository` depends only on the `@Global()`
  * `PrismaService`, so this introduces no import cycle.
  *
+ * **GOS-109**: `LedgerModule` is imported (not reused as a bare provider
+ * class) for `RecordCustomerCancellationChargeService`/
+ * `RecordProfessionalCancellationRefundService` — both exported by that
+ * module, which is deliberately resolver-free (same "safe to import
+ * directly" reasoning as `PlatformSettingsModule`). `CancelEngagementByCustomerService`/
+ * `CancelEngagementByProfessionalService` each call their respective ledger
+ * service from INSIDE their own `prisma.$transaction`, replacing the two
+ * former always-`null` stubs (`computeCustomerCancellationCharge`/
+ * `recordProfessionalCancellationRefund`).
+ *
  * Deliberately does NOT import `ServiceRequestsModule` or `QuotesModule` —
  * this module is a lean, leaf "repository + GraphQL type + read queries"
  * module, reused by BOTH `quotes/` (`AcceptQuoteService`, via
@@ -64,6 +75,7 @@ import { StartEngagementWorkService } from './services/start-engagement-work.ser
   imports: [
     AuthModule,
     IdentityVerificationModule,
+    LedgerModule,
     ProfilesModule,
     UsersModule,
   ],
