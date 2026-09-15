@@ -181,6 +181,18 @@
               </a>
             </li>
             <li class="nav-item">
+              <a class="nav-link" href="#payments" data-nav-target="payments-section">
+                <span class="nav-link-icon d-md-none d-lg-inline-block">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="5" width="18" height="14" rx="2" />
+                    <path d="M3 10h18" />
+                    <path d="M7 15h4" />
+                  </svg>
+                </span>
+                <span class="nav-link-title">Payments</span>
+              </a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link" href="#categories" data-nav-target="categories-section">
                 <span class="nav-link-icon d-md-none d-lg-inline-block">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -620,6 +632,68 @@
                    No mock rows here — the grid is empty until the first
                    fetch resolves. -->
               <div id="reviews-grid"></div>
+            </div>
+          </section>
+
+          <!-- Payments (2026-09-14 follow-up, human-requested) — the
+               internal "receipt" trace of every payment/commission event
+               GoService's backend has ever recorded, plus visibility into
+               cash payments still awaiting the other party's confirmation.
+               Two sub-tabs, SAME hand-rolled ARIA-tablist pattern as
+               `administradores-section` above (see js/administrators.js's
+               own header comment for why: NOT the static, dead
+               `<nav class="gs-subtabs">` markup) — here owned by
+               js/payments.js. Read-only, no create/edit/delete anywhere on
+               this section — every write to LedgerEntry/
+               CashPaymentConfirmation is a server-side consequence of a
+               consumer-domain action, never an admin-initiated one. All UI
+               copy is English, matching every other admin-panel section. -->
+          <section id="payments-section" class="gs-section" hidden aria-labelledby="payments-heading">
+            <div class="page-header d-print-none">
+              <h2 id="payments-heading" class="page-title">Payments</h2>
+            </div>
+
+            <div id="payments-tablist" class="nav nav-underline mb-3" role="tablist" aria-label="Payments subsections"></div>
+
+            <!-- Receipts panel (2026-09-14 redesign, human-requested) —
+                 ONE ROW PER JOB (adminEngagementPaymentSummaries), not per
+                 raw LedgerEntry: real Customer/Professional names,
+                 pre-computed totals (total paid by the Customer / GoService
+                 commission / Professional net), event type and payment
+                 method. "View" opens a detail popup with the full breakdown
+                 plus the raw entries — see js/payments.js. -->
+            <div id="payments-ledger-panel" role="tabpanel" aria-labelledby="payments-tab-ledger">
+              <p id="payments-ledger-error" class="alert alert-danger" role="alert" hidden></p>
+              <div class="card">
+                <!-- Tabulator mounts into this container (js/payments.js).
+                     No mock rows here — the grid is empty until the first
+                     fetch resolves. -->
+                <div id="payments-ledger-grid"></div>
+              </div>
+
+              <dialog id="payments-detail-dialog" class="gs-detail-dialog" aria-labelledby="payments-detail-heading">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                  <h3 id="payments-detail-heading" class="mb-0">Payment detail</h3>
+                  <button type="button" id="payments-detail-close" class="btn-close" aria-label="Close"></button>
+                </div>
+                <div id="payments-detail-content"></div>
+              </dialog>
+            </div>
+
+            <!-- Pending Cash Confirmations panel (adminCashPaymentConfirmations) -->
+            <div id="payments-cash-panel" role="tabpanel" aria-labelledby="payments-tab-cash" hidden>
+              <p id="payments-cash-error" class="alert alert-danger" role="alert" hidden></p>
+
+              <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
+                <label class="form-check form-switch mb-0">
+                  <input id="payments-cash-only-pending" class="form-check-input" type="checkbox" checked>
+                  <span class="form-check-label">Pending confirmation only</span>
+                </label>
+              </div>
+
+              <div class="card">
+                <div id="payments-cash-grid"></div>
+              </div>
             </div>
           </section>
 

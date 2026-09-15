@@ -10,6 +10,7 @@ export function toAdminLedgerEntryModel(
 ): AdminLedgerEntryModel {
   const model = new AdminLedgerEntryModel();
   model.id = row.id;
+  model.receiptNumber = row.receiptNumber;
   model.type = row.type;
   model.amount = row.amount;
   model.currency = row.currency;

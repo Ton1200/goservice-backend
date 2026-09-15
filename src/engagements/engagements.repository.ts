@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { Engagement, EngagementStatus, Prisma } from '@prisma/client';
+import {
+  Engagement,
+  EngagementStatus,
+  PaymentMethod,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -132,6 +137,30 @@ export class EngagementsRepository {
         cancelledAt: new Date(),
         cancelReason,
       },
+    });
+  }
+
+  /**
+   * GOS-87 — guarded CAS for `confirmCashPayment` (and, in the future, any
+   * other payment-method capability, e.g. a card-payment one — GOS-79):
+   * only assigns `Engagement.paymentMethod` while it is still `null`.
+   * `count === 0` is NOT an error — it means this Engagement already had a
+   * payment method assigned (by an earlier call, from either party), so the
+   * caller simply doesn't touch it again. This is what makes confirming
+   * cash payment multiple times idempotent with respect to
+   * `paymentMethod`: the first confirmation (from whichever party gets
+   * there first) wins, and every later call is a safe no-op on this column.
+   * `src/cash-payment/` (and any future payment-method module) must NEVER
+   * write `Engagement.paymentMethod` directly — this is the ONLY path.
+   */
+  setPaymentMethodIfUnset(
+    tx: Prisma.TransactionClient,
+    id: string,
+    method: PaymentMethod,
+  ): Promise<{ count: number }> {
+    return tx.engagement.updateMany({
+      where: { id, paymentMethod: null },
+      data: { paymentMethod: method },
     });
   }
 

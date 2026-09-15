@@ -29,7 +29,9 @@ import { ServiceRequestsModule } from './service-requests/service-requests.modul
 import { StorageModule } from './storage/storage.module';
 import { EngagementChatModule } from './engagement-chat/engagement-chat.module';
 import { AppointmentsModule } from './appointments/appointments.module';
+import { CashPaymentModule } from './cash-payment/cash-payment.module';
 import { MediaUploadsModule } from './media-uploads/media-uploads.module';
+import { PaymentReceiptsModule } from './payment-receipts/payment-receipts.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import type { AppConfig } from './config/configuration';
 
@@ -83,6 +85,8 @@ import type { AppConfig } from './config/configuration';
           AppointmentsModule,
           MediaUploadsModule,
           ReviewsModule,
+          CashPaymentModule,
+          PaymentReceiptsModule,
         ],
         sortSchema: true,
         // GOS-8 acceptance criterion #11: error responses must never include
@@ -263,6 +267,8 @@ import type { AppConfig } from './config/configuration';
     AppointmentsModule,
     MediaUploadsModule,
     ReviewsModule,
+    CashPaymentModule,
+    PaymentReceiptsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: GqlThrottlerGuard },

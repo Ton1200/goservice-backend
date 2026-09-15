@@ -261,6 +261,21 @@ export async function cleanLedgerData(prisma: PrismaService): Promise<void> {
 }
 
 /**
+ * GOS-87 — deletes all `CashPaymentConfirmation` rows. Technically redundant
+ * with `cleanQuotesAndEngagementsData`'s own `engagement.deleteMany()`
+ * (`CashPaymentConfirmation.engagementId` is `onDelete: Cascade` toward
+ * `Engagement`) — included explicitly anyway, same "independently callable,
+ * matches every other `clean*Data` helper's own convention" reasoning
+ * `cleanIdentityVerificationData` already documents for its own
+ * Cascade-redundant cleanup. Call BEFORE `cleanQuotesAndEngagementsData`.
+ */
+export async function cleanCashPaymentData(
+  prisma: PrismaService,
+): Promise<void> {
+  await prisma.cashPaymentConfirmation.deleteMany();
+}
+
+/**
  * GOS-41 — deletes all `quotes`/`engagements`-module rows, in FK-safe order
  * (`Engagement` first — it references both `ServiceRequest` and `Quote` —
  * then `Quote`). Call BEFORE `cleanServiceRequestsData` below. Strictly

@@ -9,6 +9,46 @@ export interface AdminLedgerEntriesFilter {
   to?: Date;
 }
 
+// See `findManyForAdminPaymentSummaries`'s own comment for the phase-1
+// scope boundary this bounds.
+const ADMIN_PAYMENT_SUMMARY_RAW_FETCH_CAP = 500;
+
+// The "relación de usuarios" `adminEngagementPaymentSummaries` needs on
+// both sides — `id`/`user.id`/`user.email` for admin identification (same
+// shape this codebase's other admin grids already establish, e.g.
+// `AdminServiceRequestCustomerModel`/`AdminQuoteProfessionalModel`), plus
+// the Quote's price for deriving `totalPaidByCustomer` on a cash-paid job
+// (the ORIGINAL agreed price, never back-computed from a rounded commission
+// amount).
+const ADMIN_PAYMENT_SUMMARY_ENGAGEMENT_SELECT = {
+  id: true,
+  paymentMethod: true,
+  quote: { select: { price: true, negotiatedPrice: true } },
+  customerProfile: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      user: { select: { id: true, email: true } },
+    },
+  },
+  professionalProfile: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      displayName: true,
+      user: { select: { id: true, email: true } },
+    },
+  },
+} satisfies Prisma.EngagementSelect;
+
+export type AdminPaymentSummaryLedgerRow = Prisma.LedgerEntryGetPayload<{
+  include: {
+    engagement: { select: typeof ADMIN_PAYMENT_SUMMARY_ENGAGEMENT_SELECT };
+  };
+}>;
+
 /**
  * The ONLY place in this codebase that issues Prisma queries for
  * `LedgerEntry` — same data-ownership rule as `EngagementsRepository`/
@@ -114,6 +154,130 @@ export class LedgerRepository {
         engagementId: data.engagementId,
         customerProfileId: data.customerProfileId,
         commissionPercentApplied: null,
+      },
+    });
+  }
+
+  /**
+   * GOS-87 — the single `CASH_COMMISSION_DEBT` entry written the instant
+   * BOTH parties confirm a `CashPaymentConfirmation`. Written ALONE (never
+   * alongside a `PLATFORM_COMMISSION`/`PROFESSIONAL_NET_CREDIT` split, unlike
+   * `createCustomerCancellationChargeEntries` above) — the Professional
+   * already collected 100% of the price directly from the Customer, in
+   * cash, so there is nothing to split; this row IS the debt itself. Runs
+   * inside the caller's own `tx` (`RecordCashCommissionDebtService`, from
+   * inside `ConfirmCashPaymentService`'s transaction).
+   */
+  createCashCommissionDebtEntry(
+    tx: Prisma.TransactionClient,
+    data: {
+      engagementId: string;
+      currency: string;
+      customerProfileId: string;
+      professionalProfileId: string;
+      amount: number;
+      commissionPercentApplied: number;
+    },
+  ): Promise<LedgerEntry> {
+    return tx.ledgerEntry.create({
+      data: {
+        type: LedgerEntryType.CASH_COMMISSION_DEBT,
+        amount: data.amount,
+        currency: data.currency,
+        engagementId: data.engagementId,
+        customerProfileId: data.customerProfileId,
+        professionalProfileId: data.professionalProfileId,
+        commissionPercentApplied: data.commissionPercentApplied,
+      },
+    });
+  }
+
+  /**
+   * GOS-87 — `Query.myPendingCashCommissionDebt`: the sum of every
+   * `CASH_COMMISSION_DEBT` entry ever written for the given
+   * `professionalProfileId`. Scope of THIS story: sums ALL of them — there
+   * is no "regularize"/automatic-discount-on-next-digital-charge mechanism
+   * yet (both depend on GOS-79, not built); see this method's own callers
+   * for that documented extension point. `_sum.amount` is `null` (not `0`)
+   * when there are no matching rows — normalized to `0` here so callers
+   * never have to null-check.
+   */
+  async sumCashCommissionDebtForProfessional(
+    professionalProfileId: string,
+  ): Promise<number> {
+    const result = await this.prisma.ledgerEntry.aggregate({
+      where: {
+        type: LedgerEntryType.CASH_COMMISSION_DEBT,
+        professionalProfileId,
+      },
+      _sum: { amount: true },
+    });
+    return result._sum.amount ?? 0;
+  }
+
+  /**
+   * 2026-09-14 follow-up (human-requested) — `Query.myPaymentReceipts`
+   * (`src/payment-receipts/`): every `LedgerEntry` where the caller appears
+   * as EITHER `customerProfileId` OR `professionalProfileId` — a User may
+   * hold both profile types, so both are checked, not just whichever one
+   * resolved first. Ordered most-recent-first, same convention as every
+   * other "my own list" query in this codebase
+   * (`findManyByCustomerProfileId`/`findManyByProfessionalProfileId` on
+   * `EngagementsRepository`).
+   *
+   * Deliberately returns EVERY `LedgerEntryType` the caller is denormalized
+   * on, unfiltered by type — which specific types are appropriate to
+   * surface to a Customer vs. a Professional (e.g. whether a Customer
+   * should see `PLATFORM_COMMISSION`/`PROFESSIONAL_NET_CREDIT` rows from
+   * their own cancellation-charge event) is a real UX/privacy question,
+   * flagged as an open item for the consuming client (`goservice-mobile`)
+   * to resolve — NOT decided here.
+   */
+  findManyForCallerProfiles(params: {
+    customerProfileId?: string;
+    professionalProfileId?: string;
+  }): Promise<LedgerEntry[]> {
+    const or: Prisma.LedgerEntryWhereInput[] = [];
+    if (params.customerProfileId) {
+      or.push({ customerProfileId: params.customerProfileId });
+    }
+    if (params.professionalProfileId) {
+      or.push({ professionalProfileId: params.professionalProfileId });
+    }
+    if (or.length === 0) {
+      return Promise.resolve([]);
+    }
+    return this.prisma.ledgerEntry.findMany({
+      where: { OR: or },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * 2026-09-14 follow-up (human-requested) — `Query.adminEngagementPaymentSummaries`
+   * (`src/platform-admin/ledger/`): the raw material for a ONE-ROW-PER-JOB
+   * admin view, grouped downstream (in `ListAdminEngagementPaymentSummariesService`)
+   * by `(engagementId, createdAt)` — every row written inside the SAME
+   * `prisma.$transaction` shares the exact same `createdAt` (Postgres's
+   * `now()` returns the transaction start time for every statement in one
+   * transaction), so this pair is a reliable "these rows are one financial
+   * event" key without a dedicated grouping table.
+   *
+   * **Documented phase-1 scope boundary**: fetches the `ADMIN_PAYMENT_SUMMARY_RAW_FETCH_CAP`
+   * most recent rows, THEN groups/paginates in application code — not a true
+   * DB-level distinct-pair pagination. Correct and simple for this
+   * project's current data volume; would need a real grouping mechanism
+   * (e.g. a `PaymentEvent` table) to stay correct at real scale. Same
+   * "deliberate, documented" trade-off `DEFAULT_LIMIT`/`MAX_LIMIT` already
+   * establish elsewhere in this admin surface.
+   */
+  findManyForAdminPaymentSummaries(): Promise<AdminPaymentSummaryLedgerRow[]> {
+    return this.prisma.ledgerEntry.findMany({
+      where: { engagementId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      take: ADMIN_PAYMENT_SUMMARY_RAW_FETCH_CAP,
+      include: {
+        engagement: { select: ADMIN_PAYMENT_SUMMARY_ENGAGEMENT_SELECT },
       },
     });
   }

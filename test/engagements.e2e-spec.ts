@@ -1629,16 +1629,17 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
 /**
  * e2e coverage for GOS-109 — the financial ledger both cancellation paths
  * now write through, per DEC-008. `seedEngagement` always quotes `price:
- * 5000`, and the seeded `payments.commission.percent` defaults to `'10'`
- * (see `prisma/seed.ts`) — 10% of 5000 is a round 500, so the fee/commission/
- * net split below is exact, with no rounding to account for.
+ * 5000`, and the seeded `payments.general-settings.commission.percent`
+ * defaults to `'10'` (see `prisma/seed.ts`) — 10% of 5000 is a round 500, so
+ * the fee/commission/net split below is exact, with no rounding to account
+ * for.
  */
 describe('GraphQL Engagement financial ledger (GOS-109, e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   const createdCategoryIds: string[] = [];
 
-  const COMMISSION_PERCENT_KEY = 'payments.commission.percent';
+  const COMMISSION_PERCENT_KEY = 'payments.general-settings.commission.percent';
 
   beforeAll(async () => {
     const ctx = await createTestApp();
@@ -1943,7 +1944,7 @@ describe('GraphQL Engagement financial ledger (GOS-109, e2e)', () => {
     expect(rows[0].commissionPercentApplied).toBeNull();
   });
 
-  it('changing payments.commission.percent AFTER entries exist never rewrites their frozen commissionPercentApplied', async () => {
+  it('changing payments.general-settings.commission.percent AFTER entries exist never rewrites their frozen commissionPercentApplied', async () => {
     const { engagementId, customerToken, professionalToken } =
       await seedEngagement();
     await confirmAnAppointment(engagementId, customerToken, professionalToken);
