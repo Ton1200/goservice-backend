@@ -410,13 +410,77 @@ const PLATFORM_SETTINGS: {
   // needs to branch on. Read via `PlatformSettingPort.getValue`, never
   // cached — a later admin change never rewrites a past `LedgerEntry`'s own
   // frozen `commissionPercentApplied`.
+  //
+  // Nested under a `general-settings` group (2026-09-14 follow-up,
+  // human-requested settings-IA reorganization) — a sibling of
+  // `payments.payment-methods.*` (below): a configuration value that
+  // applies platform-wide across every payment method, not a per-method
+  // on/off switch, so it belongs in its own "General Settings" group rather
+  // than piling up next to `payment-methods.cash`/a future
+  // `payment-methods.card`. RENAMED from the flatter
+  // `payments.commission.percent` — the existing row was renamed in place
+  // (same id/value), never re-seeded as a duplicate.
   {
-    key: 'payments.commission.percent',
+    key: 'payments.general-settings.commission.percent',
     description:
       "GoService's global commission percentage, applied to completed jobs and to the Customer cancellation fee alike (DEC-008).",
     value: '10',
     isPublic: false,
     valueType: 'NUMBER',
+  },
+  // GOS-87 — Pago en Efectivo: the GLOBAL kill switch for the whole Cash
+  // Payment capability (`confirmCashPayment` only —
+  // `myPendingCashCommissionDebt` is a read of already-existing data and is
+  // NOT gated by this switch, see `CashPaymentModuleEnabledGuard`'s own
+  // header comment). `value: 'true'` (default ON) — same "already-working,
+  // real MVP payment method, not an experimental opt-in" reasoning
+  // `customer.appointments.enabled`'s own comment documents: the point of
+  // this switch is letting an admin turn it OFF during an incident, not
+  // requiring an opt-in before it works at all. `isPublic: false` — a
+  // backend/admin-only gate; `goservice-mobile` just calls
+  // `confirmCashPayment` and handles `CASH_PAYMENT_MODULE_DISABLED` like any
+  // other domain error, same reasoning as every other capability flag above.
+  //
+  // Nested under a `payment-methods` group (2026-09-14 follow-up,
+  // human-requested) — a sibling slot for a future `payments.payment-methods.card.*`
+  // (GOS-79) to join without piling up flat next to Commission. RENAMED
+  // from the flatter `payments.cash.enabled` — the existing row was renamed
+  // in place (same id/value), never re-seeded as a duplicate.
+  {
+    key: 'payments.payment-methods.cash.enabled',
+    description:
+      'Global kill switch for the Cash Payment capability (confirmCashPayment).',
+    value: 'true',
+    isPublic: false,
+  },
+  // Customer-facing display name for the Cash payment method — 2026-09-14
+  // follow-up, human-requested: "cash" in a given market may really mean a
+  // bundle of local options (e.g. a Nequi transfer or a bank transfer in
+  // Colombia, not literal banknotes), so the admin needs to be able to set
+  // the actual label shown in the app, rather than a hardcoded "Cash"/
+  // "Efectivo" string baked into the mobile client. `isPublic: true` —
+  // this is DELIBERATELY exposed via `platformConfig` (as
+  // `payments.paymentMethods.cash.displayName`), the same generic,
+  // dot-path-driven mechanism `customer.social-login.google.client-id`
+  // already establishes for a non-secret, consumer-relevant STRING value —
+  // that is the whole point of this field, so `goservice-mobile` can render
+  // it instead of a hardcoded label. Default is a plain, generic Spanish
+  // label — an admin customizes it further per market (e.g. appending
+  // "(Nequi, transferencia)" for Colombia) through this same Settings row;
+  // there is NO per-country variant of this key today (matching DEC-008's
+  // own "single global value, not split by country" precedent for
+  // `payments.general-settings.commission.percent`) — flagged as an open
+  // question if a real per-country need ever comes up.
+  //
+  // NOT itself consumed by `goservice-mobile` as part of this change — same
+  // "backend prepares the data, the frontend's own follow-up work decides
+  // how to render it" posture already documented for `myPaymentReceipts`.
+  {
+    key: 'payments.payment-methods.cash.display-name',
+    description:
+      'Customer-facing display name for the Cash payment method, shown by goservice-mobile (e.g. "Efectivo (Nequi, transferencia)").',
+    value: 'Efectivo',
+    isPublic: true,
   },
 ];
 

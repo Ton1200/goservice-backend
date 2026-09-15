@@ -349,6 +349,11 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         'adminReviews',
         // Financial ledger admin audit surface (GOS-109, 2026-09-12).
         'adminLedgerEntries',
+        // Cash Payment admin audit surface (GOS-87, 2026-09-14).
+        'adminCashPaymentConfirmations',
+        // One-row-per-job payments summary follow-up (2026-09-14,
+        // human-requested).
+        'adminEngagementPaymentSummaries',
       ].sort(),
     );
     expect(

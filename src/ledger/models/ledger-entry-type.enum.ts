@@ -11,7 +11,7 @@ import { LedgerEntryType } from '@prisma/client';
 registerEnumType(LedgerEntryType, {
   name: 'LedgerEntryType',
   description:
-    'The kind of append-only financial ledger row this is. CUSTOMER_CHARGE/CASH_COMMISSION_DEBT/WITHDRAWAL/WITHDRAWAL_HOLD_RELEASE are reserved for future payment/wallet capabilities (GOS-79/80/82) — no writer exists for them yet. CUSTOMER_CANCELLATION_FEE/PLATFORM_COMMISSION/PROFESSIONAL_NET_CREDIT are written together as one cancellation-charge event (GOS-109, DEC-008); REFUND is written alone on a Professional-initiated cancellation.',
+    'The kind of append-only financial ledger row this is. CUSTOMER_CHARGE/WITHDRAWAL/WITHDRAWAL_HOLD_RELEASE are reserved for future payment/wallet capabilities (GOS-79/80/82) — no writer exists for them yet. CUSTOMER_CANCELLATION_FEE/PLATFORM_COMMISSION/PROFESSIONAL_NET_CREDIT are written together as one cancellation-charge event (GOS-109, DEC-008); REFUND is written alone on a Professional-initiated cancellation; CASH_COMMISSION_DEBT is written alone the instant both parties confirm a cash payment (GOS-87).',
 });
 
 export { LedgerEntryType };

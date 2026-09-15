@@ -756,6 +756,18 @@ model QuotePriceProposal {
   @@index([quoteId, status])
 }
 
+// GOS-87 — which payment method an Engagement is/was using. `CASH` is the
+// first real value (Pago en Efectivo, this ticket); `CARD` is RESERVED —
+// added to the enum now so a future card-payment capability (GOS-79) attaches
+// with no further migration, same "reserved for later, added when the
+// trigger exists" posture `EngagementStatus.COMPLETED`/`CANCELLED` already
+// established in GOS-111 before either had a real transition. No mutation or
+// service in this codebase ever assigns `CARD` yet.
+enum PaymentMethod {
+  CASH
+  CARD
+}
+
 // GOS-111 — the Engagement work-execution state machine (épico GOS-100
 // "Ejecución y Cierre del Trabajo"). Declared in lifecycle order:
 //   ACCEPTED                       -> set the moment a Quote is accepted (GOS-41).
@@ -836,8 +848,26 @@ model Engagement {
   // schema already uses elsewhere (e.g. `locationSharingEnabled`'s own
   // migration note).
   completedAt           DateTime?
+  // GOS-87 — which payment method this Engagement is/was using; `null`
+  // until the FIRST party confirms a payment through some payment-method
+  // capability (today: `confirmCashPayment`). The single point of truth
+  // "what method is/was this job using" — any future method (card
+  // included) reuses this exact column, never a `cash-payment`-specific
+  // field. Set ONLY via `EngagementsRepository.setPaymentMethodIfUnset`'s
+  // guarded CAS (`WHERE paymentMethod IS NULL`) — never overwritten once
+  // set, matching `Quote.price`'s own "never rewritten once set" posture.
+  paymentMethod         PaymentMethod?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
+
+  // GOS-87 — the ONE CashPaymentConfirmation for this Engagement, if the
+  // Cash Payment method was ever used on it (created transparently on the
+  // first `confirmCashPayment` call from either party — no separate "select
+  // this method" mutation exists). CashPaymentConfirmation holds the FK
+  // (`CashPaymentConfirmation.engagementId @unique`), same "child holds the
+  // FK" convention `EngagementChatConversation.engagementId`/
+  // `ServiceRequest.engagement`/`Quote.engagement` already establish.
+  cashPaymentConfirmation CashPaymentConfirmation?
 
   // GOS-46 — the one Engagement Chat coordination conversation for this
   // Engagement, if any (created transparently the first time either party
@@ -1283,6 +1313,43 @@ model Review {
   @@unique([engagementId, authorRole])
 }
 
+// GOS-87 — Pago en Efectivo: the Customer pays the Professional in cash,
+// outside GoService, but GoService still needs to know when to record the
+// commission the Professional owes for that job. 1:1 with `Engagement`
+// (`engagementId @unique`) — created transparently the first time EITHER
+// party calls `confirmCashPayment` (same idempotent-upsert-on-first-write
+// pattern `EngagementChatConversation`'s own header comment documents for
+// itself), never by a separate "start cash payment" mutation.
+//
+// `customerConfirmedAt`/`professionalConfirmedAt` are independent — each
+// party stamps only their own column, and calling `confirmCashPayment`
+// again is a no-op re-stamp, never an error (idempotent, matching this
+// ticket's own AC). The commission debt is recorded ONLY once BOTH are
+// non-null — see `commissionDebtRecorded`'s own comment below for the
+// guarded CAS that enforces "exactly once, whichever call sees both dates
+// set first wins."
+model CashPaymentConfirmation {
+  id           String     @id @default(uuid()) @db.Uuid
+  engagementId String     @unique @db.Uuid
+  // Cascade — a cash-payment confirmation can never outlive its Engagement,
+  // same "must never block a hard delete" rule every other Engagement-owned
+  // relation in this schema already follows.
+  engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  customerConfirmedAt     DateTime?
+  professionalConfirmedAt DateTime?
+
+  // Guarded CAS target (`WHERE engagementId = ? AND commissionDebtRecorded =
+  // false`, `count !== 1` means another concurrent confirmation already won
+  // the race) — flips to `true` at most once per row, the instant BOTH
+  // `customerConfirmedAt`/`professionalConfirmedAt` are set, right before
+  // `RecordCashCommissionDebtService` writes the one `CASH_COMMISSION_DEBT`
+  // `LedgerEntry`. Never reverted.
+  commissionDebtRecorded  Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+}
+
 // GOS-109 — the first real, append-only financial ledger row, unblocked by
 // DEC-008 (commission percentage + customer-cancellation-fee policy, both
 // Accepted 2026-09-12). Replaces the two documented, exercised stubs that
@@ -1291,14 +1358,15 @@ model Review {
 // (GOS-114) and `CancelEngagementByProfessionalService.recordProfessionalCancellationRefund`
 // (GOS-117). See `goservice-docs/decisions/DEC-008-commission-and-cancellation-fee.md`.
 //
-// `CUSTOMER_CHARGE`/`CASH_COMMISSION_DEBT` are RESERVED for a future
-// payment capability (GOS-79/80) — no writer exists for either yet, same
-// "reserved for later, added when the trigger exists" posture
-// `EngagementStatus.COMPLETED`/`CANCELLED` already established in GOS-111.
+// `CUSTOMER_CHARGE` is still RESERVED for a future digital-payment
+// capability (GOS-79/80) — no writer exists for it yet, same "reserved for
+// later, added when the trigger exists" posture `EngagementStatus.COMPLETED`/
+// `CANCELLED` already established in GOS-111. `CASH_COMMISSION_DEBT` is no
+// longer reserved — GOS-87 (Pago en Efectivo) is its real writer, below.
 // `WITHDRAWAL`/`WITHDRAWAL_HOLD_RELEASE` are likewise RESERVED for a future
 // Professional wallet/withdrawal capability (GOS-82).
 //
-// This story's two real writers:
+// This story's writers:
 //   - `CUSTOMER_CANCELLATION_FEE` (negative) + `PLATFORM_COMMISSION`
 //     (positive) + `PROFESSIONAL_NET_CREDIT` (positive) — written together,
 //     atomically, by `RecordCustomerCancellationChargeService` ONLY when a
@@ -1314,6 +1382,14 @@ model Review {
 //     DEC ... full refund to the Customer, no charge") — deliberately NOT
 //     run through `computeCommission`: nothing was ever charged, so there
 //     is nothing to split.
+//   - `CASH_COMMISSION_DEBT` (positive, GOS-87) — written ALONE (never
+//     alongside a `PLATFORM_COMMISSION`/`PROFESSIONAL_NET_CREDIT` split,
+//     unlike the cancellation-charge event above) by
+//     `RecordCashCommissionDebtService`, the instant BOTH parties confirm a
+//     `CashPaymentConfirmation` for the same `Engagement` — the Professional
+//     already collected 100% of the price directly from the Customer, in
+//     cash, outside GoService, so there is nothing to split: this single row
+//     IS the commission the Professional owes the platform for that job.
 enum LedgerEntryType {
   CUSTOMER_CHARGE
   PLATFORM_COMMISSION
@@ -1357,6 +1433,19 @@ enum LedgerEntryType {
 // `null` on a `REFUND` row (no commission was ever applied to a refund).
 model LedgerEntry {
   id       String          @id @default(uuid()) @db.Uuid
+  // Human-facing "comprobante interno" (internal receipt) sequential number
+  // — 2026-09-14 follow-up, human-requested. A plain, globally-increasing
+  // Postgres sequence (`@default(autoincrement())` on a NON-`@id` column —
+  // `id` stays the real UUID primary key everywhere else in this schema),
+  // assigned once at insert time, NEVER reused or renumbered. One number per
+  // ROW, i.e. per individual ledger movement — a compound event (e.g. the
+  // 3-row customer-cancellation-charge event) yields 3 consecutive numbers,
+  // not one shared "receipt" number for the whole event. This mirrors how a
+  // real accounting ledger numbers each individual "asiento", and avoids
+  // inventing a new "PaymentEvent"/grouping entity nobody asked for.
+  // FLAGGED: whether a compound event should instead get ONE shared receipt
+  // number is an open product question, not decided here.
+  receiptNumber Int @unique @default(autoincrement())
   type     LedgerEntryType
   amount   Int
   currency String
@@ -1621,6 +1710,18 @@ enum Permission {
   // consequence of a consumer-domain state transition
   // (`cancelEngagementByCustomer`/`cancelEngagementByProfessional`).
   LEDGER_READ
+  // GOS-87 — gates the read-only `adminCashPaymentConfirmations` query
+  // (`src/platform-admin/cash-payment/`): visibility into every
+  // `CashPaymentConfirmation`, INCLUDING half-confirmed cases (only one
+  // party has confirmed so far) that `adminLedgerEntries`/`LEDGER_READ`
+  // alone cannot show — a `LedgerEntry` only ever appears once BOTH parties
+  // have confirmed. A genuinely NEW, dedicated permission — same "its own
+  // dedicated permission, not reused from a sibling read permission"
+  // reasoning already established throughout this enum (see
+  // `QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ`/`APPOINTMENTS_READ`/
+  // `REVIEWS_READ`/`LEDGER_READ` above) — deliberately NOT `LEDGER_READ`
+  // itself.
+  CASH_PAYMENTS_READ
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see

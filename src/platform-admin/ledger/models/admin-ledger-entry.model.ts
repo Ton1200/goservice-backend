@@ -22,6 +22,15 @@ export class AdminLedgerEntryModel {
   @Field(() => ID)
   id!: string;
 
+  // 2026-09-14 follow-up (human-requested) — the human-facing "comprobante
+  // interno" sequential number ("Pago #00000000001"). One per ROW, not per
+  // compound event — see `LedgerEntry.receiptNumber`'s own schema comment.
+  // Zero-padding for display is a formatting concern, left to whichever
+  // client renders it (the admin panel pads to 11 digits — see
+  // `admin-panel/js/payments.js`).
+  @Field(() => Int)
+  receiptNumber!: number;
+
   @Field(() => LedgerEntryType)
   type!: LedgerEntryType;
 

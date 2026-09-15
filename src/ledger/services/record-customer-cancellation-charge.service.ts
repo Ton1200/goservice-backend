@@ -5,7 +5,8 @@ import { ledgerCommissionMisconfigured } from '../errors/ledger-commission-misco
 import { LedgerRepository } from '../ledger.repository';
 import { computeCommission } from './compute-commission.util';
 
-const COMMISSION_PERCENT_SETTING_KEY = 'payments.commission.percent';
+const COMMISSION_PERCENT_SETTING_KEY =
+  'payments.general-settings.commission.percent';
 
 /**
  * GOS-109 — replaces `CancelEngagementByCustomerService.computeCustomerCancellationCharge`'s
@@ -30,7 +31,8 @@ const COMMISSION_PERCENT_SETTING_KEY = 'payments.commission.percent';
  * `commissionPercent` is read fresh from `PlatformSettingPort` on every call
  * (never cached) and frozen into every entry's own
  * `commissionPercentApplied` — a later admin change to
- * `payments.commission.percent` never rewrites a past entry. A missing or
+ * `payments.general-settings.commission.percent` never rewrites a past
+ * entry. A missing or
  * unparseable setting fails closed with `ledgerCommissionMisconfigured()`,
  * BEFORE any write is attempted (checked first, no partial writes).
  *

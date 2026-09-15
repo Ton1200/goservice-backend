@@ -23,6 +23,7 @@ import { loadUserAccounts } from './userAccounts.js';
 import { loadServiceRequests } from './serviceRequests.js';
 import { loadQuotes } from './quotes.js';
 import { loadReviews } from './reviews.js';
+import { loadPaymentsSection } from './payments.js';
 import { loadCategories } from './categories.js';
 import { loadMarketingSection } from './marketing.js';
 import { loadAdministratorsSection } from './administrators.js';
@@ -46,6 +47,9 @@ initNav({
   // GOS-121 admin follow-up (human-requested) — same "fetch fresh data
   // every time this section is shown" pattern.
   'reviews-section': loadReviews,
+  // Payments admin follow-up (2026-09-14, human-requested) — same "fetch
+  // fresh data every time this section is shown" pattern.
+  'payments-section': loadPaymentsSection,
   // Category-tree follow-up (2026-08-18) — same "fetch fresh data every
   // time this section is shown" pattern.
   'categories-section': loadCategories,

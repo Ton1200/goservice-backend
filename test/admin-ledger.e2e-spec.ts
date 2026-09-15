@@ -65,7 +65,7 @@ const CANCEL_ENGAGEMENT_BY_PROFESSIONAL_MUTATION = `
 `;
 
 const ADMIN_LEDGER_ENTRY_FIELDS = `
-  id type amount currency engagementId customerProfileId professionalProfileId commissionPercentApplied createdAt
+  id receiptNumber type amount currency engagementId customerProfileId professionalProfileId commissionPercentApplied createdAt
 `;
 
 const ADMIN_LEDGER_ENTRIES_QUERY = `
@@ -79,6 +79,45 @@ const ADMIN_LEDGER_ENTRIES_QUERY = `
   }
 `;
 
+const ADMIN_ENGAGEMENT_PAYMENT_SUMMARY_FIELDS = `
+  engagementId
+  eventType
+  paymentMethod
+  totalPaidByCustomer
+  platformCommission
+  professionalNetAmount
+  currency
+  professionalTotalPendingCashDebt
+  customer { id userId email firstName lastName }
+  professional { id userId email firstName lastName displayName }
+  entries { id receiptNumber type amount }
+`;
+
+const ADMIN_ENGAGEMENT_PAYMENT_SUMMARIES_QUERY = `
+  query AdminEngagementPaymentSummaries($limit: Int, $offset: Int) {
+    adminEngagementPaymentSummaries(limit: $limit, offset: $offset) {
+      totalCount
+      limit
+      offset
+      items { ${ADMIN_ENGAGEMENT_PAYMENT_SUMMARY_FIELDS} }
+    }
+  }
+`;
+
+interface AdminEngagementPaymentSummaryPayload {
+  engagementId: string;
+  eventType: string;
+  paymentMethod: string | null;
+  totalPaidByCustomer: number;
+  platformCommission: number;
+  professionalNetAmount: number;
+  currency: string;
+  professionalTotalPendingCashDebt: number | null;
+  customer: { id: string; firstName: string; lastName: string };
+  professional: { id: string; firstName: string; lastName: string };
+  entries: { id: string; type: string }[];
+}
+
 interface GraphQLErrorEntry {
   message: string;
   extensions?: { code?: string };
@@ -86,6 +125,7 @@ interface GraphQLErrorEntry {
 
 interface AdminLedgerEntryPayload {
   id: string;
+  receiptNumber: number;
   type: string;
   amount: number;
   currency: string;
@@ -389,6 +429,11 @@ describe('GraphQL /admin/graphql — adminLedgerEntries (GOS-109, e2e)', () => {
       engagementId,
       commissionPercentApplied: null,
     });
+    // 2026-09-14 follow-up — the human-facing "comprobante interno"
+    // sequential number: a real, positive, unique integer, never 0/null.
+    expect(body.data.adminLedgerEntries.items[0].receiptNumber).toBeGreaterThan(
+      0,
+    );
 
     // Also filterable by professionalProfileId (the REFUND entry has no
     // professionalProfileId, so this must return zero, proving the filter
@@ -449,5 +494,64 @@ describe('GraphQL /admin/graphql — adminLedgerEntries (GOS-109, e2e)', () => {
     ).expect(200);
 
     expect(errorCode(response.body)).toBe('ADMIN_FORBIDDEN');
+  });
+
+  /**
+   * e2e coverage for `adminEngagementPaymentSummaries` (2026-09-14
+   * follow-up, human-requested) — ONE ROW PER JOB, with real names and
+   * pre-computed totals, against a row written by a real
+   * `cancelEngagementByProfessional` flow (not a hand-inserted row).
+   */
+  describe('adminEngagementPaymentSummaries', () => {
+    it('summarizes a real PROFESSIONAL_CANCELLATION (REFUND) event with real Customer/Professional names', async () => {
+      const { engagementId } = await seedRefundedEngagement();
+      const admin = await seedAdminWithRole('payment-summary-reader', [
+        Permission.LEDGER_READ,
+      ]);
+      const token = await loginAdminAndGetToken(admin.email);
+
+      const response = await adminGraphqlRequest(
+        token,
+        ADMIN_ENGAGEMENT_PAYMENT_SUMMARIES_QUERY,
+        { limit: 200, offset: 0 },
+      ).expect(200);
+      const body = response.body as {
+        data: {
+          adminEngagementPaymentSummaries: {
+            items: AdminEngagementPaymentSummaryPayload[];
+          };
+        };
+      };
+
+      const summary = body.data.adminEngagementPaymentSummaries.items.find(
+        (item) => item.engagementId === engagementId,
+      );
+      expect(summary).toBeDefined();
+      expect(summary).toMatchObject({
+        eventType: 'PROFESSIONAL_CANCELLATION',
+        totalPaidByCustomer: 0,
+        platformCommission: 0,
+        professionalNetAmount: 0,
+        currency: 'ARS',
+        professionalTotalPendingCashDebt: null,
+      });
+      expect(summary?.customer.firstName).toBe('Cliente');
+      expect(summary?.professional.firstName).toBe('Profesional');
+      expect(summary?.entries).toHaveLength(1);
+      expect(summary?.entries[0].type).toBe('REFUND');
+    });
+
+    it('rejects an admin without LEDGER_READ with ADMIN_FORBIDDEN', async () => {
+      const admin = await seedAdminWithRole('payment-summary-none', []);
+      const token = await loginAdminAndGetToken(admin.email);
+
+      const response = await adminGraphqlRequest(
+        token,
+        ADMIN_ENGAGEMENT_PAYMENT_SUMMARIES_QUERY,
+        {},
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ADMIN_FORBIDDEN');
+    });
   });
 });

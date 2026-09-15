@@ -142,6 +142,26 @@ const PERMISSION_GROUPS = [
     read: 'STORAGE_SETTINGS_READ',
     write: 'STORAGE_SETTINGS_WRITE',
   },
+  // Mutual Engagement Reviews admin follow-up (GOS-121, 2026-09-11) — same
+  // "row missing from the matrix" gap as every entry above it:
+  // `REVIEWS_READ`/`REVIEWS_WRITE` existed on the `Permission` enum with no
+  // way to grant/revoke either from this panel until now.
+  {
+    label: 'Reviews',
+    read: 'REVIEWS_READ',
+    write: 'REVIEWS_WRITE',
+  },
+  // Financial ledger admin audit surface (GOS-109, 2026-09-12) — same
+  // "row missing from the matrix" gap: `LEDGER_READ` (gates
+  // `adminLedgerEntries`) existed on the `Permission` enum with no checkbox
+  // anywhere in this panel to grant it.
+  { label: 'Ledger', read: 'LEDGER_READ' },
+  // Cash Payment admin audit surface (GOS-87, 2026-09-14) — same "row
+  // missing from the matrix" gap: `CASH_PAYMENTS_READ` (gates
+  // `adminCashPaymentConfirmations`) existed on the `Permission` enum with
+  // no checkbox anywhere in this panel to grant it — this is exactly the
+  // human-reported bug this row fixes (no way to assign it to any role).
+  { label: 'Cash Payments', read: 'CASH_PAYMENTS_READ' },
 ];
 
 const ACTION_COLUMNS = [

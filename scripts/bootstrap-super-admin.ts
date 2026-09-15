@@ -162,6 +162,19 @@ const ROLE_SEEDS: { name: string; permissions: Permission[] }[] = [
       // than the read-only grids CONFIG_MANAGER otherwise holds; flagged
       // for explicit human sign-off before ever widening this.
       Permission.LEDGER_READ,
+      // Cash Payment admin audit surface follow-up (GOS-87, 2026-09-14) —
+      // adminCashPaymentConfirmations, its own dedicated permission (NOT
+      // LEDGER_READ — see the Permission enum's own comment in
+      // schema.prisma). SUPER_ADMIN gets every permission. Same "financial
+      // audit trail, more sensitive than the read-only grids CONFIG_MANAGER
+      // otherwise holds" reasoning as LEDGER_READ immediately above —
+      // deliberately NOT added to CONFIG_MANAGER/SUPPORT_VIEWER below,
+      // flagged for explicit human sign-off before ever widening this. Same
+      // "ALREADY-BOOTSTRAPPED environment needs the Roles UI, not a re-run
+      // of this script" caveat as every entry above — this is exactly the
+      // human-reported gap `admin-panel/js/adminRoles.js`'s own
+      // `PERMISSION_GROUPS` fix (same change) addresses for that case.
+      Permission.CASH_PAYMENTS_READ,
     ],
   },
   {
