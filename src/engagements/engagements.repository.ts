@@ -230,4 +230,31 @@ export class EngagementsRepository {
       },
     });
   }
+
+  /**
+   * GOS-130 follow-up — the pre-read `GetEngagementFinancialSummaryService`
+   * uses AFTER `EngagementFinancialSummaryAccessService.resolveParty` has
+   * already proved the caller is a party to this Engagement. A narrow
+   * `select`, deliberately excluding both profile ids/names — ownership is
+   * already proved by the access-check's own `findById` call before this
+   * ever runs — only what computing the summary actually needs: the
+   * assigned `paymentMethod`, the accepted Quote's `price`/`negotiatedPrice`
+   * (to derive `quotedPrice`, same `negotiatedPrice ?? price` rule
+   * `findByIdWithBillingContext` immediately above already establishes),
+   * and the owning `CustomerProfile.country` (to derive `currency` via
+   * `CURRENCY_BY_COUNTRY` for the pre-event case). Kept SEPARATE from
+   * `findByIdWithBillingContext` — different call site (this one has no
+   * `status`/profile-id needs at all), independently evolvable; not a
+   * widening of that one.
+   */
+  findByIdWithFinancialSummaryContext(id: string) {
+    return this.prisma.engagement.findUnique({
+      where: { id },
+      select: {
+        paymentMethod: true,
+        quote: { select: { price: true, negotiatedPrice: true } },
+        customerProfile: { select: { country: true } },
+      },
+    });
+  }
 }
