@@ -80,6 +80,20 @@ export class LedgerRepository {
    * followed by a positive `PLATFORM_COMMISSION` and a positive
    * `PROFESSIONAL_NET_CREDIT`. All 3 share `engagementId`/`currency`/
    * `commissionPercentApplied`. Runs inside the caller's own `tx`.
+   *
+   * **`createdAt` is set EXPLICITLY, once, and passed to all 3 `create`
+   * calls — do not remove this and rely on the column's `@default(now())`
+   * instead.** GOS-130 follow-up found (via a real e2e run, not a unit
+   * test) that Prisma generates that default CLIENT-SIDE, per statement —
+   * NOT as a `now()`/`CURRENT_TIMESTAMP` column default evaluated once by
+   * Postgres for the whole transaction, contrary to what every downstream
+   * "these rows are one financial event" grouping (`groupIntoEvents` in
+   * `list-admin-engagement-payment-summaries.service.ts`,
+   * `selectMostRecentLedgerEventRows` in
+   * `classify-engagement-payment-event.util.ts`) had assumed and documented.
+   * Three sequential `tx.ledgerEntry.create()` calls were observed a few
+   * milliseconds apart — an explicit, shared value is the only correct fix,
+   * not a wider tolerance window.
    */
   async createCustomerCancellationChargeEntries(
     tx: Prisma.TransactionClient,
@@ -94,6 +108,7 @@ export class LedgerRepository {
       commissionPercentApplied: number;
     },
   ): Promise<[LedgerEntry, LedgerEntry, LedgerEntry]> {
+    const createdAt = new Date();
     const fee = await tx.ledgerEntry.create({
       data: {
         type: LedgerEntryType.CUSTOMER_CANCELLATION_FEE,
@@ -103,6 +118,7 @@ export class LedgerRepository {
         customerProfileId: data.customerProfileId,
         professionalProfileId: data.professionalProfileId,
         commissionPercentApplied: data.commissionPercentApplied,
+        createdAt,
       },
     });
     const commission = await tx.ledgerEntry.create({
@@ -114,6 +130,7 @@ export class LedgerRepository {
         customerProfileId: data.customerProfileId,
         professionalProfileId: data.professionalProfileId,
         commissionPercentApplied: data.commissionPercentApplied,
+        createdAt,
       },
     });
     const net = await tx.ledgerEntry.create({
@@ -125,6 +142,7 @@ export class LedgerRepository {
         customerProfileId: data.customerProfileId,
         professionalProfileId: data.professionalProfileId,
         commissionPercentApplied: data.commissionPercentApplied,
+        createdAt,
       },
     });
     return [fee, commission, net];
@@ -279,6 +297,27 @@ export class LedgerRepository {
       include: {
         engagement: { select: ADMIN_PAYMENT_SUMMARY_ENGAGEMENT_SELECT },
       },
+    });
+  }
+
+  /**
+   * GOS-130 follow-up — `Query.engagementFinancialSummary`
+   * (`src/engagement-financial-summary/`): every `LedgerEntry` for ONE
+   * Engagement, most-recent-first — the raw material
+   * `selectMostRecentLedgerEventRows`
+   * (`src/ledger/services/classify-engagement-payment-event.util.ts`)
+   * narrows down to "the rows belonging to the single most recent
+   * financial event". No `select`/`include` here — the Engagement/Quote
+   * context that query also needs is fetched separately, by
+   * `EngagementsRepository.findByIdWithFinancialSummaryContext`, from the
+   * access-check service that runs BEFORE this — a join here would be
+   * redundant, and for the common "no event yet" case this simply returns
+   * `[]`.
+   */
+  findManyByEngagementId(engagementId: string): Promise<LedgerEntry[]> {
+    return this.prisma.ledgerEntry.findMany({
+      where: { engagementId },
+      orderBy: { createdAt: 'desc' },
     });
   }
 

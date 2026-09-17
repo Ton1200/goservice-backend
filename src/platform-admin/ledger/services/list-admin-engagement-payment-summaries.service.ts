@@ -1,9 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { LedgerEntryType } from '@prisma/client';
 import {
   AdminPaymentSummaryLedgerRow,
   LedgerRepository,
 } from '../../../ledger/ledger.repository';
+import {
+  classifyLedgerEventRows,
+  EngagementPaymentEventKind,
+} from '../../../ledger/services/classify-engagement-payment-event.util';
 import { AdminEngagementPaymentEventType } from '../models/admin-engagement-payment-event-type.enum';
 import { AdminEngagementPaymentSummaryModel } from '../models/admin-engagement-payment-summary.model';
 import { AdminEngagementPaymentSummariesPageModel } from '../models/admin-engagement-payment-summaries-page.model';
@@ -127,12 +130,16 @@ function groupIntoEvents(
   return [...groupsByKey.values()];
 }
 
-function findByType(
-  rows: AdminPaymentSummaryLedgerRow[],
-  type: LedgerEntryType,
-): AdminPaymentSummaryLedgerRow | undefined {
-  return rows.find((row) => row.type === type);
-}
+const ADMIN_EVENT_TYPE_BY_KIND: Record<
+  EngagementPaymentEventKind,
+  AdminEngagementPaymentEventType
+> = {
+  CASH_PAYMENT: AdminEngagementPaymentEventType.CASH_PAYMENT,
+  CUSTOMER_CANCELLATION: AdminEngagementPaymentEventType.CUSTOMER_CANCELLATION,
+  PROFESSIONAL_CANCELLATION:
+    AdminEngagementPaymentEventType.PROFESSIONAL_CANCELLATION,
+  DIGITAL_PAYMENT: AdminEngagementPaymentEventType.DIGITAL_PAYMENT,
+};
 
 function toCustomerModel(
   customerProfile: NonNullable<
@@ -164,10 +171,15 @@ function toProfessionalModel(
 }
 
 /**
- * The one place that decides, per event group, which `AdminEngagementPaymentEventType`
- * it is and how to compute `totalPaidByCustomer`/`platformCommission`/
- * `professionalNetAmount` — see each branch's own comment for the business
- * rule it mirrors (DEC-008 for cancellations, GOS-87 for cash).
+ * Decides, per event group, which `AdminEngagementPaymentEventType` it is
+ * and how to compute `totalPaidByCustomer`/`platformCommission`/
+ * `professionalNetAmount` — delegated to the shared, schema-agnostic
+ * `classifyLedgerEventRows` (`src/ledger/services/classify-engagement-payment-event.util.ts`,
+ * GOS-130 follow-up), so this admin view and the consumer-facing
+ * `engagementFinancialSummary` (`src/engagement-financial-summary/`) can
+ * never drift on the underlying business rule (DEC-008 for cancellations,
+ * GOS-87 for cash) even though each maps the result to its OWN,
+ * independent GraphQL enum.
  */
 async function toSummaryModel(
   group: EventGroup,
@@ -175,6 +187,8 @@ async function toSummaryModel(
 ): Promise<AdminEngagementPaymentSummaryModel> {
   const engagement = group.engagement!; // non-null — see groupIntoEvents' own filter.
   const currency = group.rows[0].currency; // every row in one event shares the same currency.
+  const quotedPrice =
+    engagement.quote.negotiatedPrice ?? engagement.quote.price;
 
   const model = new AdminEngagementPaymentSummaryModel();
   model.engagementId = group.engagementId;
@@ -186,70 +200,17 @@ async function toSummaryModel(
   model.entries = group.rows.map(toAdminLedgerEntryModel);
   model.professionalTotalPendingCashDebt = null;
 
-  const cashDebt = findByType(group.rows, LedgerEntryType.CASH_COMMISSION_DEBT);
-  const cancellationFee = findByType(
-    group.rows,
-    LedgerEntryType.CUSTOMER_CANCELLATION_FEE,
-  );
-  const refund = findByType(group.rows, LedgerEntryType.REFUND);
-  const digitalCharge = findByType(group.rows, LedgerEntryType.CUSTOMER_CHARGE);
+  const classified = classifyLedgerEventRows(group.rows, quotedPrice);
+  model.eventType = ADMIN_EVENT_TYPE_BY_KIND[classified.eventType];
+  model.totalPaidByCustomer = classified.totalPaidByCustomer;
+  model.platformCommission = classified.platformCommission;
+  model.professionalNetAmount = classified.professionalNetAmount;
 
-  if (cashDebt) {
-    // GOS-87 — the Professional collected the FULL quoted price directly
-    // from the Customer, in cash; GoService's own cut is exactly the
-    // CASH_COMMISSION_DEBT amount, never independently re-derived from it
-    // (rounding could disagree) — the source of truth for the full price is
-    // the Quote itself.
-    const quotedPrice =
-      engagement.quote.negotiatedPrice ?? engagement.quote.price;
-    model.eventType = AdminEngagementPaymentEventType.CASH_PAYMENT;
-    model.totalPaidByCustomer = quotedPrice;
-    model.platformCommission = cashDebt.amount;
-    model.professionalNetAmount = quotedPrice - cashDebt.amount;
+  if (classified.eventType === 'CASH_PAYMENT') {
     model.professionalTotalPendingCashDebt = await getPendingDebt(
       engagement.professionalProfile.id,
     );
-    return model;
   }
 
-  if (cancellationFee) {
-    // DEC-008 point 5 — the cancellation FEE (not the full job price, which
-    // was never fully paid since the work was never completed) is split
-    // between GoService and the Professional exactly like a normal
-    // completed-job commission would be.
-    const platformCommission = findByType(
-      group.rows,
-      LedgerEntryType.PLATFORM_COMMISSION,
-    );
-    const professionalNet = findByType(
-      group.rows,
-      LedgerEntryType.PROFESSIONAL_NET_CREDIT,
-    );
-    model.eventType = AdminEngagementPaymentEventType.CUSTOMER_CANCELLATION;
-    model.totalPaidByCustomer = Math.abs(cancellationFee.amount);
-    model.platformCommission = platformCommission?.amount ?? 0;
-    model.professionalNetAmount = professionalNet?.amount ?? 0;
-    return model;
-  }
-
-  if (refund) {
-    // DEC-008 — "unaffected by this DEC ... full refund to the Customer, no
-    // charge": net paid by the Customer for this job is 0, nothing is split.
-    model.eventType = AdminEngagementPaymentEventType.PROFESSIONAL_CANCELLATION;
-    model.totalPaidByCustomer = 0;
-    model.platformCommission = 0;
-    model.professionalNetAmount = 0;
-    return model;
-  }
-
-  // RESERVED branch — no writer exists for CUSTOMER_CHARGE yet (GOS-79/80),
-  // included so this service needs no shape change once it does. `amount`
-  // is treated as the full price paid; commission/net are left at 0 rather
-  // than guessed, since the real split rule for a digital payment isn't
-  // decided/built yet.
-  model.eventType = AdminEngagementPaymentEventType.DIGITAL_PAYMENT;
-  model.totalPaidByCustomer = digitalCharge?.amount ?? 0;
-  model.platformCommission = 0;
-  model.professionalNetAmount = 0;
   return model;
 }
