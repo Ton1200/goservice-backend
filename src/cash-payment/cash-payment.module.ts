@@ -11,6 +11,7 @@ import { CashPaymentRepository } from './cash-payment.repository';
 import { CashPaymentResolver } from './cash-payment.resolver';
 import { CashPaymentModuleEnabledGuard } from './guards/cash-payment-module-enabled.guard';
 import { ConfirmCashPaymentService } from './services/confirm-cash-payment.service';
+import { GetMyCashPaymentConfirmationService } from './services/get-my-cash-payment-confirmation.service';
 import { GetMyPendingCashCommissionDebtService } from './services/get-my-pending-cash-commission-debt.service';
 
 /**
@@ -58,6 +59,7 @@ import { GetMyPendingCashCommissionDebtService } from './services/get-my-pending
     CashPaymentModuleEnabledGuard,
     EngagementsRepository,
     ConfirmCashPaymentService,
+    GetMyCashPaymentConfirmationService,
     GetMyPendingCashCommissionDebtService,
   ],
   exports: [CashPaymentRepository],

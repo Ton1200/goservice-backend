@@ -452,6 +452,93 @@ describe('GraphQL /graphql — platformConfig (e2e)', () => {
     });
   });
 
+  /**
+   * GOS-80 follow-up — `payments.payment-methods.cash.enabled` must be
+   * publicly readable (mobile shows/hides Cash from it), while
+   * `...cash.display-name` stays public and every other `payments.*` row
+   * stays private. Runs against the isolated test DB; the row's `value` is
+   * restored after each test.
+   */
+  describe('Cash payment method public config (GOS-80 follow-up)', () => {
+    const CASH_ENABLED_KEY = 'payments.payment-methods.cash.enabled';
+    const CASH_DISPLAY_NAME_KEY = 'payments.payment-methods.cash.display-name';
+    const COMMISSION_KEY = 'payments.general-settings.commission.percent';
+
+    async function ensureSeededShape(): Promise<void> {
+      await prisma.platformSetting.upsert({
+        where: { key: CASH_ENABLED_KEY },
+        update: { value: 'true' },
+        create: {
+          key: CASH_ENABLED_KEY,
+          description: 'Global kill switch for the Cash Payment capability.',
+          valueType: 'BOOLEAN',
+          value: 'true',
+          isPublic: true,
+        },
+      });
+    }
+
+    afterEach(ensureSeededShape);
+
+    async function cashConfig(): Promise<Record<string, unknown>> {
+      const response = await platformConfigRequest();
+      const body = response.body as {
+        data: { platformConfig: PlatformConfigTree };
+      };
+      return getAtPath(body.data.platformConfig, [
+        'payments',
+        'paymentMethods',
+        'cash',
+      ]) as Record<string, unknown>;
+    }
+
+    it('the persisted cash.enabled row is isPublic:true (seed/migration state), and cash.enabled is in platformConfig', async () => {
+      const row = await prisma.platformSetting.findUnique({
+        where: { key: CASH_ENABLED_KEY },
+      });
+      expect(row?.isPublic).toBe(true);
+      expect(row?.isEncrypted).toBe(false);
+
+      expect((await cashConfig()).enabled).toBe(true);
+    });
+
+    it('cash.enabled reflects the real PlatformSetting value on the very next read', async () => {
+      await prisma.platformSetting.update({
+        where: { key: CASH_ENABLED_KEY },
+        data: { value: 'false' },
+      });
+
+      expect((await cashConfig()).enabled).toBe(false);
+    });
+
+    it('cash.display-name remains public (as cash.displayName) and unchanged', async () => {
+      const row = await prisma.platformSetting.findUnique({
+        where: { key: CASH_DISPLAY_NAME_KEY },
+      });
+      expect(row?.isPublic).toBe(true);
+
+      expect((await cashConfig()).displayName).toBe(row?.value);
+    });
+
+    it('unrelated private payment settings stay out of platformConfig', async () => {
+      const commissionRow = await prisma.platformSetting.findUnique({
+        where: { key: COMMISSION_KEY },
+      });
+      // Only meaningful if the row exists in this DB; when it does it must be private.
+      if (commissionRow) {
+        expect(commissionRow.isPublic).toBe(false);
+      }
+
+      const response = await platformConfigRequest();
+      const body = response.body as {
+        data: { platformConfig: PlatformConfigTree };
+      };
+      expect(
+        getAtPath(body.data.platformConfig, ['payments', 'generalSettings']),
+      ).toBeUndefined();
+    });
+  });
+
   it('a query literal asking for sub-fields fails at the GraphQL layer — JSON is a leaf scalar, not selectable further', async () => {
     const response = await request(app.getHttpServer())
       .post('/graphql')

@@ -436,10 +436,16 @@ const PLATFORM_SETTINGS: {
   // real MVP payment method, not an experimental opt-in" reasoning
   // `customer.appointments.enabled`'s own comment documents: the point of
   // this switch is letting an admin turn it OFF during an incident, not
-  // requiring an opt-in before it works at all. `isPublic: false` — a
-  // backend/admin-only gate; `goservice-mobile` just calls
-  // `confirmCashPayment` and handles `CASH_PAYMENT_MODULE_DISABLED` like any
-  // other domain error, same reasoning as every other capability flag above.
+  // requiring an opt-in before it works at all. `isPublic: true` (GOS-80
+  // follow-up, 2026-09-18 — was `false`): `goservice-mobile` must show/hide
+  // the Cash option based on this flag BEFORE the user ever attempts
+  // `confirmCashPayment`, so it is exposed via `platformConfig` (as
+  // `payments.paymentMethods.cash.enabled`), same as
+  // `customer.social-login.*.enabled`. Because this seed only ever
+  // `create`s (`update: {}`), existing environments are flipped by the
+  // `20260918120000_gos_80_make_cash_enabled_public` data-fixup migration,
+  // not by this file. The backend still enforces the switch itself
+  // (`CashPaymentModuleEnabledGuard`) regardless of what the client shows.
   //
   // Nested under a `payment-methods` group (2026-09-14 follow-up,
   // human-requested) — a sibling slot for a future `payments.payment-methods.card.*`
@@ -451,7 +457,7 @@ const PLATFORM_SETTINGS: {
     description:
       'Global kill switch for the Cash Payment capability (confirmCashPayment).',
     value: 'true',
-    isPublic: false,
+    isPublic: true,
   },
   // Customer-facing display name for the Cash payment method — 2026-09-14
   // follow-up, human-requested: "cash" in a given market may really mean a
