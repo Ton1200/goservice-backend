@@ -91,6 +91,22 @@ const MY_PENDING_CASH_COMMISSION_DEBT_QUERY = `
   }
 `;
 
+const MY_CASH_PAYMENT_CONFIRMATION_QUERY = `
+  query MyCashPaymentConfirmation($engagementId: ID!) {
+    myCashPaymentConfirmation(engagementId: $engagementId) {
+      engagementId viewerRole customerConfirmed professionalConfirmed bothConfirmed
+    }
+  }
+`;
+
+interface CashPaymentConfirmationStatePayload {
+  engagementId: string;
+  viewerRole: 'CUSTOMER' | 'PROFESSIONAL';
+  customerConfirmed: boolean;
+  professionalConfirmed: boolean;
+  bothConfirmed: boolean;
+}
+
 interface GraphQLErrorEntry {
   message: string;
   extensions?: { code?: string };
@@ -807,6 +823,231 @@ describe('GraphQL Cash Payment (GOS-87, e2e)', () => {
           isPublic: false,
         },
       });
+    });
+  });
+
+  describe('myCashPaymentConfirmation (GOS-80 follow-up)', () => {
+    async function readState(
+      engagementId: string,
+      token: string,
+    ): Promise<CashPaymentConfirmationStatePayload> {
+      const response = await gqlRequest(
+        MY_CASH_PAYMENT_CONFIRMATION_QUERY,
+        { engagementId },
+        token,
+      ).expect(200);
+      const body = response.body as {
+        data: {
+          myCashPaymentConfirmation: CashPaymentConfirmationStatePayload;
+        };
+        errors?: GraphQLErrorEntry[];
+      };
+      expect(body.errors).toBeUndefined();
+      return body.data.myCashPaymentConfirmation;
+    }
+
+    function confirm(engagementId: string, token: string) {
+      return gqlRequest(
+        CONFIRM_CASH_PAYMENT_MUTATION,
+        { engagementId },
+        token,
+      ).expect(200);
+    }
+
+    it('rejects an unauthenticated caller', async () => {
+      const { engagementId } = await seedInProgressEngagement();
+
+      const response = await gqlRequest(MY_CASH_PAYMENT_CONFIRMATION_QUERY, {
+        engagementId,
+      }).expect(200);
+      const body = response.body as {
+        data: unknown;
+        errors?: GraphQLErrorEntry[];
+      };
+
+      expect(body.errors?.length).toBeGreaterThan(0);
+      expect(body.data ?? null).toBeNull();
+    });
+
+    it('an unrelated third party (even with a Customer profile) gets ENGAGEMENT_NOT_FOUND — same as a nonexistent Engagement', async () => {
+      const { engagementId } = await seedInProgressEngagement();
+      const stranger = await seedApprovedCustomer();
+      const strangerToken = await loginSessionToken(stranger.email);
+
+      const foreign = await gqlRequest(
+        MY_CASH_PAYMENT_CONFIRMATION_QUERY,
+        { engagementId },
+        strangerToken,
+      ).expect(200);
+      const missing = await gqlRequest(
+        MY_CASH_PAYMENT_CONFIRMATION_QUERY,
+        { engagementId: '00000000-0000-4000-8000-000000000000' },
+        strangerToken,
+      ).expect(200);
+
+      expect(errorCode(foreign.body)).toBe('ENGAGEMENT_NOT_FOUND');
+      expect(errorCode(missing.body)).toBe('ENGAGEMENT_NOT_FOUND');
+      expect(
+        (foreign.body as { errors: GraphQLErrorEntry[] }).errors[0].message,
+      ).toBe(
+        (missing.body as { errors: GraphQLErrorEntry[] }).errors[0].message,
+      );
+    });
+
+    it('before any confirmation: both parties read all-false, each with their own viewerRole', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedInProgressEngagement();
+
+      expect(await readState(engagementId, customerToken)).toEqual({
+        engagementId,
+        viewerRole: 'CUSTOMER',
+        customerConfirmed: false,
+        professionalConfirmed: false,
+        bothConfirmed: false,
+      });
+      expect(await readState(engagementId, professionalToken)).toEqual({
+        engagementId,
+        viewerRole: 'PROFESSIONAL',
+        customerConfirmed: false,
+        professionalConfirmed: false,
+        bothConfirmed: false,
+      });
+    });
+
+    it('Customer confirms first: both parties read the same server truth (customer true, professional false, both false); repeated reads are stable', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedInProgressEngagement();
+
+      await confirm(engagementId, customerToken);
+
+      for (let i = 0; i < 2; i++) {
+        expect(await readState(engagementId, customerToken)).toMatchObject({
+          viewerRole: 'CUSTOMER',
+          customerConfirmed: true,
+          professionalConfirmed: false,
+          bothConfirmed: false,
+        });
+        expect(await readState(engagementId, professionalToken)).toMatchObject({
+          viewerRole: 'PROFESSIONAL',
+          customerConfirmed: true,
+          professionalConfirmed: false,
+          bothConfirmed: false,
+        });
+      }
+    });
+
+    it('Professional confirms second: both parties read bothConfirmed = true', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedInProgressEngagement();
+
+      await confirm(engagementId, customerToken);
+      await confirm(engagementId, professionalToken);
+
+      for (const token of [customerToken, professionalToken]) {
+        expect(await readState(engagementId, token)).toMatchObject({
+          customerConfirmed: true,
+          professionalConfirmed: true,
+          bothConfirmed: true,
+        });
+      }
+    });
+
+    it('reverse order (Professional first, then Customer) works too', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedInProgressEngagement();
+
+      await confirm(engagementId, professionalToken);
+      expect(await readState(engagementId, customerToken)).toMatchObject({
+        customerConfirmed: false,
+        professionalConfirmed: true,
+        bothConfirmed: false,
+      });
+
+      await confirm(engagementId, customerToken);
+      for (const token of [customerToken, professionalToken]) {
+        expect(await readState(engagementId, token)).toMatchObject({
+          customerConfirmed: true,
+          professionalConfirmed: true,
+          bothConfirmed: true,
+        });
+      }
+    });
+
+    it('repeated (idempotent) confirmation never changes the read state, and it survives a fresh login', async () => {
+      const { engagementId, customerToken, professionalToken } =
+        await seedInProgressEngagement();
+
+      await confirm(engagementId, customerToken);
+      await confirm(engagementId, customerToken);
+      expect(await readState(engagementId, professionalToken)).toMatchObject({
+        customerConfirmed: true,
+        professionalConfirmed: false,
+        bothConfirmed: false,
+      });
+
+      await confirm(engagementId, professionalToken);
+      await confirm(engagementId, professionalToken);
+      await confirm(engagementId, customerToken);
+
+      const engagementRow = await prisma.engagement.findUniqueOrThrow({
+        where: { id: engagementId },
+        include: { customerProfile: { include: { user: true } } },
+      });
+      const freshCustomerToken = await loginSessionToken(
+        engagementRow.customerProfile.user.email,
+      );
+      expect(await readState(engagementId, freshCustomerToken)).toMatchObject({
+        customerConfirmed: true,
+        professionalConfirmed: true,
+        bothConfirmed: true,
+      });
+    });
+
+    it('a dual-role account resolves its role from the Engagement itself: PROFESSIONAL here, even though it also holds a Customer profile', async () => {
+      const { engagementId, customerToken, professionalProfileId } =
+        await seedInProgressEngagement();
+      const professionalProfile =
+        await prisma.professionalProfile.findUniqueOrThrow({
+          where: { id: professionalProfileId },
+          include: { user: true },
+        });
+      await prisma.customerProfile.create({
+        data: {
+          userId: professionalProfile.userId,
+          firstName: 'Doble',
+          lastName: 'Rol',
+          country: CountryCode.AR,
+        },
+      });
+      const dualToken = await loginSessionToken(professionalProfile.user.email);
+
+      await confirm(engagementId, customerToken);
+
+      expect(await readState(engagementId, dualToken)).toMatchObject({
+        viewerRole: 'PROFESSIONAL',
+        customerConfirmed: true,
+        professionalConfirmed: false,
+      });
+    });
+
+    it('is NOT gated by the cash kill switch (reads existing state)', async () => {
+      const { engagementId, customerToken } = await seedInProgressEngagement();
+      await confirm(engagementId, customerToken);
+
+      await prisma.platformSetting.update({
+        where: { key: CASH_PAYMENT_ENABLED_KEY },
+        data: { value: 'false' },
+      });
+      try {
+        expect(await readState(engagementId, customerToken)).toMatchObject({
+          customerConfirmed: true,
+        });
+      } finally {
+        await prisma.platformSetting.update({
+          where: { key: CASH_PAYMENT_ENABLED_KEY },
+          data: { value: 'true' },
+        });
+      }
     });
   });
 });

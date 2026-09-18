@@ -4,16 +4,18 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { AccountApprovedGuard } from '../identity-verification/guards/account-approved.guard';
 import { CashPaymentModuleEnabledGuard } from './guards/cash-payment-module-enabled.guard';
+import { CashPaymentConfirmationStateModel } from './models/cash-payment-confirmation-state.model';
 import { CashPaymentConfirmationModel } from './models/cash-payment-confirmation.model';
 import { ConfirmCashPaymentService } from './services/confirm-cash-payment.service';
+import { GetMyCashPaymentConfirmationService } from './services/get-my-cash-payment-confirmation.service';
 import { GetMyPendingCashCommissionDebtService } from './services/get-my-pending-cash-commission-debt.service';
 
 /**
  * Thin delivery adapter — no business logic here, same pattern as
  * `AppointmentsResolver`. `confirmCashPayment` requires `SessionGuard` +
  * `AccountApprovedGuard` + `CashPaymentModuleEnabledGuard`, in that exact
- * order. `myPendingCashCommissionDebt` deliberately does NOT get the
- * module-enabled guard — see that guard's own header comment. Neither
+ * order. `myPendingCashCommissionDebt` and `myCashPaymentConfirmation`
+ * deliberately do NOT get the module-enabled guard — see that guard's own header comment. Neither
  * operation accepts `customerProfileId`/`professionalProfileId`/`userId` as
  * an argument — ownership/role is always derived server-side.
  */
@@ -22,6 +24,7 @@ export class CashPaymentResolver {
   constructor(
     private readonly confirmCashPaymentService: ConfirmCashPaymentService,
     private readonly getMyPendingCashCommissionDebtService: GetMyPendingCashCommissionDebtService,
+    private readonly getMyCashPaymentConfirmationService: GetMyCashPaymentConfirmationService,
   ) {}
 
   @UseGuards(SessionGuard, AccountApprovedGuard, CashPaymentModuleEnabledGuard)
@@ -47,6 +50,21 @@ export class CashPaymentResolver {
   myPendingCashCommissionDebt(@CurrentUser() userId: string): Promise<number> {
     return this.getMyPendingCashCommissionDebtService.getMyPendingCashCommissionDebt(
       userId,
+    );
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Query(() => CashPaymentConfirmationStateModel, {
+    description:
+      "The double-confirmation state of ONE Engagement's cash payment — the authoritative, persisted read counterpart to confirmCashPayment. customerConfirmed/professionalConfirmed/bothConfirmed are all false until someone confirms; viewerRole says which side the caller is on this Engagement. Only the Engagement's own Customer or Professional may read it — anyone else (or a nonexistent Engagement) gets ENGAGEMENT_NOT_FOUND (anti-enumeration). Not gated by the Cash Payment kill switch or the Engagement's status — it only reads existing state.",
+  })
+  myCashPaymentConfirmation(
+    @CurrentUser() userId: string,
+    @Args('engagementId', { type: () => ID }) engagementId: string,
+  ): Promise<CashPaymentConfirmationStateModel> {
+    return this.getMyCashPaymentConfirmationService.getMyCashPaymentConfirmation(
+      userId,
+      engagementId,
     );
   }
 }
