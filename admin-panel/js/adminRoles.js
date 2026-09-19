@@ -156,10 +156,11 @@ const PERMISSION_GROUPS = [
   // `adminLedgerEntries`) existed on the `Permission` enum with no checkbox
   // anywhere in this panel to grant it.
   { label: 'Ledger', read: 'LEDGER_READ' },
-  // Cash Payment admin audit surface (GOS-87, 2026-09-14) — same "row
+  // Cash Payment admin audit surface (GOS-87, 2026-09-14; query generalized
+  // to `adminPaymentAttempts` 2026-09-18, permission name kept) — same "row
   // missing from the matrix" gap: `CASH_PAYMENTS_READ` (gates
-  // `adminCashPaymentConfirmations`) existed on the `Permission` enum with
-  // no checkbox anywhere in this panel to grant it — this is exactly the
+  // `adminPaymentAttempts`) existed on the `Permission` enum with no
+  // checkbox anywhere in this panel to grant it — this is exactly the
   // human-reported bug this row fixes (no way to assign it to any role).
   { label: 'Cash Payments', read: 'CASH_PAYMENTS_READ' },
 ];

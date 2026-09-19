@@ -115,16 +115,24 @@ export function classifyLedgerEventRows(
     };
   }
 
-  // RESERVED branch — no writer exists for CUSTOMER_CHARGE yet (GOS-79/80),
-  // included so callers need no shape change once it does. `amount` is
-  // treated as the full price paid; commission/net are left at 0 rather
-  // than guessed, since the real split rule for a digital payment isn't
-  // decided/built yet.
+  // GOS-85 — a job paid digitally (card). `RecordDigitalPaymentService` now
+  // writes this event as 3 rows — a NEGATIVE `CUSTOMER_CHARGE` (the
+  // balancing leg, `-quotedPrice`) plus a positive `PLATFORM_COMMISSION` and
+  // `PROFESSIONAL_NET_CREDIT` — so, exactly like the `CUSTOMER_CANCELLATION`
+  // branch above, the amounts are READ from those rows (never re-derived
+  // from `quotedPrice`, where rounding could disagree) and the negative
+  // balancing leg is `Math.abs`-ed into "what the Customer paid".
+  //
+  // This is also still the fall-through for a group that matched no
+  // more-specific type above; in that case none of the three rows exist and
+  // every amount is 0 — unchanged from before this branch had a writer.
   return {
     eventType: 'DIGITAL_PAYMENT',
-    totalPaidByCustomer: digitalCharge?.amount ?? 0,
-    platformCommission: 0,
-    professionalNetAmount: 0,
+    totalPaidByCustomer: Math.abs(digitalCharge?.amount ?? 0),
+    platformCommission:
+      findByType(rows, LedgerEntryType.PLATFORM_COMMISSION)?.amount ?? 0,
+    professionalNetAmount:
+      findByType(rows, LedgerEntryType.PROFESSIONAL_NET_CREDIT)?.amount ?? 0,
     cashCommissionDebtAmount: 0,
   };
 }

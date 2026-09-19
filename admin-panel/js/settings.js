@@ -321,6 +321,60 @@ const KNOWN_SETTING_SLOTS = [
     valueType: 'STRING',
     isEncrypted: true,
   },
+  // GOS-85 — Mercado Pago (card payments). `payments.mercadopago.<country>.*`
+  // is a new group under the existing `payments` root, next to
+  // `payment-methods` and `general-settings`. `payments.payment-methods.card.enabled`
+  // and `payments.mercadopago.<country>.environment` are SEEDED by
+  // `prisma/seed.ts`; the 3 credential rows per country below are real
+  // credentials and are deliberately NOT seeded (same precedent as the
+  // `identity.didit.*` credentials above) — they exist here so the fields
+  // render, with the right encrypted/plain treatment, on an environment
+  // where nothing has been configured yet.
+  // `public-key` is NOT a secret (the mobile card form needs the RIGHT
+  // country's key to tokenize the card client-side): it is a plain row, and
+  // an admin who wants the app to read it through `platformConfig` flips its
+  // "public" toggle on.
+  //
+  // **Per-country credentials (2026-09-18)** — a Mercado Pago account
+  // belongs to exactly one country's marketplace (verified live), so each
+  // country gets its OWN 3-row credential set instead of one flat global
+  // one. A future country is 3 more rows here, no other change to this file.
+  {
+    key: 'payments.mercadopago.co.access-token',
+    description: 'Mercado Pago access token for Colombia (server-side; the one credential that can move money).',
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
+  {
+    key: 'payments.mercadopago.co.public-key',
+    description: 'Mercado Pago public key for Colombia (used by the app to tokenize the card; not a secret).',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
+  {
+    key: 'payments.mercadopago.co.webhook-secret',
+    description: "Mercado Pago webhook secret for Colombia (verifies the x-signature of 'order' notifications sent to .../webhooks/mercadopago/orders/co).",
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
+  {
+    key: 'payments.mercadopago.ar.access-token',
+    description: 'Mercado Pago access token for Argentina (server-side; the one credential that can move money).',
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
+  {
+    key: 'payments.mercadopago.ar.public-key',
+    description: 'Mercado Pago public key for Argentina (used by the app to tokenize the card; not a secret).',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
+  {
+    key: 'payments.mercadopago.ar.webhook-secret',
+    description: "Mercado Pago webhook secret for Argentina (verifies the x-signature of 'order' notifications sent to .../webhooks/mercadopago/orders/ar).",
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
 ];
 
 // Short, static, one-line descriptions shown under a leaf block's title

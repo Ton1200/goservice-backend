@@ -115,11 +115,12 @@ import { ListAdminReviewsService } from './reviews/services/list-admin-reviews.s
 import { ModerateEngagementReviewCommentService } from './reviews/services/moderate-engagement-review-comment.service';
 import { LedgerModule } from '../ledger/ledger.module';
 import { AdminLedgerResolver } from './ledger/admin-ledger.resolver';
+import { GetAdminPlatformBalanceService } from './ledger/services/get-admin-platform-balance.service';
 import { ListAdminEngagementPaymentSummariesService } from './ledger/services/list-admin-engagement-payment-summaries.service';
 import { ListAdminLedgerEntriesService } from './ledger/services/list-admin-ledger-entries.service';
-import { CashPaymentRepository } from '../cash-payment/cash-payment.repository';
-import { AdminCashPaymentResolver } from './cash-payment/admin-cash-payment.resolver';
-import { ListAdminCashPaymentConfirmationsService } from './cash-payment/services/list-admin-cash-payment-confirmations.service';
+import { PaymentAttemptRepository } from '../payments/payment-attempt.repository';
+import { AdminPaymentAttemptsResolver } from './payment-attempts/admin-payment-attempts.resolver';
+import { ListAdminPaymentAttemptsService } from './payment-attempts/services/list-admin-payment-attempts.service';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -591,23 +592,27 @@ import { ListAdminCashPaymentConfirmationsService } from './cash-payment/service
     // 2026-09-14 follow-up (human-requested) — adminEngagementPaymentSummaries,
     // same LEDGER_READ gate, same resolver class.
     ListAdminEngagementPaymentSummariesService,
+    // 2026-09-18 — adminPlatformBalance, same LEDGER_READ gate, same
+    // resolver class.
+    GetAdminPlatformBalanceService,
 
-    // Cash Payment admin audit surface (GOS-87, 2026-09-14) —
-    // `adminCashPaymentConfirmations`, READ-ONLY, gated by its own dedicated
-    // `Permission.CASH_PAYMENTS_READ` (see the `Permission` enum's own
-    // comment in `prisma/schema.prisma`). No module-enabled kill switch —
-    // same "auditing existing history stays available regardless of the
+    // Payment attempt admin audit surface (GOS-87/GOS-85, generalized
+    // 2026-09-18 — cash lives in `PaymentAttempt` together with every other
+    // method) — `adminPaymentAttempts`, READ-ONLY, gated by its own
+    // dedicated `Permission.CASH_PAYMENTS_READ` (kept its original name —
+    // see the resolver's own comment). No module-enabled kill switch — same
+    // "auditing existing history stays available regardless of the
     // client-facing toggle" reasoning `AdminLedgerResolver` above already
-    // documents. `CashPaymentRepository` IS redeclared as a direct provider
-    // here (unlike `LedgerRepository` above) — same "reuse the concrete
-    // repository class directly, never import the resolver-bearing module"
-    // pattern `AppointmentsRepository`/`ReviewsRepository` already establish
-    // elsewhere in this file, since `CashPaymentModule` (unlike
-    // `LedgerModule`) has its own resolver that must never leak into this
-    // schema.
-    CashPaymentRepository,
-    AdminCashPaymentResolver,
-    ListAdminCashPaymentConfirmationsService,
+    // documents. `PaymentAttemptRepository` IS redeclared as a direct
+    // provider here (unlike `LedgerRepository` above) — same "reuse the
+    // concrete repository class directly, never import the resolver-bearing
+    // module" pattern `AppointmentsRepository`/`ReviewsRepository` already
+    // establish elsewhere in this file, since `PaymentsModule` (unlike
+    // `LedgerModule`) has its own resolver/controller that must never leak
+    // into this schema.
+    PaymentAttemptRepository,
+    AdminPaymentAttemptsResolver,
+    ListAdminPaymentAttemptsService,
   ],
 })
 export class PlatformAdminModule {}

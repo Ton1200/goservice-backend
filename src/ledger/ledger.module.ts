@@ -1,8 +1,12 @@
 import { Module } from '@nestjs/common';
 import { PlatformSettingsModule } from '../platform-admin/platform-settings/platform-settings.module';
+import { ProfilesRepository } from '../profiles/profiles.repository';
+import { UsersRepository } from '../users/users.repository';
 import { LedgerRepository } from './ledger.repository';
+import { GetMyPaymentBalanceService } from './services/get-my-payment-balance.service';
 import { RecordCashCommissionDebtService } from './services/record-cash-commission-debt.service';
 import { RecordCustomerCancellationChargeService } from './services/record-customer-cancellation-charge.service';
+import { RecordDigitalPaymentService } from './services/record-digital-payment.service';
 import { RecordProfessionalCancellationRefundService } from './services/record-professional-cancellation-refund.service';
 
 /**
@@ -26,6 +30,25 @@ import { RecordProfessionalCancellationRefundService } from './services/record-p
  * reused by `CashPaymentModule`'s own `ConfirmCashPaymentService` — same
  * "import this whole resolver-free module directly" reasoning as
  * `EngagementsModule` already establishes for the other two services.
+ *
+ * **GOS-85**: `RecordDigitalPaymentService` is a fourth exported service,
+ * reused by `PaymentsModule`'s own `ApplyPaymentResultService` — same
+ * reasoning again.
+ *
+ * **2026-09-18**: `GetMyPaymentBalanceService` is a fifth exported service
+ * (`myPaymentBalance`, `CashPaymentResolver`) — needs `ProfilesRepository`
+ * (in turn needs `UsersRepository`), so both are redeclared here as
+ * CONCRETE providers rather than importing `ProfilesModule`/`UsersModule` —
+ * this module MUST stay resolver-free (its own header line above): both of
+ * those modules carry a real `@Resolver()`
+ * (`ProfilesResolver`/`UsersResolver`), and `LedgerModule` is reused by
+ * `PlatformAdminModule` for the admin schema's `LedgerRepository` access —
+ * importing either would leak consumer-facing queries/mutations
+ * (`me`/`myAccount`/`register`/…) into `/admin/graphql` (caught live by
+ * `admin-schema-isolation.e2e-spec.ts` the first time this was tried with
+ * `imports: [..., ProfilesModule]` instead). Both repositories depend only
+ * on `PrismaService` (`@Global()`) plus each other, so no module import is
+ * needed for either.
  */
 @Module({
   imports: [PlatformSettingsModule],
@@ -34,12 +57,18 @@ import { RecordProfessionalCancellationRefundService } from './services/record-p
     RecordCustomerCancellationChargeService,
     RecordProfessionalCancellationRefundService,
     RecordCashCommissionDebtService,
+    RecordDigitalPaymentService,
+    UsersRepository,
+    ProfilesRepository,
+    GetMyPaymentBalanceService,
   ],
   exports: [
     LedgerRepository,
     RecordCustomerCancellationChargeService,
     RecordProfessionalCancellationRefundService,
     RecordCashCommissionDebtService,
+    RecordDigitalPaymentService,
+    GetMyPaymentBalanceService,
   ],
 })
 export class LedgerModule {}

@@ -83,17 +83,18 @@ const CONFIRM_CASH_PAYMENT_MUTATION = `
   }
 `;
 
-const ADMIN_CASH_PAYMENT_CONFIRMATION_FIELDS = `
-  id engagementId customerConfirmedAt professionalConfirmedAt commissionDebtRecorded createdAt
+const ADMIN_PAYMENT_ATTEMPT_FIELDS = `
+  id engagementId method type status
+  customerConfirmedAt professionalConfirmedAt createdAt
 `;
 
-const ADMIN_CASH_PAYMENT_CONFIRMATIONS_QUERY = `
-  query AdminCashPaymentConfirmations($filter: AdminCashPaymentConfirmationsFilterInput, $limit: Int, $offset: Int) {
-    adminCashPaymentConfirmations(filter: $filter, limit: $limit, offset: $offset) {
+const ADMIN_PAYMENT_ATTEMPTS_QUERY = `
+  query AdminPaymentAttempts($filter: AdminPaymentAttemptsFilterInput, $limit: Int, $offset: Int) {
+    adminPaymentAttempts(filter: $filter, limit: $limit, offset: $offset) {
       totalCount
       limit
       offset
-      items { ${ADMIN_CASH_PAYMENT_CONFIRMATION_FIELDS} }
+      items { ${ADMIN_PAYMENT_ATTEMPT_FIELDS} }
     }
   }
 `;
@@ -103,12 +104,14 @@ interface GraphQLErrorEntry {
   extensions?: { code?: string };
 }
 
-interface AdminCashPaymentConfirmationPayload {
+interface AdminPaymentAttemptPayload {
   id: string;
   engagementId: string;
+  method: string;
+  type: string | null;
+  status: string;
   customerConfirmedAt: string | null;
   professionalConfirmedAt: string | null;
-  commissionDebtRecorded: boolean;
 }
 
 function uniqueEmail(prefix: string): string {
@@ -125,12 +128,15 @@ function errorCode(body: unknown): string | undefined {
 }
 
 /**
- * e2e coverage for GOS-87's admin surface — `adminCashPaymentConfirmations`
- * (`src/platform-admin/cash-payment/`): `CASH_PAYMENTS_READ` enforcement and
- * visibility into a half-confirmed case, against rows written by a real
- * `confirmCashPayment` flow (not hand-inserted rows).
+ * e2e coverage for the admin surface `adminPaymentAttempts`
+ * (`src/platform-admin/payment-attempts/`) — `CASH_PAYMENTS_READ`
+ * enforcement and visibility into a half-confirmed cash case, against rows
+ * written by a real `confirmCashPayment` flow (not hand-inserted rows).
+ * Replaces the pre-generalization `admin-cash-payment.e2e-spec.ts`
+ * (`adminCashPaymentConfirmations`, cash-only — 2026-09-18: cash lives in
+ * `PaymentAttempt` together with every other method).
  */
-describe('GraphQL /admin/graphql — adminCashPaymentConfirmations (GOS-87, e2e)', () => {
+describe('GraphQL /admin/graphql — adminPaymentAttempts (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   const createdCategoryIds: string[] = [];
@@ -221,7 +227,7 @@ describe('GraphQL /admin/graphql — adminCashPaymentConfirmations (GOS-87, e2e)
   }
 
   async function seedUser(): Promise<{ email: string; userId: string }> {
-    const email = uniqueEmail('admin-cash-payment');
+    const email = uniqueEmail('admin-payment-attempts');
     const passwordHash = await argon2.hash(PASSWORD, { type: argon2.argon2id });
     const user = await prisma.user.create({
       data: {
@@ -311,8 +317,8 @@ describe('GraphQL /admin/graphql — adminCashPaymentConfirmations (GOS-87, e2e)
   }
 
   /** Publish -> submit -> accept -> appointment -> startEngagementWork ->
-   * ONLY the Customer confirms cash payment — a real, half-confirmed
-   * CashPaymentConfirmation row. */
+   * ONLY the Customer confirms cash payment — a real, half-confirmed cash
+   * PaymentAttempt row. */
   async function seedHalfConfirmedCashPayment(): Promise<{
     engagementId: string;
   }> {
@@ -402,61 +408,53 @@ describe('GraphQL /admin/graphql — adminCashPaymentConfirmations (GOS-87, e2e)
     return { engagementId };
   }
 
-  it('shows a half-confirmed CashPaymentConfirmation (only one party confirmed), filterable by onlyPending, gated by CASH_PAYMENTS_READ', async () => {
+  it('shows a half-confirmed cash PaymentAttempt (only one party confirmed, still PENDING), filterable by onlyPending, gated by CASH_PAYMENTS_READ', async () => {
     const { engagementId } = await seedHalfConfirmedCashPayment();
-    const admin = await seedAdminWithRole('cash-payment-reader', [
+    const admin = await seedAdminWithRole('payment-attempts-reader', [
       Permission.CASH_PAYMENTS_READ,
     ]);
     const token = await loginAdminAndGetToken(admin.email);
 
     const response = await adminGraphqlRequest(
       token,
-      ADMIN_CASH_PAYMENT_CONFIRMATIONS_QUERY,
+      ADMIN_PAYMENT_ATTEMPTS_QUERY,
       { filter: { engagementId } },
     ).expect(200);
     const body = response.body as {
-      data: {
-        adminCashPaymentConfirmations: {
-          items: AdminCashPaymentConfirmationPayload[];
-        };
-      };
+      data: { adminPaymentAttempts: { items: AdminPaymentAttemptPayload[] } };
     };
 
-    expect(body.data.adminCashPaymentConfirmations.items).toHaveLength(1);
-    expect(body.data.adminCashPaymentConfirmations.items[0]).toMatchObject({
+    expect(body.data.adminPaymentAttempts.items).toHaveLength(1);
+    expect(body.data.adminPaymentAttempts.items[0]).toMatchObject({
       engagementId,
+      method: 'CASH',
+      type: 'CASH',
+      status: 'PENDING',
       professionalConfirmedAt: null,
-      commissionDebtRecorded: false,
     });
     expect(
-      body.data.adminCashPaymentConfirmations.items[0].customerConfirmedAt,
+      body.data.adminPaymentAttempts.items[0].customerConfirmedAt,
     ).not.toBeNull();
 
-    // onlyPending: true must still include this half-confirmed row.
+    // onlyPending: true must still include this half-confirmed (PENDING) row.
     const pendingOnly = await adminGraphqlRequest(
       token,
-      ADMIN_CASH_PAYMENT_CONFIRMATIONS_QUERY,
+      ADMIN_PAYMENT_ATTEMPTS_QUERY,
       { filter: { onlyPending: true, engagementId } },
     ).expect(200);
     const pendingOnlyBody = pendingOnly.body as {
-      data: {
-        adminCashPaymentConfirmations: {
-          items: AdminCashPaymentConfirmationPayload[];
-        };
-      };
+      data: { adminPaymentAttempts: { items: AdminPaymentAttemptPayload[] } };
     };
-    expect(
-      pendingOnlyBody.data.adminCashPaymentConfirmations.items,
-    ).toHaveLength(1);
+    expect(pendingOnlyBody.data.adminPaymentAttempts.items).toHaveLength(1);
   });
 
   it('rejects an admin without CASH_PAYMENTS_READ with ADMIN_FORBIDDEN', async () => {
-    const admin = await seedAdminWithRole('cash-payment-none', []);
+    const admin = await seedAdminWithRole('payment-attempts-none', []);
     const token = await loginAdminAndGetToken(admin.email);
 
     const response = await adminGraphqlRequest(
       token,
-      ADMIN_CASH_PAYMENT_CONFIRMATIONS_QUERY,
+      ADMIN_PAYMENT_ATTEMPTS_QUERY,
       {},
     ).expect(200);
 

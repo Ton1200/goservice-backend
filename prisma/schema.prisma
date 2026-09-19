@@ -756,16 +756,17 @@ model QuotePriceProposal {
   @@index([quoteId, status])
 }
 
-// GOS-87 — which payment method an Engagement is/was using. `CASH` is the
-// first real value (Pago en Efectivo, this ticket); `CARD` is RESERVED —
-// added to the enum now so a future card-payment capability (GOS-79) attaches
-// with no further migration, same "reserved for later, added when the
-// trigger exists" posture `EngagementStatus.COMPLETED`/`CANCELLED` already
-// established in GOS-111 before either had a real transition. No mutation or
-// service in this codebase ever assigns `CARD` yet.
+// Which payment METHOD (who collects the money) an Engagement is/was using —
+// GOS-87 (`CASH`) and GOS-85 (`MERCADOPAGO`). The one enum shared by
+// `Engagement.paymentMethod` and `PaymentAttempt.method`. HOW it was paid
+// inside a method (credit card, debit card, account money…) is
+// `PaymentAttemptType`. `MERCADOPAGO` replaced the reserved value `CARD`
+// (2026-09-18): a wallet payment made with Mercado Pago account money is not a
+// card, and a future second provider needs its own value, so the method names
+// the collector, not the instrument. A new provider = a new value here.
 enum PaymentMethod {
   CASH
-  CARD
+  MERCADOPAGO
 }
 
 // GOS-111 — the Engagement work-execution state machine (épico GOS-100
@@ -860,14 +861,16 @@ model Engagement {
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
 
-  // GOS-87 — the ONE CashPaymentConfirmation for this Engagement, if the
-  // Cash Payment method was ever used on it (created transparently on the
-  // first `confirmCashPayment` call from either party — no separate "select
-  // this method" mutation exists). CashPaymentConfirmation holds the FK
-  // (`CashPaymentConfirmation.engagementId @unique`), same "child holds the
-  // FK" convention `EngagementChatConversation.engagementId`/
-  // `ServiceRequest.engagement`/`Quote.engagement` already establish.
-  cashPaymentConfirmation CashPaymentConfirmation?
+  // Every payment attempt made against this Engagement, whatever the method
+  // (`PaymentAttempt`, `src/payments/`): the cash confirmation (GOS-87, one
+  // row that goes PENDING -> APPROVED once both parties confirm) and every
+  // digital attempt (GOS-85). One-to-MANY: a REJECTED digital attempt does
+  // not consume the Engagement's right to pay — the Customer may try again
+  // with another card. At most ONE attempt can be PENDING/APPROVED at a
+  // time, whatever its method, enforced by a partial unique index (see that
+  // model's own comment) — so an Engagement can never be paid twice, nor by
+  // two methods at once.
+  paymentAttempts PaymentAttempt[]
 
   // GOS-46 — the one Engagement Chat coordination conversation for this
   // Engagement, if any (created transparently the first time either party
@@ -1313,41 +1316,134 @@ model Review {
   @@unique([engagementId, authorRole])
 }
 
-// GOS-87 — Pago en Efectivo: the Customer pays the Professional in cash,
-// outside GoService, but GoService still needs to know when to record the
-// commission the Professional owes for that job. 1:1 with `Engagement`
-// (`engagementId @unique`) — created transparently the first time EITHER
-// party calls `confirmCashPayment` (same idempotent-upsert-on-first-write
-// pattern `EngagementChatConversation`'s own header comment documents for
-// itself), never by a separate "start cash payment" mutation.
+// GOS-85 — one attempt to pay an Engagement DIGITALLY through the payment
+// provider (`PaymentProviderPort`, today Mercado Pago). Originally
+// `CardPaymentAttempt`; generalized to `PaymentAttempt` the same day, once the
+// decision was taken that Mercado Pago has no reusable token (so "save a card"
+// does not apply) and that the way to let a user pay with their own Mercado
+// Pago account (balance / saved cards) is a wallet payment — which is not a
+// card payment, so the entity cannot carry a card-shaped name.
+// PENDING is the only non-terminal state: created BEFORE the provider is
+// called, resolved exactly once to APPROVED or REJECTED — either by the
+// provider's synchronous answer or, when that answer is itself `pending`
+// (e.g. a 3DS challenge, `processing/in_process`), by the provider's later
+// asynchronous notification. Both paths go through the same
+// `ApplyPaymentResultService`, whose guarded CAS
+// (`WHERE id = ? AND status = 'PENDING'`) is what makes a repeated
+// notification a no-op instead of a second ledger write.
+enum PaymentAttemptStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// The Customer's payment TYPE — HOW they paid inside a method (PaymentMethod
+// says WHO collects: CASH | MERCADOPAGO). Follows Mercado Pago's own
+// `payment_type_id` standard (`credit_card`, `debit_card`, `account_money`),
+// plus CASH. Nullable on the row because a wallet payment (pay inside the
+// Customer's own Mercado Pago account) only learns whether it was account
+// money or a card once the provider reports it; a card attempt knows its type
+// from the start (credit vs debit is derived from the card brand id), and a
+// cash attempt is always CASH.
+enum PaymentAttemptType {
+  CASH
+  CREDIT_CARD
+  DEBIT_CARD
+  ACCOUNT_MONEY
+}
+
+// GOS-85 — see `PaymentAttemptStatus` above.
 //
-// `customerConfirmedAt`/`professionalConfirmedAt` are independent — each
-// party stamps only their own column, and calling `confirmCashPayment`
-// again is a no-op re-stamp, never an error (idempotent, matching this
-// ticket's own AC). The commission debt is recorded ONLY once BOTH are
-// non-null — see `commissionDebtRecorded`'s own comment below for the
-// guarded CAS that enforces "exactly once, whichever call sees both dates
-// set first wins."
-model CashPaymentConfirmation {
-  id           String     @id @default(uuid()) @db.Uuid
-  engagementId String     @unique @db.Uuid
-  // Cascade — a cash-payment confirmation can never outlive its Engagement,
-  // same "must never block a hard delete" rule every other Engagement-owned
-  // relation in this schema already follows.
-  engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+// **"No double charge" is enforced by the database, not by a read-then-write
+// in application code**: the migration adds a PARTIAL unique index,
+// `PaymentAttempt_engagementId_active_key ON ("engagementId") WHERE
+// status IN ('PENDING','APPROVED')`, which Prisma's schema language cannot
+// express (hence it is NOT declared here — same "constraint that lives only
+// in the migration" precedent as `platform_setting_encrypted_shape_check`).
+// A second concurrent PENDING/APPROVED insert fails with `P2002`, which the
+// service turns into `CARD_PAYMENT_ALREADY_IN_PROGRESS` (digital) or
+// `PAYMENT_METHOD_CONFLICT` (cash finding another method already active).
+//
+// `providerPaymentId` is the PROVIDER's own id for the charge — for Mercado
+// Pago's Orders API, the ORDER id (`ORD…`), not the nested payment id
+// (`PAY…`), because the asynchronous notification identifies the resource
+// by `data.id` = the order id. Null until the provider has answered at least
+// once (it stays null if the create call itself timed out with an unknown
+// outcome).
+//
+// `amount`/`currency` are a frozen copy of what was charged (major-unit
+// `Int`, same convention as `LedgerEntry.amount`) — never re-derived later,
+// so a Quote/price edit can never make an old attempt disagree with what the
+// provider actually charged. `rejectionReason` is a small, stable DOMAIN code
+// (`CARD_DECLINED`, `INSUFFICIENT_FUNDS`, `INVALID_CARD_DATA`, `OTHER`),
+// never the processor's raw `status_detail`.
+//
+// **Non-sensitive facts about HOW it was paid** (`paymentTypeId` … `moneyReleaseAt`,
+// all nullable): filled from Mercado Pago's own payment record once a payment is
+// APPROVED, so GoService keeps a trace of the transaction and can show the
+// Customer "Visa •••• 6260". Deliberately NEVER stored: the card number, the
+// CVV, the card token (single-use, passed through memory only), the cardholder's
+// name/document, the payer's phone — none of it is needed to follow a payment.
+// `cardBrand`/`cardLastFour` are what a card receipt shows; both are null for a
+// wallet payment made with balance. They are best-effort: an approved payment
+// whose payment record could not be read yet keeps them null — the payment is
+// never failed or delayed for it.
+// `providerFeeAmount`/`providerTaxAmount`/`netReceivedAmount` are what Mercado
+// Pago reports it charged GoService for this payment (its fee, the tax
+// withholdings it applied, and what GoService actually receives). Major-unit
+// `Int` like every amount here — rounded to whole units when the provider
+// reports decimals (ARS) — and INFORMATIONAL: the ledger never reads them
+// (DEC-009 item 3, who absorbs the provider's cost, is still undecided; this is
+// the real per-payment data that decision needs). NOT exposed to the Customer.
+//
+// **Cash lives here too (2026-09-18, product decision).** A cash attempt is ONE
+// row per Engagement (`method = CASH`, `type = CASH`) that starts PENDING the
+// first time EITHER party calls `confirmCashPayment` and goes APPROVED the
+// instant BOTH have — through the very same guarded CAS
+// (`WHERE id = ? AND status = PENDING`) card payments use, which is what
+// makes "record the commission debt exactly once" a status flip instead of a
+// separate flag (the old `CashPaymentConfirmation.commissionDebtRecorded`).
+// `customerConfirmedAt`/`professionalConfirmedAt` are the two independent
+// confirmations and are ONLY used by cash (null on every digital attempt).
+// `providerPaymentId`, card facts and provider amounts stay null for cash.
+// APPROVED therefore means "the payment is settled": the provider approved it,
+// or both parties confirmed the cash hand-over. A cash attempt is never
+// REJECTED (there is no reject flow).
+//
+// `onDelete: Cascade` toward `Engagement` — an attempt never outlives its
+// Engagement. The financial record that matters (`LedgerEntry`) is
+// `SetNull`, not cascaded, and survives.
+model PaymentAttempt {
+  id           String               @id @default(uuid()) @db.Uuid
+  engagementId String               @db.Uuid
+  engagement   Engagement           @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  method       PaymentMethod
+  type         PaymentAttemptType?
+  status       PaymentAttemptStatus @default(PENDING)
 
   customerConfirmedAt     DateTime?
   professionalConfirmedAt DateTime?
 
-  // Guarded CAS target (`WHERE engagementId = ? AND commissionDebtRecorded =
-  // false`, `count !== 1` means another concurrent confirmation already won
-  // the race) — flips to `true` at most once per row, the instant BOTH
-  // `customerConfirmedAt`/`professionalConfirmedAt` are set, right before
-  // `RecordCashCommissionDebtService` writes the one `CASH_COMMISSION_DEBT`
-  // `LedgerEntry`. Never reverted.
-  commissionDebtRecorded  Boolean   @default(false)
+  providerPaymentId String?
+  amount            Int
+  currency          String
+  installments      Int                      @default(1)
+  rejectionReason   String?
+
+  paymentTypeId      String?
+  cardBrand          String?
+  cardLastFour       String?
+  providerFeeAmount  Int?
+  providerTaxAmount  Int?
+  netReceivedAmount  Int?
+  providerApprovedAt DateTime?
+  moneyReleaseAt     DateTime?
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([engagementId])
+  @@index([providerPaymentId])
 }
 
 // GOS-109 — the first real, append-only financial ledger row, unblocked by
@@ -1358,11 +1454,14 @@ model CashPaymentConfirmation {
 // (GOS-114) and `CancelEngagementByProfessionalService.recordProfessionalCancellationRefund`
 // (GOS-117). See `goservice-docs/decisions/DEC-008-commission-and-cancellation-fee.md`.
 //
-// `CUSTOMER_CHARGE` is still RESERVED for a future digital-payment
-// capability (GOS-79/80) — no writer exists for it yet, same "reserved for
-// later, added when the trigger exists" posture `EngagementStatus.COMPLETED`/
-// `CANCELLED` already established in GOS-111. `CASH_COMMISSION_DEBT` is no
-// longer reserved — GOS-87 (Pago en Efectivo) is its real writer, below.
+// `CUSTOMER_CHARGE` was RESERVED for a future digital-payment capability —
+// same "reserved for later, added when the trigger exists" posture
+// `EngagementStatus.COMPLETED`/`CANCELLED` established in GOS-111. GOS-85
+// (card payments) is now its writer (`RecordDigitalPaymentService`): a
+// NEGATIVE balancing leg written together with a `PLATFORM_COMMISSION` and a
+// `PROFESSIONAL_NET_CREDIT`, the same zero-sum shape as the cancellation
+// charge below. `CASH_COMMISSION_DEBT` is no longer reserved either — GOS-87
+// (Pago en Efectivo) is its real writer, below.
 // `WITHDRAWAL`/`WITHDRAWAL_HOLD_RELEASE` are likewise RESERVED for a future
 // Professional wallet/withdrawal capability (GOS-82).
 //

@@ -144,6 +144,7 @@ const USER_ACCOUNT_DETAIL_QUERY = `
       updatedAt
       hasCustomerProfile
       hasProfessionalProfile
+      professionalPaymentBalance
       customerProfile {
         firstName
         lastName
@@ -1148,13 +1149,29 @@ function buildCustomerProfileTabContent(profile, userId, onChanged) {
   return wrapper;
 }
 
+// Same AR -> ARS / CO -> COP convention as `js/payments.js`'s own
+// `CURRENCY_BY_COUNTRY` — kept as its own tiny copy here rather than an
+// import, since this file has no other dependency on that module.
+const CURRENCY_BY_COUNTRY = { AR: 'ARS', CO: 'COP' };
+
 /** "Professional profile" tab — only rendered/added when
  * `hasProfessionalProfile` is true. "Location" and "Specializations"
  * sub-sections, visually separated. (The structured `city` and free-text
  * `serviceAreaDescription` fields were removed — GOS-62b, 2026-09-08;
  * structured address returns later as its own geocoded entity, see
- * DEC-005.) */
-function buildProfessionalProfileTabContent(profile, userId, onChanged) {
+ * DEC-005.)
+ *
+ * `paymentBalance` (2026-09-19, human-requested — "para tener info a la
+ * mano") — this Professional's CURRENT payment balance
+ * (`userAccountDetail.professionalPaymentBalance`, computed fresh by the
+ * backend on every read; can be negative). Shown right in this tab instead
+ * of only on a Receipts row for one of their jobs. */
+function buildProfessionalProfileTabContent(
+  profile,
+  userId,
+  onChanged,
+  paymentBalance,
+) {
   const wrapper = document.createElement('div');
 
   wrapper.appendChild(
@@ -1184,6 +1201,12 @@ function buildProfessionalProfileTabContent(profile, userId, onChanged) {
     buildField(
       'Location sharing',
       profile.locationSharingEnabled ? 'Yes' : 'No',
+    ),
+    buildField(
+      'Payment balance',
+      paymentBalance != null
+        ? `${paymentBalance} ${CURRENCY_BY_COUNTRY[profile.country] ?? ''}`.trim()
+        : null,
     ),
   );
 
@@ -1303,6 +1326,7 @@ async function openUserDetailModal(rowData) {
           detail.professionalProfile,
           detail.id,
           onProfilePhotoChanged,
+          detail.professionalPaymentBalance,
         ),
       });
     }

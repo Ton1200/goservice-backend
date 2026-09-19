@@ -149,6 +149,85 @@ export class LedgerRepository {
   }
 
   /**
+   * GOS-85 — the 3-row digital-payment event, written the instant a card
+   * charge is APPROVED. Same zero-sum shape as
+   * `createCustomerCancellationChargeEntries` above: a NEGATIVE
+   * `CUSTOMER_CHARGE` (`-chargeAmount`, the balancing leg — money that left
+   * the Customer), followed by a positive `PLATFORM_COMMISSION` and a
+   * positive `PROFESSIONAL_NET_CREDIT`, so
+   * `-chargeAmount + commission + net === 0` for the whole event (the caller
+   * derives `net` as the REMAINDER via `computeCommission`, so this holds for
+   * every integer amount). All 3 share `engagementId`/`currency`/
+   * `commissionPercentApplied`. Runs inside the caller's own `tx`.
+   *
+   * **The `PROFESSIONAL_NET_CREDIT` row is an ACCOUNTING record inside
+   * GoService's own ledger — it is NOT a movement of real money to any
+   * account of the Professional.** The collected money sits in GoService's
+   * own Mercado Pago account; actually paying the Professional is a separate,
+   * later concern (GOS-82/GOS-139, Fund Disbursement).
+   *
+   * **`createdAt` is set EXPLICITLY, once, and shared by all 3 `create`
+   * calls** — same reason, and same warning, as
+   * `createCustomerCancellationChargeEntries`: Prisma generates the
+   * `@default(now())` client-side, per statement, so relying on it would
+   * split one financial event across several timestamps and break every
+   * "these rows are one event" grouping downstream
+   * (`selectMostRecentLedgerEventRows`, the admin payment-summary grouping).
+   */
+  async createDigitalPaymentEntries(
+    tx: Prisma.TransactionClient,
+    data: {
+      engagementId: string;
+      currency: string;
+      customerProfileId: string;
+      professionalProfileId: string;
+      chargeAmount: number;
+      commissionAmount: number;
+      netAmount: number;
+      commissionPercentApplied: number;
+    },
+  ): Promise<[LedgerEntry, LedgerEntry, LedgerEntry]> {
+    const createdAt = new Date();
+    const charge = await tx.ledgerEntry.create({
+      data: {
+        type: LedgerEntryType.CUSTOMER_CHARGE,
+        amount: -data.chargeAmount,
+        currency: data.currency,
+        engagementId: data.engagementId,
+        customerProfileId: data.customerProfileId,
+        professionalProfileId: data.professionalProfileId,
+        commissionPercentApplied: data.commissionPercentApplied,
+        createdAt,
+      },
+    });
+    const commission = await tx.ledgerEntry.create({
+      data: {
+        type: LedgerEntryType.PLATFORM_COMMISSION,
+        amount: data.commissionAmount,
+        currency: data.currency,
+        engagementId: data.engagementId,
+        customerProfileId: data.customerProfileId,
+        professionalProfileId: data.professionalProfileId,
+        commissionPercentApplied: data.commissionPercentApplied,
+        createdAt,
+      },
+    });
+    const net = await tx.ledgerEntry.create({
+      data: {
+        type: LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+        amount: data.netAmount,
+        currency: data.currency,
+        engagementId: data.engagementId,
+        customerProfileId: data.customerProfileId,
+        professionalProfileId: data.professionalProfileId,
+        commissionPercentApplied: data.commissionPercentApplied,
+        createdAt,
+      },
+    });
+    return [charge, commission, net];
+  }
+
+  /**
    * GOS-117/GOS-109 — the single `REFUND` entry for a Professional-initiated
    * cancellation (DEC-008: "unaffected by this DEC ... full refund to the
    * Customer, no charge"). No `commissionPercentApplied` — nothing was ever
@@ -231,6 +310,62 @@ export class LedgerRepository {
       _sum: { amount: true },
     });
     return result._sum.amount ?? 0;
+  }
+
+  /**
+   * A Professional's current payment balance — computed fresh from the
+   * ledger on every call (2026-09-18 product decision: available
+   * immediately, no provider-settlement holdback visible to the user; and
+   * NOT a materialized running-total column, to avoid a cross-Engagement
+   * concurrency hazard a per-professional "last balance + delta" write
+   * would introduce — see the conversation this decision came from).
+   * `PROFESSIONAL_NET_CREDIT` (a digital job's net, credited) MINUS
+   * `CASH_COMMISSION_DEBT` (a cash job's commission, owed) — the two
+   * `LedgerEntryType`s that affect what a Professional is owed today.
+   * `WITHDRAWAL`/`WITHDRAWAL_HOLD_RELEASE` are reserved for the future
+   * payout story (GOS-82) and are not written by anything yet, so they
+   * contribute nothing now; this method will need them once that exists.
+   * Can be negative (a Professional who has done more cash jobs than
+   * digital ones owes GoService more commission than they've been credited).
+   */
+  async sumProfessionalBalance(professionalProfileId: string): Promise<number> {
+    const [credited, cashDebt] = await Promise.all([
+      this.prisma.ledgerEntry.aggregate({
+        where: {
+          type: LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+          professionalProfileId,
+        },
+        _sum: { amount: true },
+      }),
+      this.sumCashCommissionDebtForProfessional(professionalProfileId),
+    ]);
+    return (credited._sum.amount ?? 0) - cashDebt;
+  }
+
+  /**
+   * GoService's own current balance — computed fresh from the ledger, same
+   * reasoning as `sumProfessionalBalance`'s own comment. `PLATFORM_COMMISSION`
+   * (a digital job's commission, collected directly) PLUS every
+   * `CASH_COMMISSION_DEBT` (a cash job's commission, owed to GoService by the
+   * Professional — collected later, but counted the same way
+   * `sumProfessionalBalance` counts it as owed the instant it's recorded).
+   * Global — not scoped to one Professional. Does NOT subtract what the
+   * payment provider charges GoService (`PaymentAttempt.providerFeeAmount`/
+   * `providerTaxAmount`) — who absorbs that cost is still open (DEC-009 item
+   * 3); this is GoService's commission revenue, not its net profit.
+   */
+  async sumPlatformBalance(): Promise<number> {
+    const [commission, cashDebt] = await Promise.all([
+      this.prisma.ledgerEntry.aggregate({
+        where: { type: LedgerEntryType.PLATFORM_COMMISSION },
+        _sum: { amount: true },
+      }),
+      this.prisma.ledgerEntry.aggregate({
+        where: { type: LedgerEntryType.CASH_COMMISSION_DEBT },
+        _sum: { amount: true },
+      }),
+    ]);
+    return (commission._sum.amount ?? 0) + (cashDebt._sum.amount ?? 0);
   }
 
   /**

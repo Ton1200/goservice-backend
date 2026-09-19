@@ -349,11 +349,14 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         'adminReviews',
         // Financial ledger admin audit surface (GOS-109, 2026-09-12).
         'adminLedgerEntries',
-        // Cash Payment admin audit surface (GOS-87, 2026-09-14).
-        'adminCashPaymentConfirmations',
+        // Payment attempt admin audit surface (GOS-87/GOS-85, generalized
+        // 2026-09-18 — replaces the cash-only adminCashPaymentConfirmations).
+        'adminPaymentAttempts',
         // One-row-per-job payments summary follow-up (2026-09-14,
         // human-requested).
         'adminEngagementPaymentSummaries',
+        // GoService's own current balance (2026-09-18).
+        'adminPlatformBalance',
       ].sort(),
     );
     expect(

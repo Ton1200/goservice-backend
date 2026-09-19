@@ -554,8 +554,8 @@ describe('GraphQL Cash Payment (GOS-87, e2e)', () => {
       });
       expect(entries).toHaveLength(1);
 
-      const confirmationRows = await prisma.cashPaymentConfirmation.findMany({
-        where: { engagementId },
+      const confirmationRows = await prisma.paymentAttempt.findMany({
+        where: { engagementId, method: 'CASH' },
       });
       expect(confirmationRows).toHaveLength(1);
     });
@@ -582,8 +582,8 @@ describe('GraphQL Cash Payment (GOS-87, e2e)', () => {
       });
       expect(entries).toHaveLength(1);
 
-      const confirmationRows = await prisma.cashPaymentConfirmation.findMany({
-        where: { engagementId },
+      const confirmationRows = await prisma.paymentAttempt.findMany({
+        where: { engagementId, method: 'CASH' },
       });
       expect(confirmationRows).toHaveLength(1);
       expect(confirmationRows[0].customerConfirmedAt).not.toBeNull();

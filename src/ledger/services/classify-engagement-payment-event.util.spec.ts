@@ -106,12 +106,28 @@ describe('classifyLedgerEventRows', () => {
     expect(findByType(rows, LedgerEntryType.REFUND)?.amount).toBe(4000);
   });
 
-  it('DIGITAL_PAYMENT: the reserved fallback branch when no other type matches', () => {
+  it('DIGITAL_PAYMENT (GOS-85): reads the real amounts from the 3-row event, abs-ing the negative CUSTOMER_CHARGE balancing leg', () => {
+    // The exact shape `RecordDigitalPaymentService` writes for a 6000 job at
+    // 10%: -6000 (CUSTOMER_CHARGE) + 600 (PLATFORM_COMMISSION) + 5400
+    // (PROFESSIONAL_NET_CREDIT) === 0.
     const rows = [
       makeRow({
-        id: 'entry-digital',
+        id: 'entry-charge',
         type: LedgerEntryType.CUSTOMER_CHARGE,
-        amount: 6000,
+        amount: -6000,
+        currency: 'COP',
+      }),
+      makeRow({
+        id: 'entry-commission',
+        type: LedgerEntryType.PLATFORM_COMMISSION,
+        amount: 600,
+        currency: 'COP',
+      }),
+      makeRow({
+        id: 'entry-net',
+        type: LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+        amount: 5400,
+        currency: 'COP',
       }),
     ];
 
@@ -120,6 +136,54 @@ describe('classifyLedgerEventRows', () => {
     expect(result).toEqual({
       eventType: 'DIGITAL_PAYMENT',
       totalPaidByCustomer: 6000,
+      platformCommission: 600,
+      professionalNetAmount: 5400,
+      cashCommissionDebtAmount: 0,
+    });
+    // The classification reports the split as-written, so the ledger's
+    // zero-sum invariant is visible through it too.
+    expect(
+      -result.totalPaidByCustomer +
+        result.platformCommission +
+        result.professionalNetAmount,
+    ).toBe(0);
+  });
+
+  it('DIGITAL_PAYMENT (GOS-85): reports the persisted amounts, not a re-derivation from quotedPrice', () => {
+    // 3333 at 10%: commission = round(333.3) = 333, net = 3000 (a remainder,
+    // never independently rounded). A `quotedPrice * 0.9` re-derivation
+    // would give 2999.7 — the classifier must return what was WRITTEN.
+    const rows = [
+      makeRow({
+        id: 'c',
+        type: LedgerEntryType.CUSTOMER_CHARGE,
+        amount: -3333,
+      }),
+      makeRow({
+        id: 'p',
+        type: LedgerEntryType.PLATFORM_COMMISSION,
+        amount: 333,
+      }),
+      makeRow({
+        id: 'n',
+        type: LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+        amount: 3000,
+      }),
+    ];
+
+    const result = classifyLedgerEventRows(rows, 9999);
+
+    expect(result.totalPaidByCustomer).toBe(3333);
+    expect(result.platformCommission).toBe(333);
+    expect(result.professionalNetAmount).toBe(3000);
+  });
+
+  it('DIGITAL_PAYMENT: the fall-through when no more-specific type matches and no CUSTOMER_CHARGE exists reports zeros', () => {
+    const result = classifyLedgerEventRows([], 6000);
+
+    expect(result).toEqual({
+      eventType: 'DIGITAL_PAYMENT',
+      totalPaidByCustomer: 0,
       platformCommission: 0,
       professionalNetAmount: 0,
       cashCommissionDebtAmount: 0,

@@ -18,14 +18,31 @@
 // section — human-requested, 2026-09-14 (a first pass at this section had
 // Spanish labels, inconsistent with the rest of the panel).
 //
-// "Pending Cash Confirmations" — `CashPaymentConfirmation` rows where at
-// most one party has confirmed so far (`adminCashPaymentConfirmations`,
+// 2026-09-18 follow-up (human-requested, "money matters a lot from here
+// on") — cash was generalized into `PaymentAttempt` together with every
+// other method (see that model's own schema comment), and Receipts now
+// shows, per job: **Method** (who collected — Cash / Mercado Pago), **Type**
+// (how — Cash / Credit card / Debit card / Account money), and **Payment
+// Details** (brand + last 4 + fee/net for a digital payment, or the two
+// confirmation dates for cash) — all sourced from the summary's own
+// `paymentAttempt`, no second query. Also added: each row's Professional now
+// carries their CURRENT running `balance` (net digital credits minus cash
+// commission debt owed — can be negative), computed fresh by the backend on
+// every read (never cached/recomputed client-side, never a stored running
+// total — see `LedgerRepository.sumProfessionalBalance`'s own comment for
+// why a materialized column was rejected: a concurrency hazard across
+// different Engagements for the same Professional). GoService's own current
+// balance (`adminPlatformBalance`) is shown once, above both grids.
+//
+// "Payment Attempts" (renamed from "Pending Cash Confirmations", same day)
+// — every `PaymentAttempt` not yet settled (`adminPaymentAttempts`,
 // `Permission.CASH_PAYMENTS_READ`, `filter: { onlyPending: true }` by
-// default) — visibility a payment SUMMARY structurally cannot provide, a
-// `CASH_COMMISSION_DEBT` entry (and therefore a summary row) only ever
-// exists once BOTH parties confirm. A toolbar checkbox lets an admin turn
-// the `onlyPending` filter off to see every cash-payment confirmation ever
-// created, fully confirmed ones included.
+// default — PENDING or REJECTED, whatever the method) — visibility a
+// payment SUMMARY structurally cannot provide, since Receipts only reflects
+// a SETTLED (APPROVED) payment with ledger entries. Used to be cash-only;
+// now shows a rejected card charge or a half-confirmed cash payment side by
+// side. A toolbar checkbox lets an admin turn the `onlyPending` filter off
+// to see every attempt ever created, settled ones included.
 import { TabulatorFull as Tabulator } from '../vendor/tabulator/js/tabulator_esm.min.mjs';
 import { graphqlRequest, GraphQLNetworkError } from './graphqlClient.js';
 import { buildBadgeField, buildField, buildStatusBadge } from './detailView.js';
@@ -48,26 +65,48 @@ const ADMIN_ENGAGEMENT_PAYMENT_SUMMARIES_QUERY = `
         currency
         professionalTotalPendingCashDebt
         occurredAt
+        paymentAttempt {
+          type
+          status
+          rejectionReason
+          cardBrand
+          cardLastFour
+          providerFeeAmount
+          netReceivedAmount
+          customerConfirmedAt
+          professionalConfirmedAt
+        }
         customer { id userId email firstName lastName }
-        professional { id userId email firstName lastName displayName }
+        professional { id userId email firstName lastName displayName balance }
         entries { id receiptNumber type amount currency commissionPercentApplied createdAt }
       }
     }
   }
 `;
 
-const ADMIN_CASH_PAYMENT_CONFIRMATIONS_QUERY = `
-  query AdminCashPaymentConfirmations($filter: AdminCashPaymentConfirmationsFilterInput, $limit: Int, $offset: Int) {
-    adminCashPaymentConfirmations(filter: $filter, limit: $limit, offset: $offset) {
+const ADMIN_PLATFORM_BALANCE_QUERY = `
+  query AdminPlatformBalance {
+    adminPlatformBalance
+  }
+`;
+
+const ADMIN_PAYMENT_ATTEMPTS_QUERY = `
+  query AdminPaymentAttempts($filter: AdminPaymentAttemptsFilterInput, $limit: Int, $offset: Int) {
+    adminPaymentAttempts(filter: $filter, limit: $limit, offset: $offset) {
       totalCount
       limit
       offset
       items {
         id
         engagementId
+        method
+        type
+        status
+        rejectionReason
+        cardBrand
+        cardLastFour
         customerConfirmedAt
         professionalConfirmedAt
-        commissionDebtRecorded
         createdAt
       }
     }
@@ -158,14 +197,63 @@ function paymentMethodFormatter(cell) {
   return value ?? '—';
 }
 
-function booleanFormatter(cell) {
-  const wrapper = document.createElement('div');
-  wrapper.append(
-    cell.getValue()
-      ? buildStatusBadge('Yes', 'success')
-      : buildStatusBadge('No', 'neutral'),
-  );
-  return wrapper;
+// Mirrors `PaymentAttemptType` — HOW a job was paid (PaymentMethod says WHO
+// collected). Hardcoded here deliberately, same trade-off as
+// `EVENT_TYPE_LABEL`.
+const PAYMENT_TYPE_LABEL = {
+  CASH: 'Cash',
+  CREDIT_CARD: 'Credit card',
+  DEBIT_CARD: 'Debit card',
+  ACCOUNT_MONEY: 'Account money',
+};
+
+function paymentTypeFormatter(cell) {
+  const attempt = cell.getRow().getData().paymentAttempt;
+  return attempt?.type ? (PAYMENT_TYPE_LABEL[attempt.type] ?? attempt.type) : '—';
+}
+
+/**
+ * "Payment Details" column (Receipts) — the human-facing trace of HOW a job
+ * was actually paid, sourced from the summary's own `paymentAttempt` (the
+ * one PaymentAttempt that was ever approved for this Engagement — see
+ * `PaymentAttemptRepository.findApprovedByEngagementId`'s own comment).
+ * `null` for a job never paid (e.g. cancelled before any payment) — shown
+ * as "—". A card shows brand/last 4 and what GoService netted after the
+ * provider's fee; cash shows the two confirmation dates.
+ */
+/** Pure — takes the summary's own `paymentAttempt` (may be `null`) plus the
+ * currency to format amounts in. Shared by the Receipts grid column and the
+ * detail popup, so the two can never drift. */
+function formatPaymentDetails(attempt, currency) {
+  if (!attempt) return '—';
+
+  if (attempt.type === 'CASH') {
+    const customer = attempt.customerConfirmedAt
+      ? new Date(attempt.customerConfirmedAt).toLocaleDateString()
+      : '—';
+    const professional = attempt.professionalConfirmedAt
+      ? new Date(attempt.professionalConfirmedAt).toLocaleDateString()
+      : '—';
+    return `Customer confirmed ${customer} · Professional confirmed ${professional}`;
+  }
+
+  const parts = [];
+  if (attempt.cardBrand) {
+    const brand = attempt.cardBrand.charAt(0).toUpperCase() + attempt.cardBrand.slice(1);
+    parts.push(`${brand} •••• ${attempt.cardLastFour ?? '????'}`);
+  }
+  if (attempt.netReceivedAmount != null) {
+    parts.push(`net ${formatMoney(attempt.netReceivedAmount, currency)}`);
+  }
+  if (attempt.providerFeeAmount != null) {
+    parts.push(`fee ${formatMoney(attempt.providerFeeAmount, currency)}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : '—';
+}
+
+function paymentDetailsFormatter(cell) {
+  const rowData = cell.getRow().getData();
+  return formatPaymentDetails(rowData.paymentAttempt, rowData.currency);
 }
 
 function personFullName(person) {
@@ -221,6 +309,18 @@ const LEDGER_COLUMNS = [
     minWidth: 130,
   },
   {
+    title: 'Type',
+    formatter: paymentTypeFormatter,
+    headerFilter: false,
+    minWidth: 120,
+  },
+  {
+    title: 'Payment Details',
+    formatter: paymentDetailsFormatter,
+    headerFilter: false,
+    minWidth: 240,
+  },
+  {
     title: 'Customer',
     field: 'customerName',
     formatter: customerNameFormatter,
@@ -272,7 +372,53 @@ const LEDGER_COLUMNS = [
   },
 ];
 
-const CASH_CONFIRMATION_COLUMNS = [
+// Mirrors `PaymentAttemptStatus`. Hardcoded, same trade-off as
+// `EVENT_TYPE_LABEL`.
+const ATTEMPT_STATUS_BADGE_VARIANT = {
+  PENDING: 'warning',
+  APPROVED: 'success',
+  REJECTED: 'error',
+};
+
+function attemptStatusFormatter(cell) {
+  const value = cell.getValue();
+  const wrapper = document.createElement('div');
+  wrapper.append(buildStatusBadge(value, ATTEMPT_STATUS_BADGE_VARIANT[value] ?? 'neutral'));
+  return wrapper;
+}
+
+function attemptMethodFormatter(cell) {
+  return cell.getValue() ?? '—';
+}
+
+function attemptTypeFormatter(cell) {
+  const value = cell.getValue();
+  return value ? (PAYMENT_TYPE_LABEL[value] ?? value) : '—';
+}
+
+/** Every method's own "how it was actually paid" trace, minus the amounts
+ * Receipts already shows (a not-yet-settled attempt has no ledger entries to
+ * pull those from) — card brand/last 4 for a digital rejection, or the two
+ * confirmation dates for cash. */
+function attemptDetailsFormatter(cell) {
+  const row = cell.getRow().getData();
+  if (row.method === 'CASH') {
+    const customer = row.customerConfirmedAt
+      ? new Date(row.customerConfirmedAt).toLocaleDateString()
+      : '—';
+    const professional = row.professionalConfirmedAt
+      ? new Date(row.professionalConfirmedAt).toLocaleDateString()
+      : '—';
+    return `Customer confirmed ${customer} · Professional confirmed ${professional}`;
+  }
+  if (row.cardBrand) {
+    const brand = row.cardBrand.charAt(0).toUpperCase() + row.cardBrand.slice(1);
+    return `${brand} •••• ${row.cardLastFour ?? '????'}`;
+  }
+  return '—';
+}
+
+const PAYMENT_ATTEMPT_COLUMNS = [
   {
     title: 'Engagement',
     field: 'engagementId',
@@ -282,25 +428,42 @@ const CASH_CONFIRMATION_COLUMNS = [
     minWidth: 130,
   },
   {
-    title: 'Confirmed by Customer',
-    field: 'customerConfirmedAt',
-    formatter: dateFormatter,
-    headerFilter: false,
-    minWidth: 190,
+    title: 'Method',
+    field: 'method',
+    formatter: attemptMethodFormatter,
+    headerFilter: 'list',
+    headerFilterParams: { values: ['', 'CASH', 'MERCADOPAGO'] },
+    headerFilterFunc: '=',
+    minWidth: 130,
   },
   {
-    title: 'Confirmed by Professional',
-    field: 'professionalConfirmedAt',
-    formatter: dateFormatter,
+    title: 'Type',
+    field: 'type',
+    formatter: attemptTypeFormatter,
     headerFilter: false,
-    minWidth: 200,
+    minWidth: 120,
   },
   {
-    title: 'Commission Recorded',
-    field: 'commissionDebtRecorded',
-    formatter: booleanFormatter,
+    title: 'Status',
+    field: 'status',
+    formatter: attemptStatusFormatter,
+    headerFilter: 'list',
+    headerFilterParams: { values: ['', 'PENDING', 'APPROVED', 'REJECTED'] },
+    headerFilterFunc: '=',
+    minWidth: 120,
+  },
+  {
+    title: 'Rejection Reason',
+    field: 'rejectionReason',
+    formatter: (cell) => cell.getValue() ?? '—',
     headerFilter: false,
-    minWidth: 160,
+    minWidth: 170,
+  },
+  {
+    title: 'Details',
+    formatter: attemptDetailsFormatter,
+    headerFilter: false,
+    minWidth: 260,
   },
   {
     title: 'Date',
@@ -472,6 +635,20 @@ function openPaymentDetailModal(rowData) {
   sections.push(buildField('Payment Method', rowData.paymentMethod ?? '—'));
   sections.push(
     buildField(
+      'Type',
+      rowData.paymentAttempt?.type
+        ? (PAYMENT_TYPE_LABEL[rowData.paymentAttempt.type] ?? rowData.paymentAttempt.type)
+        : '—',
+    ),
+  );
+  sections.push(
+    buildField(
+      'Payment Details',
+      formatPaymentDetails(rowData.paymentAttempt, rowData.currency),
+    ),
+  );
+  sections.push(
+    buildField(
       'Customer',
       `${personFullName(rowData.customer)} (${rowData.customer.email})`,
     ),
@@ -480,6 +657,12 @@ function openPaymentDetailModal(rowData) {
     buildField(
       'Professional',
       `${personFullName(rowData.professional)} (${rowData.professional.email})`,
+    ),
+  );
+  sections.push(
+    buildField(
+      "Professional's Current Balance",
+      formatMoney(rowData.professional.balance, rowData.currency),
     ),
   );
   sections.push(
@@ -531,7 +714,7 @@ function openPaymentDetailModal(rowData) {
   paymentDetailDialog.showModal();
 }
 
-// ---- "Efectivo pendiente" panel (adminCashPaymentConfirmations) ----
+// ---- "Payment Attempts" panel (adminPaymentAttempts) ----
 
 const cashGridEl = document.getElementById('payments-cash-grid');
 const cashErrorEl = document.getElementById('payments-cash-error');
@@ -545,11 +728,11 @@ function showCashError(message) {
   cashErrorEl.hidden = message === '';
 }
 
-async function loadCashPanel() {
+async function loadPaymentAttemptsPanel() {
   showCashError('');
 
   try {
-    const body = await graphqlRequest(ADMIN_CASH_PAYMENT_CONFIRMATIONS_QUERY, {
+    const body = await graphqlRequest(ADMIN_PAYMENT_ATTEMPTS_QUERY, {
       filter: { onlyPending: cashOnlyPendingCheckbox.checked },
       limit: FETCH_LIMIT,
       offset: 0,
@@ -562,25 +745,29 @@ async function loadCashPanel() {
       const code = body.errors[0]?.extensions?.code;
       showCashError(
         code === 'ADMIN_FORBIDDEN'
-          ? 'You do not have permission to view cash payment confirmations.'
-          : 'Could not load cash payment confirmations.',
+          ? 'You do not have permission to view payment attempts.'
+          : 'Could not load payment attempts.',
       );
       return;
     }
 
-    const items = body.data.adminCashPaymentConfirmations.items;
+    const items = body.data.adminPaymentAttempts.items;
 
     if (cashTable) {
       await cashTable.setData(items);
     } else {
       cashTable = new Tabulator(cashGridEl, {
-        columns: CASH_CONFIRMATION_COLUMNS,
+        columns: PAYMENT_ATTEMPT_COLUMNS,
         data: items,
         layout: 'fitDataStretch',
         movableColumns: true,
         persistence: { columns: true },
-        persistenceID: 'goservice-admin-payments-cash-v1',
-        placeholder: 'No cash payment confirmations found.',
+        // v2 (2026-09-18 generalization) — the underlying columns/fields
+        // changed (method/type/status/rejectionReason replace the cash-only
+        // commissionDebtRecorded), so a stale v1 persisted-column-visibility
+        // state must not leak into this new grid shape.
+        persistenceID: 'goservice-admin-payments-attempts-v2',
+        placeholder: 'No payment attempts found.',
       });
     }
   } catch (error) {
@@ -592,6 +779,27 @@ async function loadCashPanel() {
   }
 }
 
+// ---- GoService's own current balance (adminPlatformBalance) ----
+
+const platformBalanceEl = document.getElementById('payments-platform-balance');
+
+async function loadPlatformBalance() {
+  try {
+    const body = await graphqlRequest(ADMIN_PLATFORM_BALANCE_QUERY, {});
+    if (body.errors && body.errors.length > 0) {
+      if (handleAdminUnauthenticated(body)) {
+        return;
+      }
+      platformBalanceEl.textContent = '';
+      return;
+    }
+    platformBalanceEl.textContent = `GoService balance: ${formatMoney(body.data.adminPlatformBalance, '')}`;
+  } catch {
+    // Non-critical header figure — a failure here must not block either grid.
+    platformBalanceEl.textContent = '';
+  }
+}
+
 // ---- Sub-tab switch (SAME hand-rolled tablist pattern as js/administrators.js) ----
 
 const tablistEl = document.getElementById('payments-tablist');
@@ -600,7 +808,7 @@ const cashPanel = document.getElementById('payments-cash-panel');
 
 const TABS = [
   { id: 'ledger', label: 'Receipts', panel: ledgerPanel, load: loadLedgerPanel },
-  { id: 'cash', label: 'Pending Cash Confirmations', panel: cashPanel, load: loadCashPanel },
+  { id: 'cash', label: 'Payment Attempts', panel: cashPanel, load: loadPaymentAttemptsPanel },
 ];
 
 let built = false;
@@ -666,19 +874,22 @@ function buildTablist() {
 }
 
 cashOnlyPendingCheckbox.addEventListener('change', () => {
-  void loadCashPanel();
+  void loadPaymentAttemptsPanel();
 });
 
 /** `js/nav.js`'s registered `onShow` callback for `payments-section` —
  * builds the tablist once, then (on this and every subsequent show)
  * re-fetches whichever sub-tab is currently selected, same "fetch fresh
  * data on every section show" convention `js/administrators.js` already
- * establishes for its own sub-tabs. */
+ * establishes for its own sub-tabs. The GoService balance header (above
+ * both tabs) is refreshed on every show too, independent of which tab is
+ * selected. */
 export function loadPaymentsSection() {
   if (!built) {
     buildTablist();
     built = true;
   }
+  void loadPlatformBalance();
   const selectedIndex = tabButtons.findIndex((button) =>
     button.classList.contains('active'),
   );

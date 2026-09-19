@@ -43,7 +43,14 @@ const VIEWER_ROLE_BY_PARTY_ROLE: Record<
 // the Professional's pocket net of GoService's cut — used for the
 // CORRECTED `walletImpact` (decision #2). `PROFESSIONAL_CANCELLATION` is
 // deliberately excluded (they earn nothing — `netAmount` is already 0
-// there anyway) and so is `DIGITAL_PAYMENT` (no writer yet).
+// there anyway) and so is `DIGITAL_PAYMENT`. GOS-85 gave `DIGITAL_PAYMENT` its
+// first real writer (card payments), but it stays OUT of this set on
+// purpose: for a card payment the `PROFESSIONAL_NET_CREDIT` is only an
+// ACCOUNTING credit in GoService's own ledger — the money sits in GoService's
+// account until Fund Disbursement (GOS-82/GOS-139) pays it out — so counting
+// it as `walletImpact` would claim money the Professional does not have. Once
+// a wallet/disbursement exists this is the line to revisit (open question for
+// Product; flagged in the GOS-85 report).
 const WALLET_IMPACT_EVENT_KINDS = new Set<EngagementPaymentEventKind>([
   'CASH_PAYMENT',
   'CUSTOMER_CANCELLATION',

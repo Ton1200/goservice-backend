@@ -117,3 +117,78 @@ describe('LedgerRepository.createCustomerCancellationChargeEntries', () => {
     expect(amounts).toEqual([-500, 50, 450]);
   });
 });
+
+/**
+ * GOS-85 — `createDigitalPaymentEntries`, the writer of the 3-row card-payment
+ * event. Same two invariants as `createCustomerCancellationChargeEntries`
+ * above, locked in against the real `tx.ledgerEntry.create` arguments: ONE
+ * shared `createdAt` (see that method's own header comment) and a zero-sum
+ * signed shape.
+ */
+describe('LedgerRepository.createDigitalPaymentEntries', () => {
+  function makeTx() {
+    const create = jest
+      .fn()
+      .mockImplementation(({ data }: Prisma.LedgerEntryCreateArgs) => data);
+    const tx = {
+      ledgerEntry: { create },
+    } as unknown as Prisma.TransactionClient;
+    return { tx, create };
+  }
+
+  const data = {
+    engagementId: 'engagement-1',
+    currency: 'COP',
+    customerProfileId: 'customer-1',
+    professionalProfileId: 'professional-1',
+    chargeAmount: 50000,
+    commissionAmount: 5000,
+    netAmount: 45000,
+    commissionPercentApplied: 10,
+  };
+
+  it('writes CUSTOMER_CHARGE (negative), PLATFORM_COMMISSION, PROFESSIONAL_NET_CREDIT in that order, summing to zero', async () => {
+    const repository = new LedgerRepository({} as unknown as PrismaService);
+    const { tx, create } = makeTx();
+
+    const rows = await repository.createDigitalPaymentEntries(tx, data);
+
+    expect(create).toHaveBeenCalledTimes(3);
+    const [charge, commission, net] =
+      rows as unknown as Prisma.LedgerEntryUncheckedCreateInput[];
+    expect(charge).toMatchObject({ type: 'CUSTOMER_CHARGE', amount: -50000 });
+    expect(commission).toMatchObject({
+      type: 'PLATFORM_COMMISSION',
+      amount: 5000,
+    });
+    expect(net).toMatchObject({
+      type: 'PROFESSIONAL_NET_CREDIT',
+      amount: 45000,
+    });
+    expect(charge.amount + commission.amount + net.amount).toBe(0);
+    for (const row of [charge, commission, net]) {
+      expect(row).toMatchObject({
+        engagementId: 'engagement-1',
+        currency: 'COP',
+        customerProfileId: 'customer-1',
+        professionalProfileId: 'professional-1',
+        commissionPercentApplied: 10,
+      });
+    }
+  });
+
+  it('passes the exact same createdAt Date instance to all 3 creates', async () => {
+    const repository = new LedgerRepository({} as unknown as PrismaService);
+    const { tx, create } = makeTx();
+
+    await repository.createDigitalPaymentEntries(tx, data);
+
+    const createdAts = create.mock.calls.map(
+      ([args]: [Prisma.LedgerEntryCreateArgs]) =>
+        (args.data as { createdAt: Date }).createdAt,
+    );
+    expect(createdAts[0]).toBeInstanceOf(Date);
+    expect(createdAts[1]).toBe(createdAts[0]);
+    expect(createdAts[2]).toBe(createdAts[0]);
+  });
+});

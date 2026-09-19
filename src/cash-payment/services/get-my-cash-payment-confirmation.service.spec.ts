@@ -1,6 +1,6 @@
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
+import { PaymentAttemptRepository } from '../../payments/payment-attempt.repository';
 import { CashPaymentAccessService } from '../cash-payment-access.service';
-import { CashPaymentRepository } from '../cash-payment.repository';
 import { GetMyCashPaymentConfirmationService } from './get-my-cash-payment-confirmation.service';
 
 describe('GetMyCashPaymentConfirmationService', () => {
@@ -15,14 +15,16 @@ describe('GetMyCashPaymentConfirmationService', () => {
     const resolveParty = overrides.notParty
       ? jest.fn().mockRejectedValue(engagementNotFound())
       : jest.fn().mockResolvedValue({ role: overrides.role ?? 'CUSTOMER' });
-    const findByEngagementId = jest
+    const findCashAttemptByEngagementId = jest
       .fn()
       .mockResolvedValue(overrides.row ?? null);
     const service = new GetMyCashPaymentConfirmationService(
       { resolveParty } as unknown as CashPaymentAccessService,
-      { findByEngagementId } as unknown as CashPaymentRepository,
+      {
+        findCashAttemptByEngagementId,
+      } as unknown as PaymentAttemptRepository,
     );
-    return { service, resolveParty, findByEngagementId };
+    return { service, resolveParty, findCashAttemptByEngagementId };
   }
 
   const NOW = new Date('2026-09-18T10:00:00.000Z');
@@ -87,11 +89,13 @@ describe('GetMyCashPaymentConfirmationService', () => {
   });
 
   it('a non-party gets ENGAGEMENT_NOT_FOUND and the confirmation row is never read', async () => {
-    const { service, findByEngagementId } = makeService({ notParty: true });
+    const { service, findCashAttemptByEngagementId } = makeService({
+      notParty: true,
+    });
 
     await expect(
       service.getMyCashPaymentConfirmation('user-x', 'eng-1'),
     ).rejects.toMatchObject({ code: 'ENGAGEMENT_NOT_FOUND' });
-    expect(findByEngagementId).not.toHaveBeenCalled();
+    expect(findCashAttemptByEngagementId).not.toHaveBeenCalled();
   });
 });

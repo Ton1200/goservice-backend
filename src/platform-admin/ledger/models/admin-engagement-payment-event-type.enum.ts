@@ -22,14 +22,16 @@ export enum AdminEngagementPaymentEventType {
   // The Professional cancelled — the Customer was refunded in full, no
   // charge to anyone (DEC-008).
   PROFESSIONAL_CANCELLATION = 'PROFESSIONAL_CANCELLATION',
-  // RESERVED — a completed job paid digitally (CUSTOMER_CHARGE). No writer
-  // exists yet (GOS-79/80); included now so this enum needs no breaking
-  // change once that capability ships.
+  // A job paid digitally, by card (CUSTOMER_CHARGE + PLATFORM_COMMISSION +
+  // PROFESSIONAL_NET_CREDIT, written together when the charge is approved —
+  // GOS-85). NOTE the Professional's net is an accounting credit in
+  // GoService's own ledger; paying it out is a separate, later capability
+  // (GOS-82/GOS-139).
   DIGITAL_PAYMENT = 'DIGITAL_PAYMENT',
 }
 
 registerEnumType(AdminEngagementPaymentEventType, {
   name: 'AdminEngagementPaymentEventType',
   description:
-    'Which kind of financial event this payment summary represents, derived from which LedgerEntryType rows it groups. DIGITAL_PAYMENT is reserved — no writer exists yet (GOS-79/80).',
+    'Which kind of financial event this payment summary represents, derived from which LedgerEntryType rows it groups. DIGITAL_PAYMENT is a job paid by card (GOS-85).',
 });
