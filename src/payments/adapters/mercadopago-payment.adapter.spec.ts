@@ -3,11 +3,33 @@ import { CountryCode } from '@prisma/client';
 import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import {
   ChargeCardCommand,
+  CreateWalletPreferenceCommand,
   PaymentProviderNotConfiguredError,
   PaymentProviderUnavailableError,
   PaymentRequestRejectedError,
 } from '../ports/payment-provider.port';
 import { MercadoPagoPaymentAdapter } from './mercadopago-payment.adapter';
+
+// GOS-142 — global (not per-country) wallet checkout config keys, see
+// `mercadoPagoWalletCheckoutSettingKeys`'s own comment.
+const WALLET_CHECKOUT_SETTINGS = {
+  'payments.mercadopago.public-base-url': 'https://api.goservice.example',
+  'payments.mercadopago.wallet.back-url-success':
+    'https://app.goservice.example/payments/success',
+  'payments.mercadopago.wallet.back-url-pending':
+    'https://app.goservice.example/payments/pending',
+  'payments.mercadopago.wallet.back-url-failure':
+    'https://app.goservice.example/payments/failure',
+};
+
+const WALLET_COMMAND: CreateWalletPreferenceCommand = {
+  amount: 50000,
+  currency: 'COP',
+  country: CountryCode.CO,
+  description: 'Engagement payment',
+  externalReference: 'engagement-1',
+  payerEmail: 'buyer@example.com',
+};
 
 // Clearly synthetic — never a real credential.
 const FAKE_ACCESS_TOKEN = 'APP_USR-unit-test-access-token';
@@ -677,6 +699,115 @@ describe('MercadoPagoPaymentAdapter', () => {
         /APRO|123456789|someone@example|3001112222/,
       );
     });
+
+    // GOS-142 — a WALLET id (numeric) takes a DIFFERENT path: a direct
+    // `GET /v1/payments/{id}`, no search. See `PAYMENT_ID_PATTERN`'s own
+    // comment on why this is checked before the order-id branch above.
+    describe('a numeric providerPaymentId (wallet flow) reads the record directly', () => {
+      const WALLET_PAYMENT_RECORD = {
+        id: 178687128941,
+        status: 'approved',
+        external_reference: 'engagement-1',
+        payment_type_id: 'account_money',
+        transaction_details: { net_received_amount: 48500 },
+        date_approved: '2026-09-19T10:00:00.000-05:00',
+      };
+
+      it('GETs /v1/payments/{id} directly, with its own short timeout, and maps the record', async () => {
+        fetchMock.mockImplementation(() =>
+          Promise.resolve(jsonResponse(200, WALLET_PAYMENT_RECORD)),
+        );
+        const { adapter } = makeAdapter();
+
+        const details = await adapter.getTransactionDetails(
+          '178687128941',
+          'engagement-1',
+          CountryCode.CO,
+        );
+
+        const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+        expect(url).toBe(
+          'https://api.mercadopago.com/v1/payments/178687128941',
+        );
+        expect(init.method).toBe('GET');
+        expect(init.signal).toBeInstanceOf(AbortSignal);
+        expect(details).toEqual({
+          paymentTypeId: 'account_money',
+          cardBrand: null, // account_money has no card
+          cardLastFour: null,
+          providerFeeAmount: null,
+          providerTaxAmount: null,
+          netReceivedAmount: 48500,
+          approvedAt: new Date('2026-09-19T10:00:00.000-05:00'),
+          moneyReleaseAt: null,
+        });
+      });
+
+      it('returns null — never a guess — when the record external_reference does not match EXACTLY', async () => {
+        fetchMock.mockImplementation(() =>
+          Promise.resolve(
+            jsonResponse(200, {
+              ...WALLET_PAYMENT_RECORD,
+              external_reference: 'some-other-engagement',
+            }),
+          ),
+        );
+        const { adapter } = makeAdapter();
+
+        await expect(
+          adapter.getTransactionDetails(
+            '178687128941',
+            'engagement-1',
+            CountryCode.CO,
+          ),
+        ).resolves.toBeNull();
+      });
+
+      it('returns null for an unknown payment (404)', async () => {
+        fetchMock.mockImplementation(() =>
+          Promise.resolve(jsonResponse(404, {})),
+        );
+        const { adapter } = makeAdapter();
+
+        await expect(
+          adapter.getTransactionDetails(
+            '178687128941',
+            'engagement-1',
+            CountryCode.CO,
+          ),
+        ).resolves.toBeNull();
+      });
+
+      it('maps a 401 to PaymentProviderNotConfiguredError', async () => {
+        fetchMock.mockImplementation(() =>
+          Promise.resolve(jsonResponse(401, {})),
+        );
+        const { adapter } = makeAdapter();
+
+        await expect(
+          adapter.getTransactionDetails(
+            '178687128941',
+            'engagement-1',
+            CountryCode.CO,
+          ),
+        ).rejects.toBeInstanceOf(PaymentProviderNotConfiguredError);
+      });
+
+      it('maps a 5xx to PaymentProviderUnavailableError', async () => {
+        fetchMock.mockImplementation(() =>
+          Promise.resolve(jsonResponse(503, {})),
+        );
+        const { adapter } = makeAdapter();
+
+        await expect(
+          adapter.getTransactionDetails(
+            '178687128941',
+            'engagement-1',
+            CountryCode.CO,
+          ),
+        ).rejects.toBeInstanceOf(PaymentProviderUnavailableError);
+      });
+    });
   });
 
   describe('getPayment', () => {
@@ -743,6 +874,320 @@ describe('MercadoPagoPaymentAdapter', () => {
       await expect(
         adapter.getPayment('ORD_X', CountryCode.CO),
       ).rejects.toBeInstanceOf(PaymentProviderNotConfiguredError);
+    });
+  });
+
+  // GOS-142 — the wallet flow's own status source of truth. NOT live-verified
+  // (see this adapter's own header comment) — written against Mercado Pago's
+  // documented Payments API status vocabulary only.
+  describe('getPaymentByPaymentId (wallet flow — GET /v1/payments/{id})', () => {
+    const APPROVED_PAYMENT_RECORD = {
+      id: 178687128941,
+      status: 'approved',
+      status_detail: 'accredited',
+      external_reference: 'engagement-1',
+      transaction_amount: 50000,
+      currency_id: 'COP',
+      payment_type_id: 'account_money',
+    };
+
+    it('GETs the payment directly and maps it, stringifying the numeric id', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(200, APPROVED_PAYMENT_RECORD)),
+      );
+      const { adapter } = makeAdapter();
+
+      const snapshot = await adapter.getPaymentByPaymentId(
+        '178687128941',
+        CountryCode.CO,
+      );
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://api.mercadopago.com/v1/payments/178687128941');
+      expect(init.method).toBe('GET');
+      expect(snapshot).toEqual({
+        providerPaymentId: '178687128941',
+        status: 'approved',
+        externalReference: 'engagement-1',
+        amount: 50000,
+        currency: 'COP',
+      });
+    });
+
+    it('maps a rejected payment with its bucketed reason', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse(200, {
+            ...APPROVED_PAYMENT_RECORD,
+            status: 'rejected',
+            status_detail: 'cc_rejected_insufficient_amount',
+          }),
+        ),
+      );
+      const { adapter } = makeAdapter();
+
+      await expect(
+        adapter.getPaymentByPaymentId('178687128941', CountryCode.CO),
+      ).resolves.toEqual({
+        providerPaymentId: '178687128941',
+        status: 'rejected',
+        rejectionReason: 'INSUFFICIENT_FUNDS',
+        externalReference: 'engagement-1',
+        amount: 50000,
+        currency: 'COP',
+      });
+    });
+
+    it.each([['pending'], ['in_process'], ['authorized'], ['in_mediation']])(
+      'maps a %s payment status to pending',
+      async (status) => {
+        fetchMock.mockImplementation(() =>
+          Promise.resolve(
+            jsonResponse(200, { ...APPROVED_PAYMENT_RECORD, status }),
+          ),
+        );
+        const { adapter } = makeAdapter();
+
+        await expect(
+          adapter.getPaymentByPaymentId('178687128941', CountryCode.CO),
+        ).resolves.toMatchObject({ status: 'pending' });
+      },
+    );
+
+    it.each([['refunded'], ['charged_back']])(
+      'maps an out-of-scope %s status to pending — never re-reports it as approved or rejected',
+      async (status) => {
+        fetchMock.mockImplementation(() =>
+          Promise.resolve(
+            jsonResponse(200, { ...APPROVED_PAYMENT_RECORD, status }),
+          ),
+        );
+        const { adapter } = makeAdapter();
+
+        await expect(
+          adapter.getPaymentByPaymentId('178687128941', CountryCode.CO),
+        ).resolves.toMatchObject({ status: 'pending' });
+      },
+    );
+
+    it.each([['ORD_APPROVED'], ['not-a-number'], ['']])(
+      'returns null for a non-numeric id %p WITHOUT calling the provider',
+      async (id) => {
+        const { adapter } = makeAdapter();
+
+        await expect(
+          adapter.getPaymentByPaymentId(id, CountryCode.CO),
+        ).resolves.toBeNull();
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it('returns null for an unknown payment (404)', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(404, { errors: [{ code: 'not_found' }] })),
+      );
+      const { adapter } = makeAdapter();
+
+      await expect(
+        adapter.getPaymentByPaymentId('178687128941', CountryCode.CO),
+      ).resolves.toBeNull();
+    });
+
+    it('maps a 5xx to PaymentProviderUnavailableError', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(503, {})),
+      );
+      const { adapter } = makeAdapter();
+
+      await expect(
+        adapter.getPaymentByPaymentId('178687128941', CountryCode.CO),
+      ).rejects.toBeInstanceOf(PaymentProviderUnavailableError);
+    });
+
+    it('maps a 401 to PaymentProviderNotConfiguredError', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(401, {})),
+      );
+      const { adapter } = makeAdapter();
+
+      await expect(
+        adapter.getPaymentByPaymentId('178687128941', CountryCode.CO),
+      ).rejects.toBeInstanceOf(PaymentProviderNotConfiguredError);
+    });
+
+    it('treats a 2xx without a usable payment id as unknown outcome, not "unknown payment" (null)', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(200, { status: 'approved' })),
+      );
+      const { adapter } = makeAdapter();
+
+      await expect(
+        adapter.getPaymentByPaymentId('178687128941', CountryCode.CO),
+      ).rejects.toBeInstanceOf(PaymentProviderUnavailableError);
+    });
+  });
+
+  // GOS-142 — starts a wallet payment. Live-verified path/format details are
+  // called out inline; everything else is per the port's documented contract.
+  describe('createWalletPreference (POST /checkout/preferences)', () => {
+    const PREFERENCE_RESPONSE = {
+      id: '1534142261-abc12345-6789-def0-1234-56789abcdef0',
+      init_point: 'https://www.mercadopago.com/checkout/v1/redirect?pref_id=x',
+      sandbox_init_point:
+        'https://sandbox.mercadopago.com/checkout/v1/redirect?pref_id=x',
+    };
+
+    it('POSTs to /checkout/preferences (no /v1/ prefix) with wallet_purchase and unit_price as a plain integer', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(201, PREFERENCE_RESPONSE)),
+      );
+      const { adapter } = makeAdapter(WALLET_CHECKOUT_SETTINGS);
+
+      await adapter.createWalletPreference(WALLET_COMMAND);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://api.mercadopago.com/checkout/preferences');
+      expect(init.method).toBe('POST');
+      expect(init.headers).toMatchObject({
+        Authorization: `Bearer ${FAKE_ACCESS_TOKEN}`,
+      });
+      const body = JSON.parse(init.body as string) as Record<string, unknown>;
+      expect(body).toEqual({
+        items: [
+          {
+            title: 'Engagement payment',
+            quantity: 1,
+            currency_id: 'COP',
+            unit_price: 50000, // a plain integer, NOT formatMercadoPagoAmount's zero-decimal string
+          },
+        ],
+        purpose: 'wallet_purchase',
+        external_reference: 'engagement-1',
+        payer: { email: 'buyer@example.com' },
+        back_urls: {
+          success: 'https://app.goservice.example/payments/success',
+          pending: 'https://app.goservice.example/payments/pending',
+          failure: 'https://app.goservice.example/payments/failure',
+        },
+        notification_url:
+          'https://api.goservice.example/webhooks/mercadopago/payments/co',
+      });
+    });
+
+    it('returns the SANDBOX redirect URL under sandbox credentials', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(201, PREFERENCE_RESPONSE)),
+      );
+      const { adapter } = makeAdapter(WALLET_CHECKOUT_SETTINGS);
+
+      await expect(
+        adapter.createWalletPreference(WALLET_COMMAND),
+      ).resolves.toEqual({
+        preferenceId: PREFERENCE_RESPONSE.id,
+        redirectUrl: PREFERENCE_RESPONSE.sandbox_init_point,
+      });
+    });
+
+    it('returns the PRODUCTION redirect URL under production credentials — never sandbox_init_point', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(201, PREFERENCE_RESPONSE)),
+      );
+      const { adapter } = makeAdapter({
+        ...WALLET_CHECKOUT_SETTINGS,
+        'payments.mercadopago.co.environment': 'production',
+      });
+
+      await expect(
+        adapter.createWalletPreference(WALLET_COMMAND),
+      ).resolves.toEqual({
+        preferenceId: PREFERENCE_RESPONSE.id,
+        redirectUrl: PREFERENCE_RESPONSE.init_point,
+      });
+    });
+
+    it('derives notification_url from the public base URL PLUS the country segment', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(201, PREFERENCE_RESPONSE)),
+      );
+      const { adapter } = makeAdapter({
+        ...WALLET_CHECKOUT_SETTINGS,
+        'payments.mercadopago.public-base-url':
+          'https://api.goservice.example/', // trailing slash tolerated
+      });
+
+      await adapter.createWalletPreference(WALLET_COMMAND);
+
+      const body = JSON.parse(
+        (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string,
+      ) as { notification_url: string };
+      expect(body.notification_url).toBe(
+        'https://api.goservice.example/webhooks/mercadopago/payments/co',
+      );
+    });
+
+    it.each([
+      [
+        'public base URL missing',
+        { 'payments.mercadopago.public-base-url': null },
+      ],
+      [
+        'success back URL missing',
+        { 'payments.mercadopago.wallet.back-url-success': null },
+      ],
+      [
+        'pending back URL blank',
+        { 'payments.mercadopago.wallet.back-url-pending': '   ' },
+      ],
+      [
+        'failure back URL missing',
+        { 'payments.mercadopago.wallet.back-url-failure': null },
+      ],
+    ])(
+      'fails closed BEFORE any HTTP call when wallet checkout config is incomplete: %s',
+      async (_label, override) => {
+        const { adapter } = makeAdapter({
+          ...WALLET_CHECKOUT_SETTINGS,
+          ...override,
+        });
+
+        await expect(
+          adapter.createWalletPreference(WALLET_COMMAND),
+        ).rejects.toBeInstanceOf(PaymentProviderNotConfiguredError);
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it('maps 401/403 to PaymentProviderNotConfiguredError', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(401, {})),
+      );
+      const { adapter } = makeAdapter(WALLET_CHECKOUT_SETTINGS);
+
+      await expect(
+        adapter.createWalletPreference(WALLET_COMMAND),
+      ).rejects.toBeInstanceOf(PaymentProviderNotConfiguredError);
+    });
+
+    it('maps any other non-2xx to PaymentProviderUnavailableError — there is no "rejected" outcome at this step', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse(400, { errors: [{ code: 'x' }] })),
+      );
+      const { adapter } = makeAdapter(WALLET_CHECKOUT_SETTINGS);
+
+      await expect(
+        adapter.createWalletPreference(WALLET_COMMAND),
+      ).rejects.toBeInstanceOf(PaymentProviderUnavailableError);
+    });
+
+    it('treats a 2xx without a usable id/redirect URL as unavailable', async () => {
+      fetchMock.mockImplementation(
+        () => Promise.resolve(jsonResponse(201, { id: 'pref-1' })), // no init_point/sandbox_init_point
+      );
+      const { adapter } = makeAdapter(WALLET_CHECKOUT_SETTINGS);
+
+      await expect(
+        adapter.createWalletPreference(WALLET_COMMAND),
+      ).rejects.toBeInstanceOf(PaymentProviderUnavailableError);
     });
   });
 });

@@ -375,6 +375,42 @@ const KNOWN_SETTING_SLOTS = [
     valueType: 'STRING',
     isEncrypted: true,
   },
+  // GOS-142 — wallet (redirect-to-Mercado-Pago-account) payment checkout
+  // config. Deliberately GLOBAL — no `<country>` segment, unlike the
+  // credential rows above — see `mercadoPagoWalletCheckoutSettingKeys`'s own
+  // header comment in the backend: one deployment has one public host
+  // regardless of how many countries' Mercado Pago credentials it holds.
+  // NOT seeded (no safe default — no public HTTPS URL exists until an admin
+  // sets one up, e.g. via a local dev tunnel), so, same as the credential
+  // rows above, this manifest is load-bearing for these fields to render at
+  // all pre-configuration. `payments.payment-methods.mercadopago-wallet.enabled`
+  // itself is NOT listed here — it IS seeded (`'false'`, by `prisma/seed.ts`),
+  // same reasoning `payments.payment-methods.card.enabled` already
+  // established for not needing a slot.
+  {
+    key: 'payments.mercadopago.public-base-url',
+    description: "This backend's own public HTTPS origin — e.g. a local dev tunnel URL. `notification_url` sent to Mercado Pago is derived from it as `<this>/webhooks/mercadopago/payments/<country>`.",
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
+  {
+    key: 'payments.mercadopago.wallet.back-url-success',
+    description: "Where Mercado Pago redirects the Customer's browser/app after a SUCCESSFUL wallet checkout.",
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
+  {
+    key: 'payments.mercadopago.wallet.back-url-pending',
+    description: 'Where Mercado Pago redirects after a PENDING wallet checkout outcome.',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
+  {
+    key: 'payments.mercadopago.wallet.back-url-failure',
+    description: 'Where Mercado Pago redirects after a FAILED wallet checkout.',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
 ];
 
 // Short, static, one-line descriptions shown under a leaf block's title

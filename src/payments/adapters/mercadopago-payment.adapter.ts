@@ -4,22 +4,26 @@ import { PlatformSettingPort } from '../../platform-admin/platform-settings/port
 import {
   MERCADOPAGO_ENVIRONMENTS,
   mercadoPagoSettingKeys,
+  mercadoPagoWalletCheckoutSettingKeys,
   MercadoPagoEnvironment,
 } from '../constants/payments-setting-keys.constants';
 import {
   ChargeCardCommand,
   ChargeCardResult,
+  CreateWalletPreferenceCommand,
   PaymentProviderNotConfiguredError,
   PaymentProviderPort,
   PaymentProviderUnavailableError,
   PaymentRequestRejectedError,
   ProviderPaymentSnapshot,
   ProviderTransactionDetails,
+  WalletPreferenceResult,
 } from '../ports/payment-provider.port';
 import {
   MercadoPagoPaymentRecord,
   findPaymentRecordForOrder,
   mapPaymentRecordToDetails,
+  mapPaymentRecordToSnapshot,
 } from '../utils/mercadopago-payment-record.mapper';
 import {
   MercadoPagoOrder,
@@ -27,6 +31,12 @@ import {
   mapOrderToSnapshot,
 } from '../utils/mercadopago-order.mapper';
 import { resolveMercadoPagoPaymentType } from '../utils/mercadopago-payment-type.util';
+import {
+  MercadoPagoPreferenceBackUrls,
+  MercadoPagoPreferenceResponse,
+  buildWalletPreferenceRequest,
+  mapPreferenceResponse,
+} from '../utils/mercadopago-preference.mapper';
 
 // Mercado Pago tells sandbox from production by the CREDENTIAL, not the host.
 const MERCADOPAGO_API_BASE_URL = 'https://api.mercadopago.com';
@@ -42,6 +52,12 @@ const DETAILS_TIMEOUT_MS = 4_000;
 // Defensive: an order id is interpolated into a URL path, so refuse anything
 // that isn't the plain alphanumeric shape Mercado Pago issues (`ORD…`).
 const ORDER_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+// GOS-142 — a Payments API id (used by the wallet flow) is purely numeric on
+// the wire (e.g. `178687128941`), unlike an Orders API id — checked BEFORE
+// `ORDER_ID_PATTERN` wherever both are possible, since a numeric string also
+// matches that broader pattern.
+const PAYMENT_ID_PATTERN = /^\d+$/;
 
 interface MercadoPagoResponse {
   status: number;
@@ -88,6 +104,21 @@ interface Credentials {
  * NOT verified live: Argentina/ARS (the only sandbox app is a Colombia one),
  * installments > 1, 3DS challenges (`action_required`), and the asynchronous
  * webhook.
+ *
+ * **GOS-142 (wallet payment) additions**: `getPaymentByPaymentId` and
+ * `createWalletPreference` use TWO further Mercado Pago APIs — the legacy
+ * Payments API (`GET /v1/payments/{id}`, a numeric id) and the Checkout
+ * Preferences API (`POST /checkout/preferences` — no `/v1/` prefix, confirmed
+ * live it 404s with one). Live-verified (GOS-142 spike, 2026-09-18/19): the
+ * preferences endpoint path itself, that `unit_price` there is a PLAIN
+ * INTEGER (not `formatMercadoPagoAmount`'s zero-decimal-string convention),
+ * and that `purpose: 'wallet_purchase'` makes a funded Colombian test buyer's
+ * checkout prominently offer account balance. NOT live-verified: a completed
+ * wallet payment's `GET /v1/payments/{id}` shape (every live completion
+ * attempt got stuck before the checkout resolved) and the wallet webhook
+ * itself (no public HTTPS URL exists in any environment yet, same gap as the
+ * `order` webhook) — `mapPaymentRecordToSnapshot`/`mapPaymentRecordStatus`
+ * are written against Mercado Pago's documentation only.
  *
  * Reads its credentials from `PlatformSettingPort` on EVERY call (never
  * cached) — a credential rotated in the admin panel takes effect immediately.
@@ -246,6 +277,111 @@ export class MercadoPagoPaymentAdapter implements PaymentProviderPort {
   }
 
   /**
+   * GOS-142 — the wallet flow's own source of truth (`GET /v1/payments/{id}`,
+   * the legacy Payments API). See this class's own header comment and the
+   * port's own comment on why `getPayment` (`/v1/orders/{id}`) cannot be
+   * reused for a wallet payment. Same null/throw contract as `getPayment`.
+   */
+  async getPaymentByPaymentId(
+    providerPaymentId: string,
+    country: CountryCode,
+  ): Promise<ProviderPaymentSnapshot | null> {
+    if (!PAYMENT_ID_PATTERN.test(providerPaymentId)) {
+      return null;
+    }
+    const credentials = await this.loadCredentials(country);
+    const { status, json } = await this.request(
+      'GET',
+      `/v1/payments/${providerPaymentId}`,
+      credentials,
+    );
+
+    if (status >= 200 && status < 300) {
+      const snapshot = mapPaymentRecordToSnapshot(
+        json as MercadoPagoPaymentRecord | null,
+      );
+      if (!snapshot) {
+        // A 2xx that carries no usable payment is a provider fault, NOT "the
+        // provider doesn't know this payment" (that is the 404 below).
+        throw new PaymentProviderUnavailableError(
+          'success response without a payment id',
+        );
+      }
+      return snapshot;
+    }
+    if (status === 404) {
+      return null;
+    }
+    if (status === 401 || status === 403) {
+      throw new PaymentProviderNotConfiguredError(
+        'credentials rejected by the provider',
+      );
+    }
+    throw new PaymentProviderUnavailableError(`HTTP ${status}`);
+  }
+
+  /**
+   * GOS-142 — starts a wallet payment. See `PaymentProviderPort.createWalletPreference`'s
+   * own comment for the throw contract; see this class's own header comment
+   * for what was/wasn't verified live.
+   */
+  async createWalletPreference(
+    command: CreateWalletPreferenceCommand,
+  ): Promise<WalletPreferenceResult> {
+    const credentials = await this.loadCredentials(command.country);
+    const { backUrls, notificationUrl } = await this.loadWalletCheckoutConfig(
+      command.country,
+    );
+    const { status, json } = await this.request(
+      'POST',
+      '/checkout/preferences',
+      credentials,
+      {
+        body: buildWalletPreferenceRequest(command, backUrls, notificationUrl),
+      },
+    );
+
+    if (status >= 200 && status < 300) {
+      const result = mapPreferenceResponse(
+        json as MercadoPagoPreferenceResponse | null,
+        credentials.environment,
+      );
+      if (!result) {
+        throw new PaymentProviderUnavailableError(
+          'success response without a usable redirect URL',
+        );
+      }
+      this.logger.log({
+        event: 'mercadopago_wallet_preference_created',
+        environment: credentials.environment,
+        preferenceId: result.preferenceId,
+      });
+      return result;
+    }
+    if (status === 401 || status === 403) {
+      this.logger.error({
+        event: 'mercadopago_credentials_rejected',
+        httpStatus: status,
+        environment: credentials.environment,
+      });
+      throw new PaymentProviderNotConfiguredError(
+        'credentials rejected by the provider',
+      );
+    }
+    // No "rejected" outcome exists at this step (see the port's own
+    // comment) — a malformed request here is GoService's own bug, not a
+    // Customer-facing decline, so it surfaces the same as any other failure
+    // to obtain a redirect URL.
+    this.logger.error({
+      event: 'mercadopago_wallet_preference_request_refused',
+      httpStatus: status,
+      errorCodes: this.extractErrorCodes(json),
+      environment: credentials.environment,
+    });
+    throw new PaymentProviderUnavailableError(`HTTP ${status}`);
+  }
+
+  /**
    * The non-sensitive facts of an APPROVED payment (brand, last four, the
    * provider's fee/taxes/net, dates), from Mercado Pago's PAYMENT record —
    * the Orders API's own response does not carry them (verified live
@@ -264,7 +400,20 @@ export class MercadoPagoPaymentAdapter implements PaymentProviderPort {
     externalReference: string,
     country: CountryCode,
   ): Promise<ProviderTransactionDetails | null> {
-    if (!ORDER_ID_PATTERN.test(providerPaymentId) || !externalReference) {
+    if (!externalReference) {
+      return null;
+    }
+    // GOS-142: a WALLET id is a Payments API id already (see
+    // `PAYMENT_ID_PATTERN`'s own comment on why this check comes first) — its
+    // record is read DIRECTLY, no search needed.
+    if (PAYMENT_ID_PATTERN.test(providerPaymentId)) {
+      return this.getTransactionDetailsByPaymentId(
+        providerPaymentId,
+        externalReference,
+        country,
+      );
+    }
+    if (!ORDER_ID_PATTERN.test(providerPaymentId)) {
       return null;
     }
     const credentials = await this.loadCredentials(country);
@@ -290,6 +439,47 @@ export class MercadoPagoPaymentAdapter implements PaymentProviderPort {
     }
     const record = findPaymentRecordForOrder(results, providerPaymentId);
     return record ? mapPaymentRecordToDetails(record) : null;
+  }
+
+  /**
+   * GOS-142 — the wallet-payment branch of `getTransactionDetails`: reads
+   * `GET /v1/payments/{id}` directly (no search, unlike the card flow — a
+   * wallet `PaymentAttempt.providerPaymentId` is only ever set FROM a prior
+   * `getPaymentByPaymentId` read, so the id is already known-good). The
+   * `externalReference` match is still checked EXACTLY against the record's
+   * own, never trusted by id alone — same "never attribute by amount/date"
+   * rule `findPaymentRecordForOrder` documents for the card flow. NOT
+   * live-verified — see this class's own header comment.
+   */
+  private async getTransactionDetailsByPaymentId(
+    providerPaymentId: string,
+    externalReference: string,
+    country: CountryCode,
+  ): Promise<ProviderTransactionDetails | null> {
+    const credentials = await this.loadCredentials(country);
+    const { status, json } = await this.request(
+      'GET',
+      `/v1/payments/${providerPaymentId}`,
+      credentials,
+      { timeoutMs: DETAILS_TIMEOUT_MS },
+    );
+
+    if (status === 401 || status === 403) {
+      throw new PaymentProviderNotConfiguredError(
+        'credentials rejected by the provider',
+      );
+    }
+    if (status === 404) {
+      return null;
+    }
+    if (status < 200 || status >= 300) {
+      throw new PaymentProviderUnavailableError(`HTTP ${status}`);
+    }
+    const record = json as MercadoPagoPaymentRecord | null;
+    if (!record || record.external_reference !== externalReference) {
+      return null;
+    }
+    return mapPaymentRecordToDetails(record);
   }
 
   private toChargeResult(
@@ -336,6 +526,48 @@ export class MercadoPagoPaymentAdapter implements PaymentProviderPort {
     return {
       accessToken: accessToken.trim(),
       environment: environment as MercadoPagoEnvironment,
+    };
+  }
+
+  /**
+   * GOS-142 — see `mercadoPagoWalletCheckoutSettingKeys`'s own comment for
+   * why these are GLOBAL settings, not per-country. Fails closed
+   * (`PaymentProviderNotConfiguredError`) when any of the four rows is
+   * missing/blank — none is seeded with a real value (no public HTTPS URL
+   * exists in any environment yet).
+   */
+  private async loadWalletCheckoutConfig(country: CountryCode): Promise<{
+    backUrls: MercadoPagoPreferenceBackUrls;
+    notificationUrl: string;
+  }> {
+    const settingKeys = mercadoPagoWalletCheckoutSettingKeys();
+    const [publicBaseUrl, success, pending, failure] = await Promise.all([
+      this.platformSettingPort.getValue(settingKeys.publicBaseUrl),
+      this.platformSettingPort.getValue(settingKeys.backUrlSuccess),
+      this.platformSettingPort.getValue(settingKeys.backUrlPending),
+      this.platformSettingPort.getValue(settingKeys.backUrlFailure),
+    ]);
+    if (!publicBaseUrl || publicBaseUrl.trim() === '') {
+      throw new PaymentProviderNotConfiguredError('public base URL missing');
+    }
+    if (
+      !success ||
+      success.trim() === '' ||
+      !pending ||
+      pending.trim() === '' ||
+      !failure ||
+      failure.trim() === ''
+    ) {
+      throw new PaymentProviderNotConfiguredError('wallet back URLs missing');
+    }
+    const notificationUrl = `${publicBaseUrl.trim().replace(/\/+$/, '')}/webhooks/mercadopago/payments/${country.toLowerCase()}`;
+    return {
+      backUrls: {
+        success: success.trim(),
+        pending: pending.trim(),
+        failure: failure.trim(),
+      },
+      notificationUrl,
     };
   }
 

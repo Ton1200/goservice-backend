@@ -12,7 +12,10 @@ import type { SocialAuthProviderConfigMap } from '../../src/auth/config/social-a
 import { applySecurityMiddleware } from '../../src/bootstrap/apply-security-middleware';
 import type { AppConfig } from '../../src/config/configuration';
 import { RESEND_PLATFORM_SETTING_KEYS } from '../../src/email/constants/resend-settings.constants';
-import { mercadoPagoSettingKeys } from '../../src/payments/constants/payments-setting-keys.constants';
+import {
+  mercadoPagoSettingKeys,
+  mercadoPagoWalletCheckoutSettingKeys,
+} from '../../src/payments/constants/payments-setting-keys.constants';
 import { CredentialEncryptionPort } from '../../src/platform-admin/platform-settings/ports/credential-encryption.port';
 
 export interface TestAppContext {
@@ -736,8 +739,40 @@ export async function enableTestCardPayments(
   prisma: PrismaService,
   overrides?: { cardEnabled?: boolean; country?: CountryCode },
 ): Promise<void> {
-  const credentialEncryptionPort = app.get(CredentialEncryptionPort);
   const country = overrides?.country ?? CountryCode.AR;
+  await prisma.platformSetting.upsert({
+    where: { key: 'payments.payment-methods.card.enabled' },
+    update: {
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.cardEnabled ?? true),
+    },
+    create: {
+      key: 'payments.payment-methods.card.enabled',
+      description: 'Global kill switch for the Card Payment capability.',
+      valueType: 'BOOLEAN',
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.cardEnabled ?? true),
+    },
+  });
+  await upsertMercadoPagoCountryCredentials(app, prisma, country);
+}
+
+/**
+ * The per-country credential rows (`environment`, `publicKey`, ENCRYPTED
+ * `accessToken`/`webhookSecret`) BOTH `enableTestCardPayments` and
+ * `enableTestWalletPayments` need — extracted (GOS-142) so wallet e2e specs
+ * don't duplicate the encryption dance. See `enableTestCardPayments`'s own
+ * header comment for why `app` is required (the SAME running
+ * `CredentialEncryptionPort` instance/key the app will decrypt with).
+ */
+async function upsertMercadoPagoCountryCredentials(
+  app: INestApplication,
+  prisma: PrismaService,
+  country: CountryCode,
+): Promise<void> {
+  const credentialEncryptionPort = app.get(CredentialEncryptionPort);
   const settingKeys = mercadoPagoSettingKeys(country);
 
   const plainRows: {
@@ -747,13 +782,6 @@ export async function enableTestCardPayments(
     value: string;
     isPublic: boolean;
   }[] = [
-    {
-      key: 'payments.payment-methods.card.enabled',
-      description: 'Global kill switch for the Card Payment capability.',
-      valueType: 'BOOLEAN',
-      value: String(overrides?.cardEnabled ?? true),
-      isPublic: false,
-    },
     {
       key: settingKeys.environment,
       description: `Which Mercado Pago credential set is in use for ${country}.`,
@@ -827,6 +855,105 @@ export async function enableTestCardPayments(
         description: row.description,
         valueType: 'STRING',
         ...encryptedColumns,
+      },
+    });
+  }
+}
+
+/**
+ * GOS-142 — CLEARLY SYNTHETIC wallet-checkout config, never real hosts.
+ * Exported so a wallet e2e spec can assert the adapter builds
+ * `notification_url` from exactly this base URL.
+ */
+export const TEST_MERCADOPAGO_WALLET_PUBLIC_BASE_URL =
+  'https://e2e-test.goservice.example';
+export const TEST_MERCADOPAGO_WALLET_BACK_URL_SUCCESS =
+  'https://e2e-test.goservice.example/payments/success';
+export const TEST_MERCADOPAGO_WALLET_BACK_URL_PENDING =
+  'https://e2e-test.goservice.example/payments/pending';
+export const TEST_MERCADOPAGO_WALLET_BACK_URL_FAILURE =
+  'https://e2e-test.goservice.example/payments/failure';
+
+/**
+ * Every `payments.*` key `enableTestWalletPayments` writes for the default
+ * country (`AR`, same default `enableTestCardPayments` uses) PLUS the
+ * global (not per-country) wallet checkout config keys — see
+ * `mercadoPagoWalletCheckoutSettingKeys`'s own header comment.
+ */
+export const WALLET_PAYMENT_TEST_SETTING_KEYS = [
+  'payments.payment-methods.mercadopago-wallet.enabled',
+  ...Object.values(mercadoPagoWalletCheckoutSettingKeys()),
+  ...Object.values(mercadoPagoSettingKeys(CountryCode.AR)),
+];
+
+/**
+ * Upserts the wallet-payment `PlatformSetting` rows to a known-good,
+ * ENABLED-and-fully-configured SANDBOX baseline — mirrors
+ * `enableTestCardPayments` exactly (including its `country` default and its
+ * "no e2e test ever calls the real api.mercadopago.com" caveat), plus the
+ * GLOBAL `back_urls`/`notification_url` config `createWalletPreference`
+ * needs (see `mercadoPagoWalletCheckoutSettingKeys`'s own comment for why
+ * these have no country segment).
+ */
+export async function enableTestWalletPayments(
+  app: INestApplication,
+  prisma: PrismaService,
+  overrides?: { walletEnabled?: boolean; country?: CountryCode },
+): Promise<void> {
+  const country = overrides?.country ?? CountryCode.AR;
+  await prisma.platformSetting.upsert({
+    where: { key: 'payments.payment-methods.mercadopago-wallet.enabled' },
+    update: {
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.walletEnabled ?? true),
+    },
+    create: {
+      key: 'payments.payment-methods.mercadopago-wallet.enabled',
+      description:
+        'Global kill switch for the Mercado Pago Wallet Payment capability.',
+      valueType: 'BOOLEAN',
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.walletEnabled ?? true),
+    },
+  });
+  await upsertMercadoPagoCountryCredentials(app, prisma, country);
+
+  const checkoutKeys = mercadoPagoWalletCheckoutSettingKeys();
+  const checkoutRows = [
+    {
+      key: checkoutKeys.publicBaseUrl,
+      description: "This backend's own public HTTPS origin.",
+      value: TEST_MERCADOPAGO_WALLET_PUBLIC_BASE_URL,
+    },
+    {
+      key: checkoutKeys.backUrlSuccess,
+      description: 'Where Mercado Pago redirects on a successful checkout.',
+      value: TEST_MERCADOPAGO_WALLET_BACK_URL_SUCCESS,
+    },
+    {
+      key: checkoutKeys.backUrlPending,
+      description: 'Where Mercado Pago redirects on a pending checkout.',
+      value: TEST_MERCADOPAGO_WALLET_BACK_URL_PENDING,
+    },
+    {
+      key: checkoutKeys.backUrlFailure,
+      description: 'Where Mercado Pago redirects on a failed checkout.',
+      value: TEST_MERCADOPAGO_WALLET_BACK_URL_FAILURE,
+    },
+  ];
+  for (const row of checkoutRows) {
+    await prisma.platformSetting.upsert({
+      where: { key: row.key },
+      update: { isEncrypted: false, isPublic: false, value: row.value },
+      create: {
+        key: row.key,
+        description: row.description,
+        valueType: 'STRING',
+        isEncrypted: false,
+        isPublic: false,
+        value: row.value,
       },
     });
   }

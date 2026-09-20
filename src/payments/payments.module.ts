@@ -10,12 +10,16 @@ import { MercadoPagoPaymentAdapter } from './adapters/mercadopago-payment.adapte
 import { CardPaymentAccessService } from './card-payment-access.service';
 import { PaymentAttemptRepository } from './payment-attempt.repository';
 import { CardPaymentResolver } from './card-payment.resolver';
+import { WalletPaymentResolver } from './wallet-payment.resolver';
 import { MercadoPagoWebhookController } from './controllers/mercadopago-webhook.controller';
 import { CardPaymentModuleEnabledGuard } from './guards/card-payment-module-enabled.guard';
+import { MercadoPagoWalletModuleEnabledGuard } from './guards/mercadopago-wallet-module-enabled.guard';
 import { PaymentProviderPort } from './ports/payment-provider.port';
 import { ApplyPaymentResultService } from './services/apply-payment-result.service';
+import { GetMyEngagementPaymentAttemptService } from './services/get-my-engagement-payment-attempt.service';
 import { HandleMercadoPagoNotificationService } from './services/handle-mercadopago-notification.service';
 import { PayEngagementWithCardService } from './services/pay-engagement-with-card.service';
+import { StartEngagementWalletPaymentService } from './services/start-engagement-wallet-payment.service';
 
 /**
  * GOS-85 — Integración base con Mercado Pago + cobro con tarjeta. A top-level
@@ -45,6 +49,13 @@ import { PayEngagementWithCardService } from './services/pay-engagement-with-car
  * `ThrottlerModule` is registered once at `AppModule` root, so
  * `MercadoPagoWebhookController`'s `ThrottlerGuard` resolves with no import
  * here (same as `IdentityVerificationModule`'s Didit webhook).
+ *
+ * **GOS-142 (wallet payment) additions**: `WalletPaymentResolver`
+ * (`startEngagementWalletPayment`/`myEngagementPaymentAttempt`), its own
+ * `MercadoPagoWalletModuleEnabledGuard` (seeded OFF, same as Card's) and
+ * services — all declared in THIS SAME module, never a new one, so no
+ * resolver-bearing module import is ever needed (the rule that caused the
+ * earlier admin-schema-isolation leak).
  */
 @Module({
   imports: [
@@ -58,14 +69,18 @@ import { PayEngagementWithCardService } from './services/pay-engagement-with-car
   controllers: [MercadoPagoWebhookController],
   providers: [
     CardPaymentResolver,
+    WalletPaymentResolver,
     PaymentAttemptRepository,
     CardPaymentAccessService,
     CardPaymentModuleEnabledGuard,
+    MercadoPagoWalletModuleEnabledGuard,
     EngagementsRepository,
     MercadoPagoPaymentAdapter,
     { provide: PaymentProviderPort, useExisting: MercadoPagoPaymentAdapter },
     ApplyPaymentResultService,
     PayEngagementWithCardService,
+    StartEngagementWalletPaymentService,
+    GetMyEngagementPaymentAttemptService,
     HandleMercadoPagoNotificationService,
   ],
   exports: [PaymentProviderPort, PaymentAttemptRepository],

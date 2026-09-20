@@ -245,6 +245,17 @@ describe('PaymentAttemptRepository', () => {
     });
   });
 
+  it('findLatestByEngagementId looks up the most recent row, of ANY method or status (GOS-142)', async () => {
+    const { repository, findFirst } = make();
+
+    await repository.findLatestByEngagementId('e1');
+
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { engagementId: 'e1' },
+      orderBy: { createdAt: 'desc' },
+    });
+  });
+
   it('findActiveByEngagementId looks up a PENDING or APPROVED row of ANY method', async () => {
     const { repository, findFirst } = make();
 

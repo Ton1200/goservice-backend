@@ -78,6 +78,47 @@ export interface ProviderPaymentSnapshot extends ChargeCardResult {
 }
 
 /**
+ * GOS-142 — what `createWalletPreference` needs to start a wallet
+ * (redirect-to-Mercado-Pago-account) payment. Deliberately NOT
+ * `ChargeCardCommand` reused: there is no `cardToken`/`paymentMethodId`/
+ * `installments` here (the Customer picks all of that inside their own
+ * Mercado Pago account, after the redirect) — this command only carries what
+ * GoService itself decides.
+ */
+export interface CreateWalletPreferenceCommand {
+  /** Major-unit integer amount (same convention as `ChargeCardCommand.amount`). */
+  amount: number;
+  /** ISO 4217 code, e.g. `COP` / `ARS`. */
+  currency: string;
+  /** See `ChargeCardCommand.country`'s own comment. */
+  country: CountryCode;
+  description: string;
+  /** `Engagement.id` — same correlation role as `ChargeCardCommand.externalReference`. */
+  externalReference: string;
+  payerEmail: string;
+}
+
+/** What `createWalletPreference` returns: where to redirect the Customer's browser/app. */
+export interface WalletPreferenceResult {
+  /**
+   * Mercado Pago's preference id — a THIRD, distinct id shape
+   * (`<collector_id>-<uuid>`), never an order id or a payment id. Logged for
+   * traceability only; NEVER stored in `PaymentAttempt.providerPaymentId` —
+   * the wallet attempt is always correlated to its later webhook by
+   * `findPendingWithoutProviderIdByEngagementId`, not by this id (see the
+   * plan's own design notes).
+   */
+  preferenceId: string;
+  /**
+   * The URL to open — `sandbox_init_point` under sandbox credentials,
+   * `init_point` under production ones (the CREDENTIAL's own environment
+   * decides, never a per-call flag — see `mapPreferenceResponse`'s own
+   * comment).
+   */
+  redirectUrl: string;
+}
+
+/**
  * Non-sensitive facts about HOW a payment was made, read from the provider's
  * own record once it is approved — what GoService keeps for follow-up and to
  * show the Customer "Visa •••• 6260". Never the card number, CVV, token,
@@ -172,4 +213,41 @@ export abstract class PaymentProviderPort {
     externalReference: string,
     country: CountryCode,
   ): Promise<ProviderTransactionDetails | null>;
+
+  /**
+   * GOS-142 — re-reads the provider's own current state for a WALLET payment,
+   * directly from the legacy Payments API (`GET /v1/payments/{id}`) — NOT
+   * `getPayment` (`GET /v1/orders/{id}`). Both read "the current state of a
+   * charge", but for a wallet payment the Orders API resource never reflects
+   * a wallet-completed checkout (evidence: `goservice-docs/research/gos-75-mercado-pago-poc/evidence.md`
+   * — a payment made with account balance settles against a DIFFERENT/legacy
+   * resource only `GET /v1/payments/{id}` can see). This is the wallet
+   * webhook's own source of truth; same throws/null contract as `getPayment`.
+   */
+  abstract getPaymentByPaymentId(
+    providerPaymentId: string,
+    country: CountryCode,
+  ): Promise<ProviderPaymentSnapshot | null>;
+
+  /**
+   * GOS-142 — starts a wallet (redirect-to-Mercado-Pago-account) payment:
+   * `POST https://api.mercadopago.com/checkout/preferences` (NOT `/v1/orders`
+   * — a different Mercado Pago API entirely, confirmed live it has NO `/v1/`
+   * prefix), `purpose: 'wallet_purchase'`. `back_urls`/`notification_url` are
+   * NOT parameters here — the adapter reads them itself from
+   * `mercadoPagoWalletCheckoutSettingKeys()` and fails closed
+   * (`PaymentProviderNotConfiguredError`) if either is missing, same
+   * philosophy as a missing access token.
+   *
+   * @throws PaymentProviderUnavailableError — outcome unknown (timeout/5xx).
+   * @throws PaymentProviderNotConfiguredError — credentials OR
+   *   `back_urls`/`notification_url` missing; nothing was sent, or the
+   *   provider rejected the credentials.
+   *   There is no "rejected" outcome here (unlike `chargeCard`): creating a
+   *   preference does not charge anything yet — the Customer has not even
+   *   been redirected.
+   */
+  abstract createWalletPreference(
+    command: CreateWalletPreferenceCommand,
+  ): Promise<WalletPreferenceResult>;
 }

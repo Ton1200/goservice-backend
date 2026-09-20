@@ -36,6 +36,18 @@ import { HandleMercadoPagoNotificationService } from '../services/handle-mercado
  * unrecognized `:country` segment is treated exactly like a bad signature
  * (generic 401) — there is no secret to check it against.
  *
+ * **GOS-142 — second route, same handler**: `POST
+ * /webhooks/mercadopago/payments/:country` (the wallet flow's own topic,
+ * `payment`) is handled by the SAME private `handleWebhook` this class's
+ * `orders/:country` route already uses — one shared signature-check +
+ * dispatch path, never two copies. Which URL a given Mercado Pago
+ * application is actually configured to call (one per topic, or — per
+ * `save_webhook`'s own tool schema, which takes ONE callback plus a `topics`
+ * array — possibly a single URL for both) is a genuinely OPEN question, not
+ * resolved during GOS-142 (no live wallet webhook delivery was ever
+ * observed — see the plan's own Fase 0 notes); exposing BOTH routes here
+ * costs nothing and keeps either answer working.
+ *
  * Responses: a plain `{ received: true }` on success or on any "nothing to do"
  * outcome; a generic 401 (never disclosing WHY) on a bad signature or an
  * unrecognized country. Genuine processing failures are left to surface as a
@@ -57,10 +69,29 @@ export class MercadoPagoWebhookController {
 
   @Post('orders/:country')
   @HttpCode(200)
-  async handle(
+  handleOrder(
     @Req() req: Request,
     @Param('country') countryParam: string,
     @Headers() headers: Record<string, string | undefined>,
+  ): Promise<{ received: boolean }> {
+    return this.handleWebhook(req, countryParam, headers);
+  }
+
+  /** GOS-142 — the wallet flow's own topic (`payment`). See this class's own header comment. */
+  @Post('payments/:country')
+  @HttpCode(200)
+  handlePayment(
+    @Req() req: Request,
+    @Param('country') countryParam: string,
+    @Headers() headers: Record<string, string | undefined>,
+  ): Promise<{ received: boolean }> {
+    return this.handleWebhook(req, countryParam, headers);
+  }
+
+  private async handleWebhook(
+    req: Request,
+    countryParam: string,
+    headers: Record<string, string | undefined>,
   ): Promise<{ received: boolean }> {
     const country = this.resolveCountry(countryParam);
     if (!country) {

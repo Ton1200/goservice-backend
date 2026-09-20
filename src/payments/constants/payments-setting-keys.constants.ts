@@ -54,3 +54,38 @@ export function mercadoPagoSettingKeys(country: CountryCode) {
 
 export const MERCADOPAGO_ENVIRONMENTS = ['sandbox', 'production'] as const;
 export type MercadoPagoEnvironment = (typeof MERCADOPAGO_ENVIRONMENTS)[number];
+
+/**
+ * GOS-142 — the config a wallet (redirect-to-Mercado-Pago-account) payment
+ * needs to build `back_urls`/`notification_url` for `POST
+ * /checkout/preferences`. Deliberately GLOBAL (no `<country>` segment),
+ * unlike `mercadoPagoSettingKeys` above: these are GoService's OWN URLs (where
+ * the app/backend live), not a per-country provider credential — one
+ * deployment has one public host regardless of how many countries' Mercado
+ * Pago credentials it holds.
+ *
+ * - `publicBaseUrl` — this backend's own public HTTPS origin (e.g.
+ *   `https://api.goservice.example`). `notification_url` is derived from it
+ *   at call time as `${publicBaseUrl}/webhooks/mercadopago/payments/<country>`
+ *   — the country segment still comes from the SAME per-country webhook route
+ *   convention `mercadoPagoSettingKeys`'s own comment documents, so Mercado
+ *   Pago's notification still tells the webhook controller which country
+ *   (and therefore which secret) applies, exactly like the existing `order`
+ *   topic route.
+ * - `backUrlSuccess`/`backUrlPending`/`backUrlFailure` — where Mercado Pago
+ *   redirects the Customer's browser back to after the hosted checkout
+ *   (typically a mobile deep link or a thin web landing page the app owns).
+ *   Not seeded with a real value (no public HTTPS URL exists in any
+ *   environment yet, same documented gap as the `order` webhook) — reading
+ *   these fails closed (`PaymentProviderNotConfiguredError`), same as a
+ *   missing access token.
+ */
+export function mercadoPagoWalletCheckoutSettingKeys() {
+  const prefix = 'payments.mercadopago';
+  return {
+    publicBaseUrl: `${prefix}.public-base-url`,
+    backUrlSuccess: `${prefix}.wallet.back-url-success`,
+    backUrlPending: `${prefix}.wallet.back-url-pending`,
+    backUrlFailure: `${prefix}.wallet.back-url-failure`,
+  } as const;
+}

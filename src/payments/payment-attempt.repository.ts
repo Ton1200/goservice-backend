@@ -266,6 +266,23 @@ export class PaymentAttemptRepository {
   }
 
   /**
+   * GOS-142 — the Engagement's MOST RECENT attempt, whatever its method or
+   * status — `null` if none exists yet. `myEngagementPaymentAttempt`'s own
+   * read model: unlike `findActiveByEngagementId` (PENDING/APPROVED only),
+   * this also returns a REJECTED attempt, so the Customer can see a wallet
+   * payment that failed and be told to retry — the whole reason this read
+   * exists.
+   */
+  findLatestByEngagementId(
+    engagementId: string,
+  ): Promise<PaymentAttempt | null> {
+    return this.prisma.paymentAttempt.findFirst({
+      where: { engagementId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
    * The Engagement's currently ACTIVE attempt (PENDING or APPROVED),
    * whatever its method — `null` if none. Used to tell a genuine
    * `CARD_PAYMENT_ALREADY_IN_PROGRESS` apart from a `PAYMENT_METHOD_CONFLICT`

@@ -504,6 +504,24 @@ const PLATFORM_SETTINGS: {
     value: 'false',
     isPublic: false,
   },
+  // GOS-142 — the GLOBAL kill switch for wallet (redirect-to-Mercado-Pago-
+  // account) payments (`startEngagementWalletPayment` only). `value: 'false'`
+  // (default OFF), same reasoning as `payments.payment-methods.card.enabled`
+  // above: `PlatformSettingPort.isEnabled` is FAIL-OPEN for a missing row, so
+  // "off until certified" only holds because this row is seeded explicitly.
+  // Off by default because the wallet flow's redirect/webhook circle has
+  // never been completed live (no public HTTPS URL exists in any environment
+  // yet — see `payments.mercadopago.public-base-url` and the
+  // `payments.mercadopago.wallet.back-url-*` keys, deliberately NOT seeded
+  // with a real value, same precedent as the credential rows below).
+  // `isPublic: false` — a backend/admin-only gate, same as Card's.
+  {
+    key: 'payments.payment-methods.mercadopago-wallet.enabled',
+    description:
+      'Global kill switch for the Mercado Pago Wallet Payment capability (startEngagementWalletPayment). Off until a public HTTPS URL exists to receive the redirect/webhook.',
+    value: 'false',
+    isPublic: false,
+  },
   // GOS-85 — which Mercado Pago credential set is in use: `sandbox` or
   // `production`. Seeded `sandbox` (the safe default) for EACH country
   // (2026-09-18: a Mercado Pago account belongs to exactly one country's

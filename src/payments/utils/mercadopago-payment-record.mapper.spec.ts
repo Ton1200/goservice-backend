@@ -1,7 +1,10 @@
 import {
   MercadoPagoPaymentRecord,
   findPaymentRecordForOrder,
+  mapPaymentRecordRejectionReason,
+  mapPaymentRecordStatus,
   mapPaymentRecordToDetails,
+  mapPaymentRecordToSnapshot,
 } from './mercadopago-payment-record.mapper';
 
 /**
@@ -201,5 +204,111 @@ describe('findPaymentRecordForOrder', () => {
     expect(
       findPaymentRecordForOrder([{}, { point_of_interaction: null }], 'ORD_X'),
     ).toBeNull();
+  });
+});
+
+// GOS-142 — the wallet flow's own status mapping (`GET /v1/payments/{id}`,
+// read as this SAME `MercadoPagoPaymentRecord` shape). NOT live-verified: no
+// wallet payment reached a terminal state during the GOS-142 spike — written
+// against Mercado Pago's documented Payments API status vocabulary only.
+describe('mapPaymentRecordStatus', () => {
+  it('maps "approved" to approved', () => {
+    expect(mapPaymentRecordStatus({ status: 'approved' })).toBe('approved');
+  });
+
+  it.each([['rejected'], ['cancelled']])('maps "%s" to rejected', (status) => {
+    expect(mapPaymentRecordStatus({ status })).toBe('rejected');
+  });
+
+  it.each([
+    ['pending'],
+    ['in_process'],
+    ['authorized'],
+    ['in_mediation'],
+    // Out of scope for GOS-142 (no refund flow exists) — never re-reported
+    // as still approved, but never invented as rejected either.
+    ['refunded'],
+    ['charged_back'],
+    ['something_unrecognized'],
+    [undefined],
+  ])(
+    'maps "%s" to pending — never moves money-relevant state on it',
+    (status) => {
+      expect(mapPaymentRecordStatus({ status })).toBe('pending');
+    },
+  );
+
+  it('is case-insensitive', () => {
+    expect(mapPaymentRecordStatus({ status: 'APPROVED' })).toBe('approved');
+  });
+});
+
+describe('mapPaymentRecordRejectionReason', () => {
+  it.each([
+    ['cc_rejected_insufficient_amount', 'INSUFFICIENT_FUNDS'],
+    ['cc_rejected_bad_filled_security_code', 'INVALID_CARD_DATA'],
+    ['cc_rejected_bad_filled_card_number', 'INVALID_CARD_DATA'],
+    ['cc_rejected_card_disabled', 'CARD_DECLINED'],
+    ['cc_rejected_max_attempts', 'CARD_DECLINED'],
+    ['cc_rejected_call_for_authorize', 'CARD_DECLINED'],
+    ['cc_rejected_duplicated_payment', 'CARD_DECLINED'],
+    ['cc_rejected_high_risk', 'CARD_DECLINED'],
+    ['cc_rejected_blacklist', 'CARD_DECLINED'],
+    ['cc_rejected_other_reason', 'OTHER'],
+    [undefined, 'OTHER'],
+    [null, 'OTHER'],
+  ])('maps %p to %s', (detail, expected) => {
+    expect(mapPaymentRecordRejectionReason(detail)).toBe(expected);
+  });
+});
+
+describe('mapPaymentRecordToSnapshot', () => {
+  const APPROVED_WALLET_RECORD: MercadoPagoPaymentRecord = {
+    id: 178687128941,
+    status: 'approved',
+    status_detail: 'accredited',
+    external_reference: 'engagement-1',
+    transaction_amount: 50000,
+    currency_id: 'COP',
+    payment_type_id: 'account_money',
+  };
+
+  it('maps an approved record, stringifying the numeric id', () => {
+    expect(mapPaymentRecordToSnapshot(APPROVED_WALLET_RECORD)).toEqual({
+      providerPaymentId: '178687128941',
+      status: 'approved',
+      externalReference: 'engagement-1',
+      amount: 50000,
+      currency: 'COP',
+    });
+  });
+
+  it('attaches a bucketed rejectionReason only when rejected', () => {
+    expect(
+      mapPaymentRecordToSnapshot({
+        ...APPROVED_WALLET_RECORD,
+        status: 'rejected',
+        status_detail: 'cc_rejected_high_risk',
+      }),
+    ).toMatchObject({ status: 'rejected', rejectionReason: 'CARD_DECLINED' });
+    expect(
+      mapPaymentRecordToSnapshot(APPROVED_WALLET_RECORD),
+    ).not.toHaveProperty('rejectionReason');
+  });
+
+  it.each([[null], [undefined], [{}], [{ id: undefined }], [{ id: null }]])(
+    'returns null for a record with no usable id: %p',
+    (record) => {
+      expect(mapPaymentRecordToSnapshot(record)).toBeNull();
+    },
+  );
+
+  it('rounds a decimal transaction_amount to whole units', () => {
+    expect(
+      mapPaymentRecordToSnapshot({
+        ...APPROVED_WALLET_RECORD,
+        transaction_amount: 4613.4,
+      })?.amount,
+    ).toBe(4613);
   });
 });

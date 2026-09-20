@@ -51,6 +51,9 @@ describe('HandleMercadoPagoNotificationService', () => {
     secret?: string | null;
     snapshot?: ProviderPaymentSnapshot | null;
     getPaymentError?: Error;
+    // GOS-142 — same shape, for the `payment` topic's own re-read.
+    paymentSnapshot?: ProviderPaymentSnapshot | null;
+    getPaymentByPaymentIdError?: Error;
     byProviderId?: object | null;
     byEngagement?: object | null;
   }) {
@@ -68,7 +71,19 @@ describe('HandleMercadoPagoNotificationService', () => {
           .mockResolvedValue(
             options?.snapshot === undefined ? snapshot() : options.snapshot,
           );
-    const paymentProvider = { getPayment } as unknown as PaymentProviderPort;
+    const getPaymentByPaymentId = options?.getPaymentByPaymentIdError
+      ? jest.fn().mockRejectedValue(options.getPaymentByPaymentIdError)
+      : jest
+          .fn()
+          .mockResolvedValue(
+            options?.paymentSnapshot === undefined
+              ? snapshot()
+              : options.paymentSnapshot,
+          );
+    const paymentProvider = {
+      getPayment,
+      getPaymentByPaymentId,
+    } as unknown as PaymentProviderPort;
 
     const findByProviderPaymentId = jest
       .fn()
@@ -97,6 +112,7 @@ describe('HandleMercadoPagoNotificationService', () => {
     return {
       service,
       getPayment,
+      getPaymentByPaymentId,
       findByProviderPaymentId,
       findPendingWithoutProviderIdByEngagementId,
       apply,
@@ -259,21 +275,20 @@ describe('HandleMercadoPagoNotificationService', () => {
       expect(m.apply).not.toHaveBeenCalled();
     });
 
-    it('ignores any topic other than `order` without calling the provider', async () => {
+    it.each([
+      ['null', null],
+      ['an unsupported topic', 'merchant_order'],
+    ])('ignores %s without calling the provider', async (_label, type) => {
       const m = makeService();
 
       await m.service.execute({
         dataId: 'ORD_1',
-        type: 'payment',
-        country: CountryCode.CO,
-      });
-      await m.service.execute({
-        dataId: 'ORD_1',
-        type: null,
+        type,
         country: CountryCode.CO,
       });
 
       expect(m.getPayment).not.toHaveBeenCalled();
+      expect(m.getPaymentByPaymentId).not.toHaveBeenCalled();
       expect(m.apply).not.toHaveBeenCalled();
     });
 
@@ -287,6 +302,95 @@ describe('HandleMercadoPagoNotificationService', () => {
       });
 
       expect(m.apply).not.toHaveBeenCalled();
+    });
+
+    // GOS-142 — the wallet flow's own topic. Same behavior as `order` above,
+    // through the OTHER port method (`getPaymentByPaymentId`) — proof this is
+    // the SAME dispatched-to code path, not a second copy.
+    describe('the `payment` topic (GOS-142 wallet flow)', () => {
+      it('re-reads via getPaymentByPaymentId (never getPayment), finds the attempt, and applies the RE-READ status', async () => {
+        const m = makeService({
+          paymentSnapshot: snapshot({ providerPaymentId: '178687128941' }),
+        });
+
+        await m.service.execute({
+          dataId: '178687128941',
+          type: 'payment',
+          country: CountryCode.CO,
+        });
+
+        expect(m.getPaymentByPaymentId).toHaveBeenCalledWith(
+          '178687128941',
+          CountryCode.CO,
+        );
+        expect(m.getPayment).not.toHaveBeenCalled();
+        expect(m.findByProviderPaymentId).toHaveBeenCalledWith('178687128941');
+        expect(m.apply).toHaveBeenCalledWith('attempt-1', {
+          status: 'approved',
+          providerPaymentId: '178687128941',
+          rejectionReason: undefined,
+        });
+      });
+
+      it("adopts the Engagement's PENDING attempt via external_reference when no attempt has this provider id yet (the normal wallet case — a preference id is never stored)", async () => {
+        const m = makeService({ byProviderId: null, byEngagement: ATTEMPT });
+
+        await m.service.execute({
+          dataId: '178687128941',
+          type: 'payment',
+          country: CountryCode.CO,
+        });
+
+        expect(
+          m.findPendingWithoutProviderIdByEngagementId,
+        ).toHaveBeenCalledWith(ENGAGEMENT_ID);
+        expect(m.apply).toHaveBeenCalledWith(
+          'attempt-1',
+          expect.objectContaining({ providerPaymentId: '178687128941' }),
+        );
+      });
+
+      it('is a no-op when the provider does not know the payment', async () => {
+        const m = makeService({ paymentSnapshot: null });
+
+        await m.service.execute({
+          dataId: '178687128941',
+          type: 'payment',
+          country: CountryCode.CO,
+        });
+
+        expect(m.apply).not.toHaveBeenCalled();
+      });
+
+      it('does NOT approve an amount mismatch either', async () => {
+        const m = makeService({
+          paymentSnapshot: snapshot({ amount: 1 }),
+        });
+
+        await m.service.execute({
+          dataId: '178687128941',
+          type: 'payment',
+          country: CountryCode.CO,
+        });
+
+        expect(m.apply).not.toHaveBeenCalled();
+        expect(JSON.stringify(errorLog.mock.calls)).toContain(
+          'card_payment_amount_mismatch',
+        );
+      });
+
+      it('does NOT swallow a provider outage — it surfaces so Mercado Pago retries the delivery', async () => {
+        const boom = new PaymentProviderUnavailableError('HTTP 503');
+        const m = makeService({ getPaymentByPaymentIdError: boom });
+
+        await expect(
+          m.service.execute({
+            dataId: '178687128941',
+            type: 'payment',
+            country: CountryCode.CO,
+          }),
+        ).rejects.toBe(boom);
+      });
     });
 
     describe('amount cross-check on approval', () => {

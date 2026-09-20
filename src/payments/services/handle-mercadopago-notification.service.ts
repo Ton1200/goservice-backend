@@ -3,7 +3,10 @@ import { CountryCode, PaymentAttempt } from '@prisma/client';
 import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
 import { mercadoPagoSettingKeys } from '../constants/payments-setting-keys.constants';
-import { PaymentProviderPort } from '../ports/payment-provider.port';
+import {
+  PaymentProviderPort,
+  type ProviderPaymentSnapshot,
+} from '../ports/payment-provider.port';
 import {
   MercadoPagoSignatureInput,
   verifyMercadoPagoSignature,
@@ -18,13 +21,20 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Handles Mercado Pago's asynchronous `order` notification (Orders API
- * webhook — topic `order`, actions like `order.processed`; NOT the classic
- * `payment` topic of the legacy Payments API). Its whole job is to resolve a
- * `PaymentAttempt` that the synchronous answer left PENDING (a 3DS
- * challenge, `processing / in_process`) — and to do it with the SAME function
- * the synchronous path uses (`ApplyPaymentResultService`), never a second
- * copy of the approve/reject logic.
+ * Handles Mercado Pago's asynchronous notification for BOTH topics this
+ * backend understands: `order` (Orders API — card flow, actions like
+ * `order.processed`) and, since GOS-142, `payment` (the legacy Payments
+ * API — wallet flow, the ONLY way a wallet checkout's outcome ever reaches
+ * GoService, since a wallet-completed checkout does not settle against a
+ * `GET /v1/orders/{id}`-reachable resource — see
+ * `MercadoPagoPaymentAdapter`'s own header comment). Any other topic is
+ * ignored, same as before. Its whole job is to resolve a `PaymentAttempt`
+ * that the synchronous answer left PENDING (a 3DS challenge for card,
+ * ALWAYS for wallet — see `StartEngagementWalletPaymentService`'s own header
+ * comment) — and to do it with the SAME function the synchronous path uses
+ * (`ApplyPaymentResultService`), never a second copy of the approve/reject
+ * logic, and never a second copy of THIS dispatch/correlation/amount-check
+ * logic either — `execute()` below is shared by both topics.
  *
  * **The notification body is never trusted.** The signature proves the request
  * came from Mercado Pago, but this service still ignores the body's claimed
@@ -101,7 +111,23 @@ export class HandleMercadoPagoNotificationService {
     type: string | null;
     country: CountryCode;
   }): Promise<void> {
-    if (params.type !== 'order') {
+    // GOS-142 dispatch: `order` re-reads the Orders API (card flow, as
+    // before); `payment` re-reads the legacy Payments API directly (wallet
+    // flow — see this class's own header comment on why that's the ONLY way
+    // a wallet outcome ever reaches GoService). Any other topic is ignored,
+    // exactly as before GOS-142.
+    let snapshot: ProviderPaymentSnapshot | null;
+    if (params.type === 'order') {
+      snapshot = await this.paymentProvider.getPayment(
+        params.dataId,
+        params.country,
+      );
+    } else if (params.type === 'payment') {
+      snapshot = await this.paymentProvider.getPaymentByPaymentId(
+        params.dataId,
+        params.country,
+      );
+    } else {
       this.logger.log({
         event: 'mercadopago_notification_ignored',
         reason: 'unsupported_topic',
@@ -110,15 +136,12 @@ export class HandleMercadoPagoNotificationService {
       return;
     }
 
-    const snapshot = await this.paymentProvider.getPayment(
-      params.dataId,
-      params.country,
-    );
     if (!snapshot) {
       this.logger.log({
         event: 'mercadopago_notification_ignored',
-        reason: 'order_unknown_to_provider',
-        orderId: params.dataId,
+        reason: 'payment_unknown_to_provider',
+        topic: params.type,
+        providerId: params.dataId,
       });
       return;
     }
@@ -131,7 +154,8 @@ export class HandleMercadoPagoNotificationService {
       this.logger.log({
         event: 'mercadopago_notification_ignored',
         reason: 'no_matching_attempt',
-        orderId: params.dataId,
+        topic: params.type,
+        providerId: params.dataId,
       });
       return;
     }
@@ -145,7 +169,8 @@ export class HandleMercadoPagoNotificationService {
       this.logger.error({
         event: 'card_payment_amount_mismatch',
         attemptId: attempt.id,
-        orderId: params.dataId,
+        topic: params.type,
+        providerId: params.dataId,
         expectedAmount: attempt.amount,
         expectedCurrency: attempt.currency,
         reportedAmount: snapshot.amount,
@@ -161,12 +186,13 @@ export class HandleMercadoPagoNotificationService {
     });
   }
 
+  /** `providerId` is an order id (`order` topic) or a payment id (`payment` topic) — either shape is a valid `PaymentAttempt.providerPaymentId`. */
   private async findAttempt(
-    orderId: string,
+    providerId: string,
     externalReference: string | null,
   ): Promise<PaymentAttempt | null> {
     const byProviderId =
-      await this.paymentAttemptRepository.findByProviderPaymentId(orderId);
+      await this.paymentAttemptRepository.findByProviderPaymentId(providerId);
     if (byProviderId) {
       return byProviderId;
     }
