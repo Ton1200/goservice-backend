@@ -3,6 +3,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AbstractLoader, ExpressLoader } from '@nestjs/serve-static';
 import { Test, TestingModule } from '@nestjs/testing';
+import { CountryCode } from '@prisma/client';
 import type { App } from 'supertest/types';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
@@ -11,6 +12,10 @@ import type { SocialAuthProviderConfigMap } from '../../src/auth/config/social-a
 import { applySecurityMiddleware } from '../../src/bootstrap/apply-security-middleware';
 import type { AppConfig } from '../../src/config/configuration';
 import { RESEND_PLATFORM_SETTING_KEYS } from '../../src/email/constants/resend-settings.constants';
+import {
+  mercadoPagoSettingKeys,
+  mercadoPagoWalletCheckoutSettingKeys,
+} from '../../src/payments/constants/payments-setting-keys.constants';
 import { CredentialEncryptionPort } from '../../src/platform-admin/platform-settings/ports/credential-encryption.port';
 
 export interface TestAppContext {
@@ -261,18 +266,23 @@ export async function cleanLedgerData(prisma: PrismaService): Promise<void> {
 }
 
 /**
- * GOS-87 — deletes all `CashPaymentConfirmation` rows. Technically redundant
- * with `cleanQuotesAndEngagementsData`'s own `engagement.deleteMany()`
- * (`CashPaymentConfirmation.engagementId` is `onDelete: Cascade` toward
- * `Engagement`) — included explicitly anyway, same "independently callable,
- * matches every other `clean*Data` helper's own convention" reasoning
- * `cleanIdentityVerificationData` already documents for its own
- * Cascade-redundant cleanup. Call BEFORE `cleanQuotesAndEngagementsData`.
+ * GOS-87 — deletes every cash `PaymentAttempt` row. Cash lives in
+ * `PaymentAttempt` together with every other method (2026-09-18
+ * generalization — there is no more standalone `CashPaymentConfirmation`
+ * table), so this is now a thin, method-scoped alias of
+ * `cleanPaymentAttemptData` (defined below) — kept under its original name
+ * because every existing e2e spec that predates the generalization still
+ * calls it. New specs should prefer `cleanPaymentAttemptData` directly.
+ * Technically redundant with `cleanQuotesAndEngagementsData`'s own
+ * `engagement.deleteMany()` (`PaymentAttempt.engagementId` is
+ * `onDelete: Cascade` toward `Engagement`) — included explicitly anyway,
+ * same "independently callable" reasoning every other `clean*Data` helper
+ * documents. Call BEFORE `cleanQuotesAndEngagementsData`.
  */
 export async function cleanCashPaymentData(
   prisma: PrismaService,
 ): Promise<void> {
-  await prisma.cashPaymentConfirmation.deleteMany();
+  await prisma.paymentAttempt.deleteMany({ where: { method: 'CASH' } });
 }
 
 /**
@@ -649,6 +659,298 @@ export async function enableTestEmailDelivery(
         key: row.key,
         description: row.description,
         valueType: row.valueType,
+        isEncrypted: false,
+        isPublic: false,
+        value: row.value,
+      },
+    });
+  }
+}
+
+/**
+ * GOS-85 — deletes all `PaymentAttempt` rows. Technically redundant with
+ * `cleanQuotesAndEngagementsData`'s own `engagement.deleteMany()`
+ * (`PaymentAttempt.engagementId` is `onDelete: Cascade` toward
+ * `Engagement`) — included explicitly anyway, same "independently callable,
+ * matches every other `clean*Data` helper's own convention" reasoning
+ * `cleanCashPaymentData` documents. Call BEFORE `cleanQuotesAndEngagementsData`.
+ */
+export async function cleanPaymentAttemptData(
+  prisma: PrismaService,
+): Promise<void> {
+  await prisma.paymentAttempt.deleteMany();
+}
+
+/**
+ * CLEARLY SYNTHETIC, non-real Mercado Pago credentials — never real values.
+ * Exported so e2e specs can (a) assert the adapter sends exactly this bearer
+ * token and (b) compute a matching `x-signature` HMAC over their own webhook
+ * fixtures, using the same secret `HandleMercadoPagoNotificationService` reads
+ * back out of `PlatformSettingPort`.
+ */
+export const TEST_MERCADOPAGO_ACCESS_TOKEN =
+  'e2e-test-mercadopago-access-token';
+export const TEST_MERCADOPAGO_WEBHOOK_SECRET =
+  'e2e-test-mercadopago-webhook-secret';
+
+/**
+ * Every `payments.*` key `enableTestCardPayments` writes for the default
+ * country (`AR` — every existing card-payment e2e fixture seeds an `AR`
+ * `CustomerProfile`, see `mercadoPagoTestSettingKeys`'s own comment).
+ */
+export const CARD_PAYMENT_TEST_SETTING_KEYS = [
+  'payments.payment-methods.card.enabled',
+  ...Object.values(mercadoPagoSettingKeys(CountryCode.AR)),
+];
+
+/**
+ * The country-scoped Mercado Pago keys for one country, e2e-test-reachable
+ * without importing the payments module's own constant into every spec.
+ * Re-exported (not duplicated) — see `mercadoPagoSettingKeys`'s own header
+ * comment for the per-country design (2026-09-18).
+ */
+export { mercadoPagoSettingKeys };
+
+/**
+ * Upserts the card-payment `PlatformSetting` rows to a known-good,
+ * ENABLED-and-fully-configured SANDBOX baseline — the card kill switch is
+ * seeded OFF (see `prisma/seed.ts`), so every e2e suite that exercises
+ * `payEngagementWithCard` must opt this baseline IN for itself first. Same
+ * idempotent-upsert pattern as `enableTestIdentityVerification`, including
+ * why it takes the running `app`: the two ENCRYPTED rows (`access-token`,
+ * `webhook-secret`) must be encrypted with the SAME `CredentialEncryptionPort`
+ * instance/key the app will decrypt them with — hand-rolled fake ciphertext
+ * would fail the real AES-GCM auth-tag check on read.
+ *
+ * `country` defaults to `AR` — every existing card-payment e2e fixture seeds
+ * an `AR` `CustomerProfile` (`seedEngagement`/`seedInProgressEngagement` in
+ * `test/card-payment.e2e-spec.ts`), so this is the country whose credentials
+ * the adapter will actually look up for those tests. A spec exercising
+ * Colombia instead must pass `{ country: CountryCode.CO }` and seed a `CO`
+ * `CustomerProfile` to match.
+ *
+ * No e2e test in this codebase ever calls the real `api.mercadopago.com`:
+ * `global.fetch` is always mocked by the spec. The unit/e2e suites therefore
+ * prove the wiring, NOT the real sandbox — that evidence is in the GOS-85
+ * report's live spike, not here.
+ */
+export async function enableTestCardPayments(
+  app: INestApplication,
+  prisma: PrismaService,
+  overrides?: { cardEnabled?: boolean; country?: CountryCode },
+): Promise<void> {
+  const country = overrides?.country ?? CountryCode.AR;
+  await prisma.platformSetting.upsert({
+    where: { key: 'payments.payment-methods.card.enabled' },
+    update: {
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.cardEnabled ?? true),
+    },
+    create: {
+      key: 'payments.payment-methods.card.enabled',
+      description: 'Global kill switch for the Card Payment capability.',
+      valueType: 'BOOLEAN',
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.cardEnabled ?? true),
+    },
+  });
+  await upsertMercadoPagoCountryCredentials(app, prisma, country);
+}
+
+/**
+ * The per-country credential rows (`environment`, `publicKey`, ENCRYPTED
+ * `accessToken`/`webhookSecret`) BOTH `enableTestCardPayments` and
+ * `enableTestWalletPayments` need — extracted (GOS-142) so wallet e2e specs
+ * don't duplicate the encryption dance. See `enableTestCardPayments`'s own
+ * header comment for why `app` is required (the SAME running
+ * `CredentialEncryptionPort` instance/key the app will decrypt with).
+ */
+async function upsertMercadoPagoCountryCredentials(
+  app: INestApplication,
+  prisma: PrismaService,
+  country: CountryCode,
+): Promise<void> {
+  const credentialEncryptionPort = app.get(CredentialEncryptionPort);
+  const settingKeys = mercadoPagoSettingKeys(country);
+
+  const plainRows: {
+    key: string;
+    description: string;
+    valueType: 'BOOLEAN' | 'STRING';
+    value: string;
+    isPublic: boolean;
+  }[] = [
+    {
+      key: settingKeys.environment,
+      description: `Which Mercado Pago credential set is in use for ${country}.`,
+      valueType: 'STRING',
+      value: 'sandbox',
+      isPublic: false,
+    },
+    {
+      key: settingKeys.publicKey,
+      description: `Mercado Pago public key for ${country}.`,
+      valueType: 'STRING',
+      value: 'e2e-test-mercadopago-public-key',
+      isPublic: true,
+    },
+  ];
+  for (const row of plainRows) {
+    await prisma.platformSetting.upsert({
+      where: { key: row.key },
+      update: {
+        isEncrypted: false,
+        isPublic: row.isPublic,
+        value: row.value,
+        ciphertext: null,
+        iv: null,
+        authTag: null,
+        maskedPreview: null,
+        provider: null,
+      },
+      create: {
+        key: row.key,
+        description: row.description,
+        valueType: row.valueType,
+        isEncrypted: false,
+        isPublic: row.isPublic,
+        value: row.value,
+      },
+    });
+  }
+
+  const encryptedRows = [
+    {
+      key: settingKeys.accessToken,
+      description: `Mercado Pago access token for ${country}.`,
+      plaintext: TEST_MERCADOPAGO_ACCESS_TOKEN,
+    },
+    {
+      key: settingKeys.webhookSecret,
+      description: `Mercado Pago webhook secret for ${country}.`,
+      plaintext: TEST_MERCADOPAGO_WEBHOOK_SECRET,
+    },
+  ];
+  for (const row of encryptedRows) {
+    const encrypted = credentialEncryptionPort.encrypt(row.plaintext);
+    const encryptedColumns = {
+      isEncrypted: true,
+      isPublic: false,
+      value: null,
+      // Cast: same `Uint8Array<ArrayBufferLike>` vs `Uint8Array<ArrayBuffer>`
+      // typing mismatch the pre-existing encrypted-row helpers above have —
+      // the runtime value is a plain Buffer, which Prisma accepts.
+      ciphertext: encrypted.ciphertext as Uint8Array<ArrayBuffer>,
+      iv: encrypted.iv as Uint8Array<ArrayBuffer>,
+      authTag: encrypted.authTag as Uint8Array<ArrayBuffer>,
+      maskedPreview: credentialEncryptionPort.maskedPreview(row.plaintext),
+    } as const;
+    await prisma.platformSetting.upsert({
+      where: { key: row.key },
+      update: { ...encryptedColumns, provider: null },
+      create: {
+        key: row.key,
+        description: row.description,
+        valueType: 'STRING',
+        ...encryptedColumns,
+      },
+    });
+  }
+}
+
+/**
+ * GOS-142 — CLEARLY SYNTHETIC wallet-checkout config, never real hosts.
+ * Exported so a wallet e2e spec can assert the adapter builds
+ * `notification_url` from exactly this base URL.
+ */
+export const TEST_MERCADOPAGO_WALLET_PUBLIC_BASE_URL =
+  'https://e2e-test.goservice.example';
+export const TEST_MERCADOPAGO_WALLET_BACK_URL_SUCCESS =
+  'https://e2e-test.goservice.example/payments/success';
+export const TEST_MERCADOPAGO_WALLET_BACK_URL_PENDING =
+  'https://e2e-test.goservice.example/payments/pending';
+export const TEST_MERCADOPAGO_WALLET_BACK_URL_FAILURE =
+  'https://e2e-test.goservice.example/payments/failure';
+
+/**
+ * Every `payments.*` key `enableTestWalletPayments` writes for the default
+ * country (`AR`, same default `enableTestCardPayments` uses) PLUS the
+ * global (not per-country) wallet checkout config keys — see
+ * `mercadoPagoWalletCheckoutSettingKeys`'s own header comment.
+ */
+export const WALLET_PAYMENT_TEST_SETTING_KEYS = [
+  'payments.payment-methods.mercadopago-wallet.enabled',
+  ...Object.values(mercadoPagoWalletCheckoutSettingKeys()),
+  ...Object.values(mercadoPagoSettingKeys(CountryCode.AR)),
+];
+
+/**
+ * Upserts the wallet-payment `PlatformSetting` rows to a known-good,
+ * ENABLED-and-fully-configured SANDBOX baseline — mirrors
+ * `enableTestCardPayments` exactly (including its `country` default and its
+ * "no e2e test ever calls the real api.mercadopago.com" caveat), plus the
+ * GLOBAL `back_urls`/`notification_url` config `createWalletPreference`
+ * needs (see `mercadoPagoWalletCheckoutSettingKeys`'s own comment for why
+ * these have no country segment).
+ */
+export async function enableTestWalletPayments(
+  app: INestApplication,
+  prisma: PrismaService,
+  overrides?: { walletEnabled?: boolean; country?: CountryCode },
+): Promise<void> {
+  const country = overrides?.country ?? CountryCode.AR;
+  await prisma.platformSetting.upsert({
+    where: { key: 'payments.payment-methods.mercadopago-wallet.enabled' },
+    update: {
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.walletEnabled ?? true),
+    },
+    create: {
+      key: 'payments.payment-methods.mercadopago-wallet.enabled',
+      description:
+        'Global kill switch for the Mercado Pago Wallet Payment capability.',
+      valueType: 'BOOLEAN',
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.walletEnabled ?? true),
+    },
+  });
+  await upsertMercadoPagoCountryCredentials(app, prisma, country);
+
+  const checkoutKeys = mercadoPagoWalletCheckoutSettingKeys();
+  const checkoutRows = [
+    {
+      key: checkoutKeys.publicBaseUrl,
+      description: "This backend's own public HTTPS origin.",
+      value: TEST_MERCADOPAGO_WALLET_PUBLIC_BASE_URL,
+    },
+    {
+      key: checkoutKeys.backUrlSuccess,
+      description: 'Where Mercado Pago redirects on a successful checkout.',
+      value: TEST_MERCADOPAGO_WALLET_BACK_URL_SUCCESS,
+    },
+    {
+      key: checkoutKeys.backUrlPending,
+      description: 'Where Mercado Pago redirects on a pending checkout.',
+      value: TEST_MERCADOPAGO_WALLET_BACK_URL_PENDING,
+    },
+    {
+      key: checkoutKeys.backUrlFailure,
+      description: 'Where Mercado Pago redirects on a failed checkout.',
+      value: TEST_MERCADOPAGO_WALLET_BACK_URL_FAILURE,
+    },
+  ];
+  for (const row of checkoutRows) {
+    await prisma.platformSetting.upsert({
+      where: { key: row.key },
+      update: { isEncrypted: false, isPublic: false, value: row.value },
+      create: {
+        key: row.key,
+        description: row.description,
+        valueType: 'STRING',
         isEncrypted: false,
         isPublic: false,
         value: row.value,

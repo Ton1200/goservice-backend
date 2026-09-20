@@ -33,4 +33,16 @@ describe('AdminLedgerResolver wiring', () => {
 
     expect(required).toEqual([Permission.LEDGER_READ]);
   });
+
+  it('requires Permission.LEDGER_READ on adminPlatformBalance too', () => {
+    const resolverPrototype = AdminLedgerResolver.prototype;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- reading reflection metadata off the method reference, never invoking it with an unintended `this`.
+    const handler = resolverPrototype.adminPlatformBalance;
+    const required = Reflect.getMetadata(
+      ADMIN_PERMISSIONS_METADATA_KEY,
+      handler,
+    ) as Permission[];
+
+    expect(required).toEqual([Permission.LEDGER_READ]);
+  });
 });

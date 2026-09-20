@@ -1,18 +1,25 @@
 import { Logger } from '@nestjs/common';
-import { CountryCode, EngagementStatus } from '@prisma/client';
+import { CountryCode, EngagementStatus, PaymentMethod } from '@prisma/client';
 import { RecordCashCommissionDebtService } from '../../ledger/services/record-cash-commission-debt.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EngagementsRepository } from '../../engagements/engagements.repository';
+import { PaymentAttemptRepository } from '../../payments/payment-attempt.repository';
 import { CashPaymentAccessService } from '../cash-payment-access.service';
-import { CashPaymentRepository } from '../cash-payment.repository';
 import { ConfirmCashPaymentService } from './confirm-cash-payment.service';
 
 describe('ConfirmCashPaymentService', () => {
-  const engagement = {
+  const engagement: {
+    id: string;
+    customerProfileId: string;
+    professionalProfileId: string;
+    status: EngagementStatus;
+    paymentMethod: PaymentMethod | null;
+  } = {
     id: 'engagement-1',
     customerProfileId: 'customer-profile-1',
     professionalProfileId: 'professional-profile-1',
     status: EngagementStatus.IN_PROGRESS,
+    paymentMethod: null,
   };
 
   const billingContext = {
@@ -27,16 +34,14 @@ describe('ConfirmCashPaymentService', () => {
     role?: 'CUSTOMER' | 'PROFESSIONAL';
     resolvedEngagement?: typeof engagement;
     billingContext?: typeof billingContext | null;
-    confirmationRow?: {
+    attemptRow?: {
       id: string;
       engagementId: string;
       customerConfirmedAt: Date | null;
       professionalConfirmedAt: Date | null;
-      commissionDebtRecorded: boolean;
-      createdAt: Date;
-    };
-    setPaymentMethodCount?: number;
-    markCommissionDebtRecordedCount?: number;
+      status: 'PENDING' | 'APPROVED';
+    } | null;
+    resolveCount?: number;
   }) {
     const fakeTx = { __fakeTransactionClient: true };
     const $transaction = jest.fn(
@@ -67,32 +72,31 @@ describe('ConfirmCashPaymentService', () => {
           ? billingContext
           : overrides.billingContext,
       );
-    const setPaymentMethodIfUnset = jest
-      .fn()
-      .mockResolvedValue({ count: overrides?.setPaymentMethodCount ?? 1 });
+    const setPaymentMethodIfUnset = jest.fn().mockResolvedValue({ count: 1 });
     const engagementsRepository = {
       findByIdWithBillingContext,
       setPaymentMethodIfUnset,
     } as unknown as EngagementsRepository;
 
     const defaultRow = {
-      id: 'confirmation-1',
+      id: 'attempt-1',
       engagementId: engagement.id,
       customerConfirmedAt: null,
       professionalConfirmedAt: null,
-      commissionDebtRecorded: false,
-      createdAt: new Date(),
+      status: 'PENDING' as const,
     };
-    const upsertConfirmation = jest
+    const upsertCashConfirmation = jest
       .fn()
-      .mockResolvedValue(overrides?.confirmationRow ?? defaultRow);
-    const markCommissionDebtRecordedIfUnset = jest.fn().mockResolvedValue({
-      count: overrides?.markCommissionDebtRecordedCount ?? 1,
-    });
-    const cashPaymentRepository = {
-      upsertConfirmation,
-      markCommissionDebtRecordedIfUnset,
-    } as unknown as CashPaymentRepository;
+      .mockResolvedValue(
+        overrides?.attemptRow === undefined ? defaultRow : overrides.attemptRow,
+      );
+    const resolveIfPending = jest
+      .fn()
+      .mockResolvedValue({ count: overrides?.resolveCount ?? 1 });
+    const paymentAttemptRepository = {
+      upsertCashConfirmation,
+      resolveIfPending,
+    } as unknown as PaymentAttemptRepository;
 
     const recordCommissionDebt = jest.fn().mockResolvedValue(undefined);
     const recordCashCommissionDebtService = {
@@ -103,7 +107,7 @@ describe('ConfirmCashPaymentService', () => {
       prisma,
       cashPaymentAccessService,
       engagementsRepository,
-      cashPaymentRepository,
+      paymentAttemptRepository,
       recordCashCommissionDebtService,
     );
 
@@ -113,8 +117,8 @@ describe('ConfirmCashPaymentService', () => {
       resolveParty,
       findByIdWithBillingContext,
       setPaymentMethodIfUnset,
-      upsertConfirmation,
-      markCommissionDebtRecordedIfUnset,
+      upsertCashConfirmation,
+      resolveIfPending,
       recordCommissionDebt,
     };
   }
@@ -130,13 +134,12 @@ describe('ConfirmCashPaymentService', () => {
   it('only the Customer confirms: no LedgerEntry yet, but Engagement.paymentMethod is set to CASH', async () => {
     const { service, setPaymentMethodIfUnset, recordCommissionDebt } =
       makeService({
-        confirmationRow: {
-          id: 'confirmation-1',
+        attemptRow: {
+          id: 'attempt-1',
           engagementId: engagement.id,
           customerConfirmedAt: new Date(),
           professionalConfirmedAt: null,
-          commissionDebtRecorded: false,
-          createdAt: new Date(),
+          status: 'PENDING',
         },
       });
 
@@ -153,13 +156,12 @@ describe('ConfirmCashPaymentService', () => {
   it('only the Professional confirms: no LedgerEntry yet', async () => {
     const { service, recordCommissionDebt } = makeService({
       role: 'PROFESSIONAL',
-      confirmationRow: {
-        id: 'confirmation-1',
+      attemptRow: {
+        id: 'attempt-1',
         engagementId: engagement.id,
         customerConfirmedAt: null,
         professionalConfirmedAt: new Date(),
-        commissionDebtRecorded: false,
-        createdAt: new Date(),
+        status: 'PENDING',
       },
     });
 
@@ -169,20 +171,24 @@ describe('ConfirmCashPaymentService', () => {
   });
 
   it('both confirmed and the CAS wins: records exactly ONE CASH_COMMISSION_DEBT via RecordCashCommissionDebtService, inside the same transaction', async () => {
-    const { service, recordCommissionDebt } = makeService({
-      confirmationRow: {
-        id: 'confirmation-1',
+    const { service, resolveIfPending, recordCommissionDebt } = makeService({
+      attemptRow: {
+        id: 'attempt-1',
         engagementId: engagement.id,
         customerConfirmedAt: new Date(),
         professionalConfirmedAt: new Date(),
-        commissionDebtRecorded: false,
-        createdAt: new Date(),
+        status: 'PENDING',
       },
-      markCommissionDebtRecordedCount: 1,
+      resolveCount: 1,
     });
 
     await service.confirmCashPayment('user-1', 'engagement-1');
 
+    expect(resolveIfPending).toHaveBeenCalledWith(
+      expect.objectContaining({ __fakeTransactionClient: true }),
+      'attempt-1',
+      { status: 'APPROVED', providerPaymentId: null, rejectionReason: null },
+    );
     expect(recordCommissionDebt).toHaveBeenCalledTimes(1);
     expect(recordCommissionDebt).toHaveBeenCalledWith(
       expect.objectContaining({ __fakeTransactionClient: true }),
@@ -202,13 +208,12 @@ describe('ConfirmCashPaymentService', () => {
         ...billingContext,
         quote: { price: 5000, negotiatedPrice: 4500 },
       },
-      confirmationRow: {
-        id: 'confirmation-1',
+      attemptRow: {
+        id: 'attempt-1',
         engagementId: engagement.id,
         customerConfirmedAt: new Date(),
         professionalConfirmedAt: new Date(),
-        commissionDebtRecorded: false,
-        createdAt: new Date(),
+        status: 'PENDING',
       },
     });
 
@@ -220,17 +225,16 @@ describe('ConfirmCashPaymentService', () => {
     );
   });
 
-  it('both confirmed but the CAS is LOST (a concurrent call already recorded the debt): does not record a second LedgerEntry', async () => {
+  it('both confirmed but the CAS is LOST (a concurrent call already resolved it): does not record a second LedgerEntry', async () => {
     const { service, recordCommissionDebt } = makeService({
-      confirmationRow: {
-        id: 'confirmation-1',
+      attemptRow: {
+        id: 'attempt-1',
         engagementId: engagement.id,
         customerConfirmedAt: new Date(),
         professionalConfirmedAt: new Date(),
-        commissionDebtRecorded: false,
-        createdAt: new Date(),
+        status: 'PENDING',
       },
-      markCommissionDebtRecordedCount: 0,
+      resolveCount: 0,
     });
 
     await service.confirmCashPayment('user-1', 'engagement-1');
@@ -238,23 +242,43 @@ describe('ConfirmCashPaymentService', () => {
     expect(recordCommissionDebt).not.toHaveBeenCalled();
   });
 
-  it('already commissionDebtRecorded (a repeat confirm after both already confirmed): does not re-run the CAS or write a second entry', async () => {
-    const { service, markCommissionDebtRecordedIfUnset, recordCommissionDebt } =
-      makeService({
-        confirmationRow: {
-          id: 'confirmation-1',
-          engagementId: engagement.id,
-          customerConfirmedAt: new Date(),
-          professionalConfirmedAt: new Date(),
-          commissionDebtRecorded: true,
-          createdAt: new Date(),
-        },
-      });
+  it('already APPROVED (a repeat confirm after both already confirmed): does not re-run the CAS or write a second entry', async () => {
+    const { service, resolveIfPending, recordCommissionDebt } = makeService({
+      attemptRow: {
+        id: 'attempt-1',
+        engagementId: engagement.id,
+        customerConfirmedAt: new Date(),
+        professionalConfirmedAt: new Date(),
+        status: 'APPROVED',
+      },
+    });
 
     await service.confirmCashPayment('user-1', 'engagement-1');
 
-    expect(markCommissionDebtRecordedIfUnset).not.toHaveBeenCalled();
+    expect(resolveIfPending).not.toHaveBeenCalled();
     expect(recordCommissionDebt).not.toHaveBeenCalled();
+  });
+
+  it('rejects with PAYMENT_METHOD_CONFLICT when the Engagement already picked MERCADOPAGO', async () => {
+    const { service, $transaction } = makeService({
+      resolvedEngagement: {
+        ...engagement,
+        paymentMethod: PaymentMethod.MERCADOPAGO,
+      },
+    });
+
+    await expect(
+      service.confirmCashPayment('user-1', 'engagement-1'),
+    ).rejects.toMatchObject({ code: 'PAYMENT_METHOD_CONFLICT' });
+    expect($transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects with PAYMENT_METHOD_CONFLICT when a digital attempt wins the active slot mid-race (upsertCashConfirmation returns null)', async () => {
+    const { service } = makeService({ attemptRow: null });
+
+    await expect(
+      service.confirmCashPayment('user-1', 'engagement-1'),
+    ).rejects.toMatchObject({ code: 'PAYMENT_METHOD_CONFLICT' });
   });
 
   it.each([EngagementStatus.ACCEPTED, EngagementStatus.CANCELLED])(

@@ -1,5 +1,6 @@
 import { LedgerEntryType, PaymentMethod } from '@prisma/client';
 import { LedgerRepository } from '../../../ledger/ledger.repository';
+import { PaymentAttemptRepository } from '../../../payments/payment-attempt.repository';
 import { AdminEngagementPaymentEventType } from '../models/admin-engagement-payment-event-type.enum';
 import { ListAdminEngagementPaymentSummariesService } from './list-admin-engagement-payment-summaries.service';
 
@@ -61,24 +62,45 @@ function makeRow(overrides: {
 }
 
 describe('ListAdminEngagementPaymentSummariesService', () => {
-  function makeService(rows: ReturnType<typeof makeRow>[], pendingDebt = 0) {
+  function makeService(
+    rows: ReturnType<typeof makeRow>[],
+    pendingDebt = 0,
+    balance = 0,
+  ) {
     const findManyForAdminPaymentSummaries = jest.fn().mockResolvedValue(rows);
     const sumCashCommissionDebtForProfessional = jest
       .fn()
       .mockResolvedValue(pendingDebt);
+    const sumProfessionalBalance = jest.fn().mockResolvedValue(balance);
     const ledgerRepository = {
       findManyForAdminPaymentSummaries,
       sumCashCommissionDebtForProfessional,
+      sumProfessionalBalance,
     } as unknown as LedgerRepository;
+
+    const findApprovedByEngagementId = jest.fn().mockResolvedValue(null);
+    const paymentAttemptRepository = {
+      findApprovedByEngagementId,
+    } as unknown as PaymentAttemptRepository;
 
     const service = new ListAdminEngagementPaymentSummariesService(
       ledgerRepository,
+      paymentAttemptRepository,
     );
-    return { service, sumCashCommissionDebtForProfessional };
+    return {
+      service,
+      sumCashCommissionDebtForProfessional,
+      sumProfessionalBalance,
+      findApprovedByEngagementId,
+    };
   }
 
-  it('CASH_PAYMENT: derives totalPaidByCustomer from the Quote price, platformCommission from the entry, and includes professionalTotalPendingCashDebt', async () => {
-    const { service, sumCashCommissionDebtForProfessional } = makeService(
+  it('CASH_PAYMENT: derives totalPaidByCustomer from the Quote price, platformCommission from the entry, and includes professionalTotalPendingCashDebt + the professional balance', async () => {
+    const {
+      service,
+      sumCashCommissionDebtForProfessional,
+      sumProfessionalBalance,
+    } = makeService(
       [
         makeRow({
           id: 'entry-1',
@@ -87,6 +109,7 @@ describe('ListAdminEngagementPaymentSummariesService', () => {
         }),
       ],
       800,
+      -800,
     );
 
     const page = await service.listEngagementPaymentSummaries();
@@ -112,11 +135,71 @@ describe('ListAdminEngagementPaymentSummariesService', () => {
       id: 'professional-profile-1',
       firstName: 'Pedro',
       email: 'pedro@example.com',
+      balance: -800,
     });
     expect(page.items[0].entries).toHaveLength(1);
     expect(sumCashCommissionDebtForProfessional).toHaveBeenCalledWith(
       'professional-profile-1',
     );
+    expect(sumProfessionalBalance).toHaveBeenCalledWith(
+      'professional-profile-1',
+    );
+  });
+
+  it("attaches the Engagement's ever-approved PaymentAttempt, when one exists", async () => {
+    const approvedAttempt = {
+      id: 'attempt-1',
+      engagementId: 'engagement-1',
+      method: 'CASH',
+      type: 'CASH',
+      status: 'APPROVED',
+      amount: 8000,
+      currency: 'ARS',
+      installments: 1,
+      rejectionReason: null,
+      providerPaymentId: null,
+      cardBrand: null,
+      cardLastFour: null,
+      providerFeeAmount: null,
+      providerTaxAmount: null,
+      netReceivedAmount: null,
+      customerConfirmedAt: new Date(),
+      professionalConfirmedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const { service, findApprovedByEngagementId } = makeService([
+      makeRow({
+        id: 'entry-1',
+        type: LedgerEntryType.CASH_COMMISSION_DEBT,
+        amount: 800,
+      }),
+    ]);
+    findApprovedByEngagementId.mockResolvedValue(approvedAttempt);
+
+    const page = await service.listEngagementPaymentSummaries();
+
+    expect(findApprovedByEngagementId).toHaveBeenCalledWith('engagement-1');
+    expect(page.items[0].paymentAttempt).toMatchObject({
+      id: 'attempt-1',
+      method: 'CASH',
+      type: 'CASH',
+    });
+  });
+
+  it('leaves paymentAttempt null when the job was never actually paid (e.g. cancelled)', async () => {
+    const { service } = makeService([
+      makeRow({
+        id: 'entry-1',
+        type: LedgerEntryType.REFUND,
+        amount: 8000,
+        engagement: makeEngagement({ paymentMethod: null }),
+      }),
+    ]);
+
+    const page = await service.listEngagementPaymentSummaries();
+
+    expect(page.items[0].paymentAttempt).toBeNull();
   });
 
   it('uses negotiatedPrice over price when deriving a CASH_PAYMENT total', async () => {

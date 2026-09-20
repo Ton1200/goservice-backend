@@ -3,11 +3,11 @@ import { AuthModule } from '../auth/auth.module';
 import { EngagementsRepository } from '../engagements/engagements.repository';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
 import { LedgerModule } from '../ledger/ledger.module';
+import { PaymentAttemptRepository } from '../payments/payment-attempt.repository';
 import { PlatformSettingsModule } from '../platform-admin/platform-settings/platform-settings.module';
 import { ProfilesModule } from '../profiles/profiles.module';
 import { UsersModule } from '../users/users.module';
 import { CashPaymentAccessService } from './cash-payment-access.service';
-import { CashPaymentRepository } from './cash-payment.repository';
 import { CashPaymentResolver } from './cash-payment.resolver';
 import { CashPaymentModuleEnabledGuard } from './guards/cash-payment-module-enabled.guard';
 import { ConfirmCashPaymentService } from './services/confirm-cash-payment.service';
@@ -30,18 +30,17 @@ import { GetMyPendingCashCommissionDebtService } from './services/get-my-pending
  * import directly — same reasoning `EngagementsModule` documents for its own
  * `LedgerModule` import).
  *
- * `EngagementsRepository` is reused here as a CONCRETE provider class (same
- * "reuse the concrete repository class, never the resolver-bearing module"
- * pattern `AppointmentsModule` already establishes for the exact same
- * repository) — `src/cash-payment/` never imports `EngagementsModule`
- * itself. `src/cash-payment/` NEVER writes the `Engagement` table directly —
- * every write to it goes through this reused `EngagementsRepository`
- * instance's own `setPaymentMethodIfUnset`.
- *
- * `exports: [CashPaymentRepository]` — for `src/platform-admin/cash-payment/`'s
- * reuse, same "reuse the concrete repository class directly" pattern
- * `AppointmentsModule`/`ReviewsModule` already establish for their own admin
- * audit-surface siblings.
+ * `EngagementsRepository`/`PaymentAttemptRepository` are reused here as
+ * CONCRETE provider classes (same "reuse the concrete repository class,
+ * never the resolver-bearing module" pattern `AppointmentsModule` already
+ * establishes) — `src/cash-payment/` never imports `EngagementsModule` or
+ * `PaymentsModule` itself. Cash lives in `PaymentAttempt` together with
+ * every other payment method (2026-09-18) — `CashPaymentRepository`/
+ * `CashPaymentConfirmation` no longer exist; every persistence call here
+ * goes through the shared `PaymentAttemptRepository`.
+ * `src/cash-payment/` NEVER writes the `Engagement` table directly — every
+ * write to it goes through the reused `EngagementsRepository` instance's own
+ * `setPaymentMethodIfUnset`.
  */
 @Module({
   imports: [
@@ -54,7 +53,7 @@ import { GetMyPendingCashCommissionDebtService } from './services/get-my-pending
   ],
   providers: [
     CashPaymentResolver,
-    CashPaymentRepository,
+    PaymentAttemptRepository,
     CashPaymentAccessService,
     CashPaymentModuleEnabledGuard,
     EngagementsRepository,
@@ -62,6 +61,5 @@ import { GetMyPendingCashCommissionDebtService } from './services/get-my-pending
     GetMyCashPaymentConfirmationService,
     GetMyPendingCashCommissionDebtService,
   ],
-  exports: [CashPaymentRepository],
 })
 export class CashPaymentModule {}

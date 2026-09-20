@@ -13,10 +13,13 @@ const LEDGER_COMMISSION_MISCONFIGURED_CODE = 'LEDGER_COMMISSION_MISCONFIGURED';
  * philosophy (real backend enforcement, clear errors, no silent
  * guessing/defaulting) rather than falling back to some hardcoded
  * percentage.
+ *
+ * GOS-85: `RecordDigitalPaymentService` (card payments) raises the SAME code
+ * — same misconfiguration, same fix — with its own `message`, so the text
+ * doesn't wrongly say "cancellation" for a payment.
  */
-export function ledgerCommissionMisconfigured(): DomainException {
-  return new DomainException(
-    LEDGER_COMMISSION_MISCONFIGURED_CODE,
-    "GoService's commission percentage is not configured yet — this cancellation cannot be charged.",
-  );
+export function ledgerCommissionMisconfigured(
+  message = "GoService's commission percentage is not configured yet — this cancellation cannot be charged.",
+): DomainException {
+  return new DomainException(LEDGER_COMMISSION_MISCONFIGURED_CODE, message);
 }

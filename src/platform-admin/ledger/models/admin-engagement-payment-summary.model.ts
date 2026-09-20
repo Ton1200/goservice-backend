@@ -6,6 +6,7 @@ import {
   ObjectType,
 } from '@nestjs/graphql';
 import { PaymentMethod } from '../../../ledger/models/payment-method.enum';
+import { AdminPaymentAttemptModel } from '../../payment-attempts/models/admin-payment-attempt.model';
 import { AdminLedgerEntryModel } from './admin-ledger-entry.model';
 import { AdminEngagementPaymentEventType } from './admin-engagement-payment-event-type.enum';
 import { AdminLedgerCustomerModel } from './admin-ledger-customer.model';
@@ -83,4 +84,14 @@ export class AdminEngagementPaymentSummaryModel {
 
   @Field(() => [AdminLedgerEntryModel])
   entries!: AdminLedgerEntryModel[];
+
+  // The ONE PaymentAttempt that was ever approved for this Engagement, if
+  // any (2026-09-18) — how the job was ACTUALLY paid: type (credit card,
+  // account money, cash…), card brand/last 4, provider fee/tax/net, or —
+  // for cash — the two confirmation timestamps. `null` for a job never paid
+  // (e.g. cancelled before any payment). See `PaymentAttemptRepository.
+  // findApprovedByEngagementId`'s own comment for why this lookup is
+  // reliable, not just "usually right".
+  @Field(() => AdminPaymentAttemptModel, { nullable: true })
+  paymentAttempt!: AdminPaymentAttemptModel | null;
 }

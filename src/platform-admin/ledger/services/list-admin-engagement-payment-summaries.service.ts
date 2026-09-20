@@ -7,6 +7,8 @@ import {
   classifyLedgerEventRows,
   EngagementPaymentEventKind,
 } from '../../../ledger/services/classify-engagement-payment-event.util';
+import { PaymentAttemptRepository } from '../../../payments/payment-attempt.repository';
+import { toAdminPaymentAttemptModel } from '../../payment-attempts/models/to-admin-payment-attempt-model.util';
 import { AdminEngagementPaymentEventType } from '../models/admin-engagement-payment-event-type.enum';
 import { AdminEngagementPaymentSummaryModel } from '../models/admin-engagement-payment-summary.model';
 import { AdminEngagementPaymentSummariesPageModel } from '../models/admin-engagement-payment-summaries-page.model';
@@ -41,7 +43,10 @@ export class ListAdminEngagementPaymentSummariesService {
     ListAdminEngagementPaymentSummariesService.name,
   );
 
-  constructor(private readonly ledgerRepository: LedgerRepository) {}
+  constructor(
+    private readonly ledgerRepository: LedgerRepository,
+    private readonly paymentAttemptRepository: PaymentAttemptRepository,
+  ) {}
 
   async listEngagementPaymentSummaries(
     limitInput?: number,
@@ -74,9 +79,30 @@ export class ListAdminEngagementPaymentSummariesService {
       }
       return cached;
     };
+    // Same per-request cache, for the Professional's own current balance —
+    // shown on EVERY row (not only CASH_PAYMENT), so several rows for the
+    // same Professional share one query.
+    const balanceCache = new Map<string, Promise<number>>();
+    const getBalance = (professionalProfileId: string): Promise<number> => {
+      let cached = balanceCache.get(professionalProfileId);
+      if (!cached) {
+        cached = this.ledgerRepository.sumProfessionalBalance(
+          professionalProfileId,
+        );
+        balanceCache.set(professionalProfileId, cached);
+      }
+      return cached;
+    };
 
     page.items = await Promise.all(
-      pageGroups.map((group) => toSummaryModel(group, getPendingDebt)),
+      pageGroups.map((group) =>
+        toSummaryModel(
+          group,
+          getPendingDebt,
+          getBalance,
+          this.paymentAttemptRepository,
+        ),
+      ),
     );
     return page;
   }
@@ -159,6 +185,7 @@ function toProfessionalModel(
   professionalProfile: NonNullable<
     AdminPaymentSummaryLedgerRow['engagement']
   >['professionalProfile'],
+  balance: number,
 ): AdminLedgerProfessionalModel {
   const model = new AdminLedgerProfessionalModel();
   model.id = professionalProfile.id;
@@ -167,6 +194,7 @@ function toProfessionalModel(
   model.firstName = professionalProfile.firstName;
   model.lastName = professionalProfile.lastName;
   model.displayName = professionalProfile.displayName;
+  model.balance = balance;
   return model;
 }
 
@@ -184,6 +212,8 @@ function toProfessionalModel(
 async function toSummaryModel(
   group: EventGroup,
   getPendingDebt: (professionalProfileId: string) => Promise<number>,
+  getBalance: (professionalProfileId: string) => Promise<number>,
+  paymentAttemptRepository: PaymentAttemptRepository,
 ): Promise<AdminEngagementPaymentSummaryModel> {
   const engagement = group.engagement!; // non-null — see groupIntoEvents' own filter.
   const currency = group.rows[0].currency; // every row in one event shares the same currency.
@@ -194,7 +224,10 @@ async function toSummaryModel(
   model.engagementId = group.engagementId;
   model.paymentMethod = engagement.paymentMethod;
   model.customer = toCustomerModel(engagement.customerProfile);
-  model.professional = toProfessionalModel(engagement.professionalProfile);
+  model.professional = toProfessionalModel(
+    engagement.professionalProfile,
+    await getBalance(engagement.professionalProfile.id),
+  );
   model.currency = currency;
   model.occurredAt = group.occurredAt;
   model.entries = group.rows.map(toAdminLedgerEntryModel);
@@ -211,6 +244,14 @@ async function toSummaryModel(
       engagement.professionalProfile.id,
     );
   }
+
+  const approvedAttempt =
+    await paymentAttemptRepository.findApprovedByEngagementId(
+      group.engagementId,
+    );
+  model.paymentAttempt = approvedAttempt
+    ? toAdminPaymentAttemptModel(approvedAttempt)
+    : null;
 
   return model;
 }

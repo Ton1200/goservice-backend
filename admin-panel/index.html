@@ -653,6 +653,12 @@
               <h2 id="payments-heading" class="page-title">Payments</h2>
             </div>
 
+            <!-- GoService's own current balance (adminPlatformBalance,
+                 2026-09-18) — every PLATFORM_COMMISSION collected directly
+                 plus every CASH_COMMISSION_DEBT owed, computed fresh on
+                 every load. See js/payments.js. -->
+            <p id="payments-platform-balance" class="text-secondary mb-3"></p>
+
             <div id="payments-tablist" class="nav nav-underline mb-3" role="tablist" aria-label="Payments subsections"></div>
 
             <!-- Receipts panel (2026-09-14 redesign, human-requested) —
@@ -680,14 +686,16 @@
               </dialog>
             </div>
 
-            <!-- Pending Cash Confirmations panel (adminCashPaymentConfirmations) -->
+            <!-- Payment Attempts panel (adminPaymentAttempts, renamed from
+                 "Pending Cash Confirmations" 2026-09-18 — cash lives in
+                 PaymentAttempt together with every other method) -->
             <div id="payments-cash-panel" role="tabpanel" aria-labelledby="payments-tab-cash" hidden>
               <p id="payments-cash-error" class="alert alert-danger" role="alert" hidden></p>
 
               <div class="d-flex align-items-center justify-content-end gap-2 mb-3">
                 <label class="form-check form-switch mb-0">
                   <input id="payments-cash-only-pending" class="form-check-input" type="checkbox" checked>
-                  <span class="form-check-label">Pending confirmation only</span>
+                  <span class="form-check-label">Not settled only (pending or rejected)</span>
                 </label>
               </div>
 

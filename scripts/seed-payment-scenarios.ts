@@ -1,7 +1,7 @@
 // Follow-up to GOS-87 + the 2026-09-14 "Payments" admin-panel follow-up —
 // adds real payment/comprobante data to the EXISTING `goservice_dev`
 // database, for visual verification of the new admin "Payments" panel
-// (`adminLedgerEntries`/`adminCashPaymentConfirmations`,
+// (`adminLedgerEntries`/`adminPaymentAttempts`,
 // `admin-panel/js/payments.js`) and of `myPaymentReceipts`/
 // `myPendingCashCommissionDebt`/`confirmCashPayment` on the consumer side.
 //
@@ -9,9 +9,11 @@
 // CustomerProfiles/ProfessionalProfiles from `scripts/seed-demo-data.ts`
 // (María, Carlos, Laura, Pedro, Ana, Jorge, Sofía, Diego, Valentina) strictly
 // by looking them up (never re-creating them), and only ever INSERTs
-// brand-new ServiceRequest/Quote/Engagement/CashPaymentConfirmation/
-// LedgerEntry rows. Never touches any Engagement created by another demo
-// script (`seed-negotiation-scenarios.ts`/`seed-engagement-chat-scenarios.ts`/
+// brand-new ServiceRequest/Quote/Engagement/PaymentAttempt/LedgerEntry rows
+// (cash lives in `PaymentAttempt` together with every other method,
+// 2026-09-18 — there is no more standalone `CashPaymentConfirmation` table).
+// Never touches any Engagement created by another demo script
+// (`seed-negotiation-scenarios.ts`/`seed-engagement-chat-scenarios.ts`/
 // `seed-appointment-scenarios.ts`/`seed-review-scenarios.ts`) — every
 // ServiceRequest/Quote/Engagement here is freshly created by THIS script.
 //
@@ -56,10 +58,12 @@
 // doing anything else).
 import path from 'node:path';
 import {
-  CashPaymentConfirmation,
   Engagement,
   EngagementStatus,
   LedgerEntryType,
+  PaymentAttempt,
+  PaymentAttemptStatus,
+  PaymentAttemptType,
   PaymentMethod,
   PrismaClient,
   QuoteStatus,
@@ -91,7 +95,7 @@ async function assertNotAlreadySeeded(): Promise<void> {
   });
   if (marker) {
     throw new Error(
-      'seed-payment-scenarios: this database already has this script\'s ' +
+      "seed-payment-scenarios: this database already has this script's " +
         'marker ServiceRequest seeded — this script is not re-runnable. ' +
         'Nothing was changed this run.',
     );
@@ -151,7 +155,10 @@ async function getCategoryByName(name: string): Promise<{ id: string }> {
   return category;
 }
 
-const CURRENCY_BY_COUNTRY: Record<'AR' | 'CO', string> = { AR: 'ARS', CO: 'COP' };
+const CURRENCY_BY_COUNTRY: Record<'AR' | 'CO', string> = {
+  AR: 'ARS',
+  CO: 'COP',
+};
 
 /**
  * Mirrors `AcceptQuoteService`'s single transaction (create a SENT Quote,
@@ -223,40 +230,62 @@ function advanceToInProgress(engagementId: string): Promise<Engagement> {
 }
 
 /**
- * Mirrors `ConfirmCashPaymentService` + `CashPaymentRepository.upsertConfirmation`
- * by hand: stamps the calling role's own confirmation timestamp (creating
- * the row on first call), and assigns `Engagement.paymentMethod = CASH` if
- * unset. Does NOT itself decide whether to write the `CASH_COMMISSION_DEBT`
- * entry — see `recordCashCommissionDebtIfBothConfirmed` below, called
- * separately once both confirmations exist, same two-step shape as the real
- * service.
+ * Mirrors `ConfirmCashPaymentService` + `PaymentAttemptRepository.upsertCashConfirmation`
+ * by hand: stamps the calling role's own confirmation timestamp on the
+ * Engagement's cash `PaymentAttempt` row (creating it, `method: CASH`,
+ * `type: CASH`, PENDING, on first call), and assigns `Engagement.paymentMethod
+ * = CASH` if unset. Does NOT itself decide whether to flip the attempt
+ * APPROVED / write the `CASH_COMMISSION_DEBT` entry — see
+ * `recordCashCommissionDebt` below, called separately once both
+ * confirmations exist, same two-step shape as the real service. Cash lives
+ * in `PaymentAttempt` together with every other method (2026-09-18
+ * generalization) — there is no more standalone `CashPaymentConfirmation`
+ * table.
  */
 async function confirmCashPayment(params: {
   engagementId: string;
+  quotedPrice: number;
+  currency: string;
   role: 'CUSTOMER' | 'PROFESSIONAL';
-}): Promise<CashPaymentConfirmation> {
+}): Promise<PaymentAttempt> {
   await prisma.engagement.updateMany({
     where: { id: params.engagementId, paymentMethod: null },
     data: { paymentMethod: PaymentMethod.CASH },
   });
 
+  const existing = await prisma.paymentAttempt.findFirst({
+    where: { engagementId: params.engagementId, method: PaymentMethod.CASH },
+  });
   const stamp =
     params.role === 'CUSTOMER'
       ? { customerConfirmedAt: new Date() }
       : { professionalConfirmedAt: new Date() };
 
-  return prisma.cashPaymentConfirmation.upsert({
-    where: { engagementId: params.engagementId },
-    update: stamp,
-    create: { engagementId: params.engagementId, ...stamp },
+  if (existing) {
+    return prisma.paymentAttempt.update({
+      where: { id: existing.id },
+      data: stamp,
+    });
+  }
+  return prisma.paymentAttempt.create({
+    data: {
+      engagementId: params.engagementId,
+      method: PaymentMethod.CASH,
+      type: PaymentAttemptType.CASH,
+      status: PaymentAttemptStatus.PENDING,
+      amount: params.quotedPrice,
+      currency: params.currency,
+      ...stamp,
+    },
   });
 }
 
 /**
  * Mirrors `RecordCashCommissionDebtService`: writes exactly ONE
  * `CASH_COMMISSION_DEBT` `LedgerEntry` — `commission = round(quotedPrice *
- * commissionPercent / 100)` — and flips `commissionDebtRecorded`. Call only
- * once BOTH `confirmCashPayment` calls above have run for this Engagement.
+ * commissionPercent / 100)` — and flips the cash `PaymentAttempt` to
+ * APPROVED. Call only once BOTH `confirmCashPayment` calls above have run
+ * for this Engagement.
  */
 async function recordCashCommissionDebt(params: {
   engagementId: string;
@@ -269,9 +298,9 @@ async function recordCashCommissionDebt(params: {
     (params.quotedPrice * COMMISSION_PERCENT) / 100,
   );
   await prisma.$transaction(async (tx) => {
-    await tx.cashPaymentConfirmation.update({
-      where: { engagementId: params.engagementId },
-      data: { commissionDebtRecorded: true },
+    await tx.paymentAttempt.updateMany({
+      where: { engagementId: params.engagementId, method: PaymentMethod.CASH },
+      data: { status: PaymentAttemptStatus.APPROVED },
     });
     await tx.ledgerEntry.create({
       data: {
@@ -302,9 +331,7 @@ async function cancelByCustomerInProgress(params: {
   professionalProfileId: string;
   reason: string;
 }): Promise<void> {
-  const feeAmount = Math.round(
-    (params.quotedPrice * COMMISSION_PERCENT) / 100,
-  );
+  const feeAmount = Math.round((params.quotedPrice * COMMISSION_PERCENT) / 100);
   const commissionAmount = Math.round((feeAmount * COMMISSION_PERCENT) / 100);
   const netAmount = feeAmount - commissionAmount;
 
@@ -428,7 +455,9 @@ async function main(): Promise<void> {
   // in order (Customer first, then Professional) → exactly ONE
   // CASH_COMMISSION_DEBT LedgerEntry, commissionDebtRecorded = true.
   // ==========================================================================
-  console.log('seed-payment-scenarios: Scenario 1 (plomería, cash, ambos confirman)...');
+  console.log(
+    'seed-payment-scenarios: Scenario 1 (plomería, cash, ambos confirman)...',
+  );
   const plumbingPrice = 8000;
   const plumbing = await createAcceptedEngagement({
     description: `${MARKER_DESCRIPTION_SNIPPET} Se rompió una cañería y pierde agua en la cocina.`,
@@ -439,8 +468,19 @@ async function main(): Promise<void> {
     price: plumbingPrice,
   });
   await advanceToInProgress(plumbing.id);
-  await confirmCashPayment({ engagementId: plumbing.id, role: 'CUSTOMER' });
-  await confirmCashPayment({ engagementId: plumbing.id, role: 'PROFESSIONAL' });
+  const plumbingCurrency = CURRENCY_BY_COUNTRY[mariaCustomer.country];
+  await confirmCashPayment({
+    engagementId: plumbing.id,
+    quotedPrice: plumbingPrice,
+    currency: plumbingCurrency,
+    role: 'CUSTOMER',
+  });
+  await confirmCashPayment({
+    engagementId: plumbing.id,
+    quotedPrice: plumbingPrice,
+    currency: plumbingCurrency,
+    role: 'PROFESSIONAL',
+  });
   await recordCashCommissionDebt({
     engagementId: plumbing.id,
     quotedPrice: plumbingPrice,
@@ -453,7 +493,9 @@ async function main(): Promise<void> {
   // Scenario 2 — electrical (Carlos/Ana): ONLY the Customer confirmed cash
   // payment so far — a real half-confirmed row for "Efectivo pendiente".
   // ==========================================================================
-  console.log('seed-payment-scenarios: Scenario 2 (electricidad, cash, solo Cliente confirmó)...');
+  console.log(
+    'seed-payment-scenarios: Scenario 2 (electricidad, cash, solo Cliente confirmó)...',
+  );
   const electricalPrice = 6000;
   const electrical = await createAcceptedEngagement({
     description: `${MARKER_DESCRIPTION_SNIPPET} Cambiar varios tomacorrientes en el living.`,
@@ -464,14 +506,21 @@ async function main(): Promise<void> {
     price: electricalPrice,
   });
   await advanceToInProgress(electrical.id);
-  await confirmCashPayment({ engagementId: electrical.id, role: 'CUSTOMER' });
+  await confirmCashPayment({
+    engagementId: electrical.id,
+    quotedPrice: electricalPrice,
+    currency: CURRENCY_BY_COUNTRY[carlosCustomer.country],
+    role: 'CUSTOMER',
+  });
   // Ana (PROFESSIONAL) deliberately does NOT confirm yet in this scenario.
 
   // ==========================================================================
   // Scenario 3 — painting (Laura/Sofía): ONLY the Professional confirmed —
   // the mirror-image half-confirmed row.
   // ==========================================================================
-  console.log('seed-payment-scenarios: Scenario 3 (pintura, cash, solo Profesional confirmó)...');
+  console.log(
+    'seed-payment-scenarios: Scenario 3 (pintura, cash, solo Profesional confirmó)...',
+  );
   const paintingPrice = 9000;
   const painting = await createAcceptedEngagement({
     description: `${MARKER_DESCRIPTION_SNIPPET} Pintar el frente de la casa.`,
@@ -482,7 +531,12 @@ async function main(): Promise<void> {
     price: paintingPrice,
   });
   await advanceToInProgress(painting.id);
-  await confirmCashPayment({ engagementId: painting.id, role: 'PROFESSIONAL' });
+  await confirmCashPayment({
+    engagementId: painting.id,
+    quotedPrice: paintingPrice,
+    currency: CURRENCY_BY_COUNTRY[lauraCustomer.country],
+    role: 'PROFESSIONAL',
+  });
   // Laura (CUSTOMER) deliberately does NOT confirm yet in this scenario.
 
   // ==========================================================================
@@ -490,7 +544,9 @@ async function main(): Promise<void> {
   // work → 3 zero-sum LedgerEntry rows, in COP (Valentina's CustomerProfile
   // is Colombia) — the first non-ARS ledger data in this dev database.
   // ==========================================================================
-  console.log('seed-payment-scenarios: Scenario 4 (carpintería, cancelación por Cliente IN_PROGRESS, COP)...');
+  console.log(
+    'seed-payment-scenarios: Scenario 4 (carpintería, cancelación por Cliente IN_PROGRESS, COP)...',
+  );
   const carpentryPrice = 5000;
   const carpentry = await createAcceptedEngagement({
     description: `${MARKER_DESCRIPTION_SNIPPET} Reparar puertas de placard corredizas.`,
@@ -514,7 +570,9 @@ async function main(): Promise<void> {
   // Scenario 5 — electrical again (María/Diego): Professional cancels
   // (any stage) → exactly ONE REFUND row, full price, no commission split.
   // ==========================================================================
-  console.log('seed-payment-scenarios: Scenario 5 (electricidad, cancelación por Profesional, REFUND)...');
+  console.log(
+    'seed-payment-scenarios: Scenario 5 (electricidad, cancelación por Profesional, REFUND)...',
+  );
   const refundPrice = 4000;
   const refundJob = await createAcceptedEngagement({
     description: `${MARKER_DESCRIPTION_SNIPPET} Instalar un ventilador de techo.`,
@@ -564,7 +622,7 @@ async function main(): Promise<void> {
           consumer_myPaymentReceipts:
             'query { myPaymentReceipts { id receiptNumber type amount currency engagementId createdAt } } — run against /graphql, logged in as maria.customer1@goservice.dev / pedro.plumber@goservice.dev / etc.',
           consumer_myPendingCashCommissionDebt:
-            'query { myPendingCashCommissionDebt } — logged in as pedro.plumber@goservice.dev, should include scenario 1\'s 800 ARS.',
+            "query { myPendingCashCommissionDebt } — logged in as pedro.plumber@goservice.dev, should include scenario 1's 800 ARS.",
         },
       },
       null,

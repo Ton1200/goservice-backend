@@ -1,4 +1,10 @@
-import { Field, GraphQLISODateTime, ID, ObjectType } from '@nestjs/graphql';
+import {
+  Field,
+  GraphQLISODateTime,
+  ID,
+  Int,
+  ObjectType,
+} from '@nestjs/graphql';
 import { CustomerProfile } from '../../../profiles/models/customer-profile.model';
 import { ProfessionalProfile } from '../../../profiles/models/professional-profile.model';
 import { UserAccountStatus } from '../../../users/models/user-account-status.enum';
@@ -83,4 +89,18 @@ export class UserAccountDetailModel {
   /** Full `ProfessionalProfile` content (with specializations), or null if this user never created one. */
   @Field(() => ProfessionalProfile, { nullable: true })
   professionalProfile!: ProfessionalProfile | null;
+
+  // This user's CURRENT payment balance (2026-09-19, human-requested — "en
+  // cada usuario con perfil profesional... para tener info a la mano"), if
+  // they have a ProfessionalProfile — `null` otherwise. Same figure
+  // `myPaymentBalance`/`AdminLedgerProfessional.balance` compute
+  // (`LedgerRepository.sumProfessionalBalance`): net digital credits minus
+  // cash commission debt, computed fresh on every read, never cached. A
+  // DELIBERATELY SEPARATE field on this admin-only type, never added to the
+  // shared `ProfessionalProfile` class above — that class is reused
+  // as-is by the CONSUMER schema's `myProfessionalProfile` (see this
+  // model's own header comment), and this figure has no business leaking
+  // there through a different query than `myPaymentBalance` itself.
+  @Field(() => Int, { nullable: true })
+  professionalPaymentBalance!: number | null;
 }

@@ -33,6 +33,7 @@ import { CashPaymentModule } from './cash-payment/cash-payment.module';
 import { EngagementFinancialSummaryModule } from './engagement-financial-summary/engagement-financial-summary.module';
 import { MediaUploadsModule } from './media-uploads/media-uploads.module';
 import { PaymentReceiptsModule } from './payment-receipts/payment-receipts.module';
+import { PaymentsModule } from './payments/payments.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import type { AppConfig } from './config/configuration';
 
@@ -87,6 +88,7 @@ import type { AppConfig } from './config/configuration';
           MediaUploadsModule,
           ReviewsModule,
           CashPaymentModule,
+          PaymentsModule,
           PaymentReceiptsModule,
           EngagementFinancialSummaryModule,
         ],
@@ -270,6 +272,7 @@ import type { AppConfig } from './config/configuration';
     MediaUploadsModule,
     ReviewsModule,
     CashPaymentModule,
+    PaymentsModule,
     PaymentReceiptsModule,
     EngagementFinancialSummaryModule,
   ],
