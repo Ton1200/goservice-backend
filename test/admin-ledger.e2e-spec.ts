@@ -541,6 +541,42 @@ describe('GraphQL /admin/graphql — adminLedgerEntries (GOS-109, e2e)', () => {
       expect(summary?.entries[0].type).toBe('REFUND');
     });
 
+    it('GOS-146: serializes a job whose Engagement.paymentMethod is RAPYD (the new PaymentMethod value) without breaking the admin query', async () => {
+      // A serialization check of the shared `PaymentMethod` enum, not of the
+      // Rapyd payment flow (covered by `rapyd-payment.e2e-spec.ts`): the value is
+      // set directly on an Engagement that already has a ledger event.
+      const { engagementId } = await seedRefundedEngagement();
+      await prisma.engagement.update({
+        where: { id: engagementId },
+        data: { paymentMethod: 'RAPYD' },
+      });
+      const admin = await seedAdminWithRole('payment-summary-rapyd', [
+        Permission.LEDGER_READ,
+      ]);
+      const token = await loginAdminAndGetToken(admin.email);
+
+      const response = await adminGraphqlRequest(
+        token,
+        ADMIN_ENGAGEMENT_PAYMENT_SUMMARIES_QUERY,
+        { limit: 200, offset: 0 },
+      ).expect(200);
+      const body = response.body as {
+        errors?: unknown;
+        data: {
+          adminEngagementPaymentSummaries: {
+            items: AdminEngagementPaymentSummaryPayload[];
+          };
+        };
+      };
+
+      expect(body.errors).toBeUndefined();
+      expect(
+        body.data.adminEngagementPaymentSummaries.items.find(
+          (item) => item.engagementId === engagementId,
+        )?.paymentMethod,
+      ).toBe('RAPYD');
+    });
+
     it('rejects an admin without LEDGER_READ with ADMIN_FORBIDDEN', async () => {
       const admin = await seedAdminWithRole('payment-summary-none', []);
       const token = await loginAdminAndGetToken(admin.email);

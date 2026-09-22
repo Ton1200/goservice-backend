@@ -8,10 +8,8 @@ import { EngagementsRepository } from '../../engagements/engagements.repository'
 import { RecordDigitalPaymentService } from '../../ledger/services/record-digital-payment.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
-import type {
-  PaymentProviderPort,
-  ProviderTransactionDetails,
-} from '../ports/payment-provider.port';
+import { PaymentProviderRegistry } from '../payment-provider.registry';
+import type { ProviderTransactionDetails } from '../ports/payment-provider.port';
 import { ApplyPaymentResultService } from './apply-payment-result.service';
 
 const fakeTx = { __fakeTransactionClient: true } as never;
@@ -31,6 +29,7 @@ function makeAttempt(overrides?: Record<string, unknown>) {
   return {
     id: 'attempt-1',
     engagementId: 'engagement-1',
+    method: PaymentMethod.MERCADOPAGO,
     status: PaymentAttemptStatus.PENDING,
     providerPaymentId: null,
     amount: 50000,
@@ -114,17 +113,21 @@ describe('ApplyPaymentResultService', () => {
           );
     const paymentProvider = {
       getTransactionDetails,
-    } as unknown as PaymentProviderPort;
+    };
+
+    const forMethod = jest.fn().mockReturnValue(paymentProvider);
+    const registry = { forMethod } as unknown as PaymentProviderRegistry;
 
     const service = new ApplyPaymentResultService(
       prisma,
       paymentAttemptRepository,
       engagementsRepository,
       recordDigitalPaymentService,
-      paymentProvider,
+      registry,
     );
     return {
       service,
+      forMethod,
       getTransactionDetails,
       findById,
       resolveIfPending,
@@ -207,6 +210,45 @@ describe('ApplyPaymentResultService', () => {
 
       expect(m.$transaction).not.toHaveBeenCalled();
       expect(m.recordDigitalPayment).not.toHaveBeenCalled();
+    });
+
+    it('GOS-146: paying an attempt already closed as REJECTED is logged at ERROR level (money charged, nothing recorded) — never silent', async () => {
+      const errorLog = jest.spyOn(Logger.prototype, 'error');
+      errorLog.mockClear();
+      const m = makeService({
+        attempt: makeAttempt({
+          method: PaymentMethod.RAPYD,
+          status: PaymentAttemptStatus.REJECTED,
+        }),
+      });
+
+      await m.service.apply('attempt-1', {
+        status: 'approved',
+        providerPaymentId: 'payment_1',
+      });
+
+      expect(JSON.stringify(errorLog.mock.calls)).toContain(
+        'payment_approved_for_rejected_attempt',
+      );
+      expect(m.recordDigitalPayment).not.toHaveBeenCalled();
+    });
+
+    it('GOS-146: a RAPYD attempt sets Engagement.paymentMethod = RAPYD and reads the details through the RAPYD adapter — never assumes Mercado Pago', async () => {
+      const m = makeService({
+        attempt: makeAttempt({ method: PaymentMethod.RAPYD }),
+      });
+
+      await m.service.apply('attempt-1', {
+        status: 'approved',
+        providerPaymentId: 'payment_1',
+      });
+
+      expect(m.setPaymentMethodIfUnset).toHaveBeenCalledWith(
+        fakeTx,
+        'engagement-1',
+        PaymentMethod.RAPYD,
+      );
+      expect(m.forMethod).toHaveBeenCalledWith(PaymentMethod.RAPYD);
     });
 
     it('propagates a ledger failure (the transaction rolls the approval back) and does not set the method', async () => {

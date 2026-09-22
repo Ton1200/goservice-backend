@@ -3,16 +3,15 @@ import {
   CountryCode,
   PaymentAttempt,
   PaymentAttemptStatus,
-  PaymentMethod,
 } from '@prisma/client';
 import { EngagementsRepository } from '../../engagements/engagements.repository';
 import { RecordDigitalPaymentService } from '../../ledger/services/record-digital-payment.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
-import {
-  PaymentProviderPort,
-  type CardRejectionReason,
-  type ProviderTransactionDetails,
+import { PaymentProviderRegistry } from '../payment-provider.registry';
+import type {
+  CardRejectionReason,
+  ProviderTransactionDetails,
 } from '../ports/payment-provider.port';
 
 /** What the provider (synchronously, or via its notification) says happened. */
@@ -33,8 +32,9 @@ export interface PaymentResolution {
  *
  * - `approved`: in ONE transaction — flip the attempt `PENDING -> APPROVED`
  *   (guarded CAS), write the 3-row digital-payment ledger event
- *   (`RecordDigitalPaymentService`) and set
- *   `Engagement.paymentMethod = MERCADOPAGO` if unset. A failure anywhere (e.g. the
+ *   (`RecordDigitalPaymentService`) and set `Engagement.paymentMethod` to the
+ *   ATTEMPT'S method (`attempt.method` — `MERCADOPAGO` or `RAPYD`, GOS-146;
+ *   never assumed to be Mercado Pago) if unset. A failure anywhere (e.g. the
  *   commission percentage is misconfigured) rolls ALL of it back, leaving the
  *   attempt PENDING — never an APPROVED attempt with no ledger event.
  *   The non-sensitive facts of how it was paid (brand, last four, the
@@ -65,7 +65,7 @@ export class ApplyPaymentResultService {
     private readonly paymentAttemptRepository: PaymentAttemptRepository,
     private readonly engagementsRepository: EngagementsRepository,
     private readonly recordDigitalPaymentService: RecordDigitalPaymentService,
-    private readonly paymentProvider: PaymentProviderPort,
+    private readonly paymentProviderRegistry: PaymentProviderRegistry,
   ) {}
 
   async apply(
@@ -88,6 +88,23 @@ export class ApplyPaymentResultService {
     }
 
     if (attempt.status !== PaymentAttemptStatus.PENDING) {
+      if (
+        resolution.status === 'approved' &&
+        attempt.status === PaymentAttemptStatus.REJECTED
+      ) {
+        // The provider says the Customer PAID an attempt GoService already
+        // closed as REJECTED (e.g. a stale embedded checkout paid after
+        // `abandonEngagementPaymentAttempt` — a provider cannot cancel a
+        // checkout). No ledger event is written (the CAS is one-way), so this
+        // is money charged and unrecorded: surface it loudly for a human.
+        this.logger.error({
+          event: 'payment_approved_for_rejected_attempt',
+          attemptId,
+          engagementId: attempt.engagementId,
+          method: attempt.method,
+          providerPaymentId: resolution.providerPaymentId,
+        });
+      }
       // Fast path — already resolved. The CAS below would also no-op; this
       // just skips the billing read.
       this.logger.log({
@@ -154,7 +171,7 @@ export class ApplyPaymentResultService {
         const method = await this.engagementsRepository.setPaymentMethodIfUnset(
           tx,
           attempt.engagementId,
-          PaymentMethod.MERCADOPAGO,
+          attempt.method,
         );
         if (method.count !== 1) {
           // Not an error path we can fix here: the Engagement's method was
@@ -197,12 +214,16 @@ export class ApplyPaymentResultService {
       return null;
     }
     try {
-      const details = await this.paymentProvider.getTransactionDetails(
-        providerPaymentId,
-        // The reference sent to the provider at creation is the Engagement id.
-        attempt.engagementId,
-        country,
-      );
+      // GOS-146: the adapter that collected THIS attempt (`attempt.method`),
+      // never assumed to be Mercado Pago.
+      const details = await this.paymentProviderRegistry
+        .forMethod(attempt.method)
+        .getTransactionDetails(
+          providerPaymentId,
+          // The reference sent to the provider at creation is the Engagement id.
+          attempt.engagementId,
+          country,
+        );
       if (!details) {
         this.logger.warn({
           event: 'payment_details_not_available_yet',

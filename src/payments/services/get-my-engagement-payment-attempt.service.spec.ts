@@ -1,25 +1,45 @@
 import { Logger } from '@nestjs/common';
-import { PaymentAttemptStatus } from '@prisma/client';
+import { PaymentAttemptStatus, PaymentMethod } from '@prisma/client';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
 import { EngagementsRepository } from '../../engagements/engagements.repository';
 import { CardPaymentAccessService } from '../card-payment-access.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
-import { PaymentProviderPort } from '../ports/payment-provider.port';
 import { ApplyPaymentResultService } from './apply-payment-result.service';
 import { GetMyEngagementPaymentAttemptService } from './get-my-engagement-payment-attempt.service';
+import {
+  AttemptProviderState,
+  ReadAttemptProviderStateService,
+} from './read-attempt-provider-state.service';
 
 function makeAttempt(overrides?: Record<string, unknown>) {
   return {
     id: 'attempt-1',
     engagementId: 'engagement-1',
+    method: PaymentMethod.MERCADOPAGO,
     status: PaymentAttemptStatus.PENDING,
     providerPaymentId: null,
+    providerCheckoutId: null,
     amount: 50000,
     currency: 'COP',
     installments: 1,
     rejectionReason: null,
     createdAt: new Date(),
     updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+function makeState(
+  overrides?: Partial<AttemptProviderState>,
+): AttemptProviderState {
+  return {
+    status: 'approved',
+    providerPaymentId: '178687128941',
+    externalReference: 'engagement-1',
+    amount: 50000,
+    currency: 'COP',
+    paymentCreated: true,
+    open: false,
     ...overrides,
   };
 }
@@ -43,8 +63,7 @@ describe('GetMyEngagementPaymentAttemptService', () => {
     accessError?: Error;
     latestAttempt?: Record<string, unknown> | null;
     billingContext?: Record<string, unknown> | null;
-    getPayment?: jest.Mock;
-    getPaymentByPaymentId?: jest.Mock;
+    read?: jest.Mock;
     apply?: jest.Mock;
   }) {
     const resolveCustomerEngagement = options?.accessError
@@ -76,12 +95,8 @@ describe('GetMyEngagementPaymentAttemptService', () => {
       findLatestByEngagementId,
     } as unknown as PaymentAttemptRepository;
 
-    const getPayment = options?.getPayment ?? jest.fn();
-    const getPaymentByPaymentId = options?.getPaymentByPaymentId ?? jest.fn();
-    const paymentProvider = {
-      getPayment,
-      getPaymentByPaymentId,
-    } as unknown as PaymentProviderPort;
+    const read = options?.read ?? jest.fn();
+    const readService = { read } as unknown as ReadAttemptProviderStateService;
 
     const apply =
       options?.apply ??
@@ -96,15 +111,14 @@ describe('GetMyEngagementPaymentAttemptService', () => {
       accessService,
       engagementsRepository,
       paymentAttemptRepository,
-      paymentProvider,
+      readService,
       applyService,
     );
     return {
       service,
       resolveCustomerEngagement,
       findLatestByEngagementId,
-      getPayment,
-      getPaymentByPaymentId,
+      read,
       apply,
     };
   }
@@ -136,15 +150,17 @@ describe('GetMyEngagementPaymentAttemptService', () => {
       );
 
       expect(result).toMatchObject({ status });
-      expect(m.getPayment).not.toHaveBeenCalled();
-      expect(m.getPaymentByPaymentId).not.toHaveBeenCalled();
+      expect(m.read).not.toHaveBeenCalled();
       expect(m.apply).not.toHaveBeenCalled();
     },
   );
 
-  it('returns a PENDING attempt with no providerPaymentId as-is — nothing to re-read yet (documented gap)', async () => {
+  it('returns a PENDING attempt with neither a providerPaymentId nor a providerCheckoutId as-is — nothing to re-read yet (documented gap)', async () => {
     const m = makeService({
-      latestAttempt: makeAttempt({ providerPaymentId: null }),
+      latestAttempt: makeAttempt({
+        providerPaymentId: null,
+        providerCheckoutId: null,
+      }),
     });
 
     const result = await m.service.getMyEngagementPaymentAttempt(
@@ -153,21 +169,15 @@ describe('GetMyEngagementPaymentAttemptService', () => {
     );
 
     expect(result).toMatchObject({ status: PaymentAttemptStatus.PENDING });
-    expect(m.getPayment).not.toHaveBeenCalled();
-    expect(m.getPaymentByPaymentId).not.toHaveBeenCalled();
+    expect(m.read).not.toHaveBeenCalled();
   });
 
-  describe('opportunistic reconciliation of a PENDING attempt that already has a providerPaymentId', () => {
-    it('re-reads a WALLET attempt (numeric id) via getPaymentByPaymentId, never getPayment, and applies the result', async () => {
+  describe('opportunistic reconciliation of a PENDING attempt the provider can be asked about', () => {
+    it('re-reads a Mercado Pago attempt that has a providerPaymentId and applies the result', async () => {
+      const attempt = makeAttempt({ providerPaymentId: '178687128941' });
       const m = makeService({
-        latestAttempt: makeAttempt({ providerPaymentId: '178687128941' }),
-        getPaymentByPaymentId: jest.fn().mockResolvedValue({
-          providerPaymentId: '178687128941',
-          status: 'approved',
-          externalReference: 'engagement-1',
-          amount: 50000,
-          currency: 'COP',
-        }),
+        latestAttempt: attempt,
+        read: jest.fn().mockResolvedValue(makeState()),
       });
 
       const result = await m.service.getMyEngagementPaymentAttempt(
@@ -175,11 +185,9 @@ describe('GetMyEngagementPaymentAttemptService', () => {
         'engagement-1',
       );
 
-      expect(m.getPaymentByPaymentId).toHaveBeenCalledWith(
-        '178687128941',
-        'CO',
-      );
-      expect(m.getPayment).not.toHaveBeenCalled();
+      // The reader dispatches by the attempt's method; the country is the
+      // Engagement's own, never anything client-supplied.
+      expect(m.read).toHaveBeenCalledWith(attempt, 'CO');
       expect(m.apply).toHaveBeenCalledWith('attempt-1', {
         status: 'approved',
         providerPaymentId: '178687128941',
@@ -188,34 +196,37 @@ describe('GetMyEngagementPaymentAttemptService', () => {
       expect(result).toMatchObject({ status: PaymentAttemptStatus.APPROVED });
     });
 
-    it('re-reads a CARD attempt (order id) via getPayment, never getPaymentByPaymentId', async () => {
+    it('reconciles a Rapyd attempt that has ONLY a providerCheckoutId (no webhook, no payment id yet) and records the payment id the checkout reveals', async () => {
+      const attempt = makeAttempt({
+        method: PaymentMethod.RAPYD,
+        providerPaymentId: null,
+        providerCheckoutId: 'checkout_1',
+      });
       const m = makeService({
-        latestAttempt: makeAttempt({ providerPaymentId: 'ORD_1' }),
-        getPayment: jest.fn().mockResolvedValue({
-          providerPaymentId: 'ORD_1',
-          status: 'approved',
-          externalReference: 'engagement-1',
-          amount: 50000,
-          currency: 'COP',
-        }),
+        latestAttempt: attempt,
+        read: jest
+          .fn()
+          .mockResolvedValue(makeState({ providerPaymentId: 'payment_1' })),
       });
 
-      await m.service.getMyEngagementPaymentAttempt('user-1', 'engagement-1');
+      const result = await m.service.getMyEngagementPaymentAttempt(
+        'user-1',
+        'engagement-1',
+      );
 
-      expect(m.getPayment).toHaveBeenCalledWith('ORD_1', 'CO');
-      expect(m.getPaymentByPaymentId).not.toHaveBeenCalled();
+      expect(m.read).toHaveBeenCalledWith(attempt, 'CO');
+      expect(m.apply).toHaveBeenCalledWith('attempt-1', {
+        status: 'approved',
+        providerPaymentId: 'payment_1',
+        rejectionReason: undefined,
+      });
+      expect(result).toMatchObject({ status: PaymentAttemptStatus.APPROVED });
     });
 
     it('never approves an amount/currency mismatch — same safety guard as the webhook', async () => {
       const m = makeService({
         latestAttempt: makeAttempt({ providerPaymentId: '178687128941' }),
-        getPaymentByPaymentId: jest.fn().mockResolvedValue({
-          providerPaymentId: '178687128941',
-          status: 'approved',
-          externalReference: 'engagement-1',
-          amount: 1,
-          currency: 'COP',
-        }),
+        read: jest.fn().mockResolvedValue(makeState({ amount: 1 })),
       });
 
       const result = await m.service.getMyEngagementPaymentAttempt(
@@ -233,7 +244,7 @@ describe('GetMyEngagementPaymentAttemptService', () => {
     it('returns the still-PENDING attempt when the provider has no record yet', async () => {
       const m = makeService({
         latestAttempt: makeAttempt({ providerPaymentId: '178687128941' }),
-        getPaymentByPaymentId: jest.fn().mockResolvedValue(null),
+        read: jest.fn().mockResolvedValue(null),
       });
 
       const result = await m.service.getMyEngagementPaymentAttempt(
@@ -248,9 +259,7 @@ describe('GetMyEngagementPaymentAttemptService', () => {
     it('NEVER fails or throws when the provider is unreachable — swallows and returns what is already persisted', async () => {
       const m = makeService({
         latestAttempt: makeAttempt({ providerPaymentId: '178687128941' }),
-        getPaymentByPaymentId: jest
-          .fn()
-          .mockRejectedValue(new Error('ECONNRESET')),
+        read: jest.fn().mockRejectedValue(new Error('ECONNRESET')),
       });
 
       const result = await m.service.getMyEngagementPaymentAttempt(
@@ -276,7 +285,7 @@ describe('GetMyEngagementPaymentAttemptService', () => {
       );
 
       expect(result).toMatchObject({ status: PaymentAttemptStatus.PENDING });
-      expect(m.getPaymentByPaymentId).not.toHaveBeenCalled();
+      expect(m.read).not.toHaveBeenCalled();
     });
   });
 });

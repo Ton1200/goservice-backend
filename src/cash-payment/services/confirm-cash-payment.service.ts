@@ -50,7 +50,7 @@ import { engagementNotConfirmableForCashPayment } from '../errors/engagement-not
  * `engagementNotConfirmableForCashPayment()`'s own header comment for why
  * this is a documented ASSUMPTION, not a ticket-specified rule. Also
  * rejected if the Engagement already picked the OTHER method
- * (`paymentMethod === MERCADOPAGO`) — same symmetric check
+ * (any `paymentMethod` other than CASH — Mercado Pago or Rapyd) — same symmetric check
  * `PayEngagementWithCardService` runs for the reverse case.
  *
  * Ownership/role resolution is entirely `CashPaymentAccessService`'s job —
@@ -83,7 +83,12 @@ export class ConfirmCashPaymentService {
     ) {
       throw engagementNotConfirmableForCashPayment();
     }
-    if (engagement.paymentMethod === PaymentMethod.MERCADOPAGO) {
+    // GOS-146: any digital provider (Mercado Pago, Rapyd, …) — not just one —
+    // has already committed the Engagement to a non-cash method.
+    if (
+      engagement.paymentMethod !== null &&
+      engagement.paymentMethod !== PaymentMethod.CASH
+    ) {
       throw paymentMethodConflict();
     }
 

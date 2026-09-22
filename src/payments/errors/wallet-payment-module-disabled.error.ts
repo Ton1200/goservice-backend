@@ -5,7 +5,7 @@ const WALLET_PAYMENT_MODULE_DISABLED_CODE =
 
 /**
  * Thrown by `MercadoPagoWalletModuleEnabledGuard` when the
- * `payments.payment-methods.mercadopago-wallet.enabled` `PlatformSetting`
+ * `payments.payment-methods.mercadopago.wallet.enabled` `PlatformSetting`
  * currently resolves to `false` — the GLOBAL kill switch for wallet
  * (redirect-to-Mercado-Pago-account) payments
  * (`startEngagementWalletPayment`). Mirrors `cardPaymentModuleDisabled()`

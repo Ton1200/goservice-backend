@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { CountryCode } from '@prisma/client';
+import { CountryCode, PaymentMethod } from '@prisma/client';
 import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import {
   MERCADOPAGO_ENVIRONMENTS,
@@ -8,16 +8,19 @@ import {
   MercadoPagoEnvironment,
 } from '../constants/payments-setting-keys.constants';
 import {
+  CardTokenCapability,
   ChargeCardCommand,
   ChargeCardResult,
   CreateWalletPreferenceCommand,
+  PaymentProvider,
+  PaymentProviderCapability,
   PaymentProviderNotConfiguredError,
-  PaymentProviderPort,
   PaymentProviderUnavailableError,
   PaymentRequestRejectedError,
   ProviderPaymentSnapshot,
   ProviderTransactionDetails,
   WalletPreferenceResult,
+  WalletRedirectCapability,
 } from '../ports/payment-provider.port';
 import {
   MercadoPagoPaymentRecord,
@@ -70,7 +73,8 @@ interface Credentials {
 }
 
 /**
- * `PaymentProviderPort` over Mercado Pago's **Orders API** (`POST /v1/orders`)
+ * `PaymentProvider` (+ `CardTokenCapability` and `WalletRedirectCapability`,
+ * GOS-146) over Mercado Pago's **Orders API** (`POST /v1/orders`)
  * — NOT the legacy Payments API (`/v1/payments`), which Mercado Pago marks
  * legacy ("solo correcciones de seguridad y estabilidad"). A simple charge
  * into GoService's own account: no `marketplace_fee`/split, and NO
@@ -133,10 +137,61 @@ interface Credentials {
  * `mercadoPagoSettingKeys`'s own header comment for the key shape.
  */
 @Injectable()
-export class MercadoPagoPaymentAdapter implements PaymentProviderPort {
+export class MercadoPagoPaymentAdapter
+  implements PaymentProvider, CardTokenCapability, WalletRedirectCapability
+{
   private readonly logger = new Logger(MercadoPagoPaymentAdapter.name);
 
+  /** GOS-146 — see `PaymentProvider.method`. */
+  readonly method = PaymentMethod.MERCADOPAGO;
+  readonly capabilities: ReadonlySet<PaymentProviderCapability> =
+    new Set<PaymentProviderCapability>(['CARD_TOKEN', 'WALLET_REDIRECT']);
+
   constructor(private readonly platformSettingPort: PlatformSettingPort) {}
+
+  /** GOS-146 — credentials + a valid environment for `country`. */
+  async isConfigured(country: CountryCode): Promise<boolean> {
+    try {
+      await this.loadCredentials(country);
+      return true;
+    } catch (error) {
+      if (error instanceof PaymentProviderNotConfiguredError) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /** GOS-146 — the wallet flow's own extra config (public base URL + back URLs). */
+  async isWalletConfigured(country: CountryCode): Promise<boolean> {
+    try {
+      await this.loadWalletCheckoutConfig(country);
+      return true;
+    } catch (error) {
+      if (error instanceof PaymentProviderNotConfiguredError) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * GOS-146 — re-reads a charge by `PaymentAttempt.providerPaymentId`,
+   * whichever MERCADO PAGO API that id belongs to: a purely numeric id is a
+   * legacy Payments API id (the wallet flow, `getPaymentByPaymentId`), anything
+   * else an Orders API id (`ORD…`, the card flow, `getPayment`). This
+   * order-vs-payment distinction is Mercado Pago's own business — it used to
+   * live in `GetMyEngagementPaymentAttemptService`, and moved here so callers
+   * dispatch by the attempt's METHOD, never by the id's shape.
+   */
+  readPayment(
+    providerPaymentId: string,
+    country: CountryCode,
+  ): Promise<ProviderPaymentSnapshot | null> {
+    return PAYMENT_ID_PATTERN.test(providerPaymentId)
+      ? this.getPaymentByPaymentId(providerPaymentId, country)
+      : this.getPayment(providerPaymentId, country);
+  }
 
   async chargeCard(command: ChargeCardCommand): Promise<ChargeCardResult> {
     // The card type is derived from the brand id the client's tokenization

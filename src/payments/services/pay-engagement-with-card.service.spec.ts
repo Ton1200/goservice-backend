@@ -10,9 +10,9 @@ import { EngagementsRepository } from '../../engagements/engagements.repository'
 import { UsersRepository } from '../../users/users.repository';
 import { CardPaymentAccessService } from '../card-payment-access.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
+import { makeRegistryFixture } from '../payment-provider-registry.fixtures';
 import {
   PaymentProviderNotConfiguredError,
-  PaymentProviderPort,
   PaymentProviderUnavailableError,
   PaymentRequestRejectedError,
 } from '../ports/payment-provider.port';
@@ -125,7 +125,7 @@ describe('PayEngagementWithCardService', () => {
       jest
         .fn()
         .mockResolvedValue({ providerPaymentId: 'ORD_1', status: 'approved' });
-    const paymentProvider = { chargeCard } as unknown as PaymentProviderPort;
+    const paymentProvider = { chargeCard };
 
     const apply =
       options?.apply ??
@@ -141,7 +141,7 @@ describe('PayEngagementWithCardService', () => {
       engagementsRepository,
       usersRepository,
       paymentAttemptRepository,
-      paymentProvider,
+      makeRegistryFixture(paymentProvider),
       applyService,
     );
     return {
@@ -162,6 +162,7 @@ describe('PayEngagementWithCardService', () => {
 
       expect(m.createPending).toHaveBeenCalledWith({
         engagementId: 'engagement-1',
+        method: PaymentMethod.MERCADOPAGO,
         amount: 50000,
         currency: 'COP',
         installments: 1,

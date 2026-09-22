@@ -3,22 +3,17 @@ import { PaymentAttempt, PaymentAttemptStatus } from '@prisma/client';
 import { EngagementsRepository } from '../../engagements/engagements.repository';
 import { CardPaymentAccessService } from '../card-payment-access.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
-import { PaymentProviderPort } from '../ports/payment-provider.port';
+import { isSnapshotConsistentWithAttempt } from '../utils/payment-snapshot-consistency.util';
 import { ApplyPaymentResultService } from './apply-payment-result.service';
-
-// A provider payment id is purely numeric (the legacy Payments API — wallet
-// flow); an order id is not (the Orders API — card flow, `ORD…`). Same
-// distinction `PAYMENT_ID_PATTERN` makes inside `MercadoPagoPaymentAdapter`
-// (not imported from there — this stays a small, self-contained check rather
-// than reaching into the adapter's private constants).
-const NUMERIC_PROVIDER_ID_PATTERN = /^\d+$/;
+import { ReadAttemptProviderStateService } from './read-attempt-provider-state.service';
 
 /**
  * Orchestrates `Query.myEngagementPaymentAttempt` (GOS-142 — added to scope
  * by explicit human confirmation; not literally requested by the ticket) —
  * lets the Customer's own app check payment status after the wallet redirect
- * returns, independent of webhook timing (a notification can take a moment
- * to arrive, or — in a misconfigured environment — never arrive at all).
+ * returns (or after an embedded checkout closes), independent of webhook
+ * timing (a notification can take a moment to arrive, or — in a misconfigured
+ * environment — never arrive at all).
  *
  * Returns the Engagement's MOST RECENT `PaymentAttempt`, whatever its method
  * or status (`PaymentAttemptRepository.findLatestByEngagementId`) — `null` if
@@ -27,24 +22,27 @@ const NUMERIC_PROVIDER_ID_PATTERN = /^\d+$/;
  * service's own header comment) — anyone else gets the SAME anti-enumeration
  * `engagementNotFound()` every other Engagement read in this module uses.
  *
- * **Opportunistic reconciliation, best-effort, for EITHER digital method**:
- * if the latest attempt is still PENDING and already has a
- * `providerPaymentId` (i.e. at least one webhook notification already
- * reached GoService, or the synchronous card path recorded a `pending` order
- * id), this query re-reads the provider's CURRENT state right now — via
- * `getPaymentByPaymentId` for a wallet attempt's numeric id, or `getPayment`
- * for a card attempt's order id — and applies it through the SAME
- * `ApplyPaymentResultService` the webhook uses, with the SAME
- * amount/currency safety check `HandleMercadoPagoNotificationService` makes
- * before ever approving money. Any failure here (provider unreachable,
- * misconfigured) is swallowed and logged: the query NEVER fails or blocks
- * because of it, it just returns what is already in the database.
+ * **Opportunistic reconciliation, best-effort, for ANY digital method**: if
+ * the latest attempt is still PENDING and the provider can be asked about it —
+ * it already has a `providerPaymentId` (a webhook reached GoService, or the
+ * synchronous card path recorded a `pending` order id) OR, since GOS-146, a
+ * `providerCheckoutId` (Rapyd creates the checkout BEFORE any payment, so the
+ * attempt can be re-read with no webhook and no payment id at all) — this
+ * query re-reads the provider's CURRENT state right now and applies it through
+ * the SAME `ApplyPaymentResultService` the webhooks use, with the SAME
+ * amount/currency safety check (`isSnapshotConsistentWithAttempt`) they make
+ * before ever approving money. WHICH provider API is asked is decided by
+ * `attempt.method` (`ReadAttemptProviderStateService`), never by guessing from
+ * the shape of an id. Any failure here (provider unreachable, misconfigured)
+ * is swallowed and logged: the query NEVER fails or blocks because of it, it
+ * just returns what is already in the database.
  *
- * **Documented gap, not resolved here**: if NO webhook notification has ever
- * reached GoService, there is no `providerPaymentId` to re-read, and this
- * query can only return what's already persisted (still PENDING). Closing
- * that fully needs a reconciliation job — explicitly out of scope for
- * GOS-142 (see the plan).
+ * **Documented gap, not resolved here**: a Mercado Pago attempt for which NO
+ * webhook notification has ever reached GoService has no `providerPaymentId`
+ * to re-read, and this query can only return what's already persisted (still
+ * PENDING). Closing that fully needs a reconciliation job — explicitly out of
+ * scope for GOS-142. (A Rapyd attempt does not have this gap: its checkout id
+ * exists from the start.)
  */
 @Injectable()
 export class GetMyEngagementPaymentAttemptService {
@@ -56,7 +54,7 @@ export class GetMyEngagementPaymentAttemptService {
     private readonly cardPaymentAccessService: CardPaymentAccessService,
     private readonly engagementsRepository: EngagementsRepository,
     private readonly paymentAttemptRepository: PaymentAttemptRepository,
-    private readonly paymentProvider: PaymentProviderPort,
+    private readonly readAttemptProviderStateService: ReadAttemptProviderStateService,
     private readonly applyPaymentResultService: ApplyPaymentResultService,
   ) {}
 
@@ -79,7 +77,7 @@ export class GetMyEngagementPaymentAttemptService {
     }
     if (
       attempt.status !== PaymentAttemptStatus.PENDING ||
-      !attempt.providerPaymentId
+      (!attempt.providerPaymentId && !attempt.providerCheckoutId)
     ) {
       return attempt;
     }
@@ -91,10 +89,6 @@ export class GetMyEngagementPaymentAttemptService {
     attempt: PaymentAttempt,
     engagementId: string,
   ): Promise<PaymentAttempt> {
-    const providerPaymentId = attempt.providerPaymentId;
-    if (!providerPaymentId) {
-      return attempt; // narrows for TS — already checked by the caller
-    }
     try {
       const billingContext =
         await this.engagementsRepository.findByIdWithBillingContext(
@@ -103,39 +97,33 @@ export class GetMyEngagementPaymentAttemptService {
       if (!billingContext) {
         return attempt;
       }
-      const country = billingContext.customerProfile.country;
-      const snapshot = NUMERIC_PROVIDER_ID_PATTERN.test(providerPaymentId)
-        ? await this.paymentProvider.getPaymentByPaymentId(
-            providerPaymentId,
-            country,
-          )
-        : await this.paymentProvider.getPayment(providerPaymentId, country);
-      if (!snapshot) {
+      const state = await this.readAttemptProviderStateService.read(
+        attempt,
+        billingContext.customerProfile.country,
+      );
+      if (!state) {
         return attempt;
       }
 
-      if (
-        snapshot.status === 'approved' &&
-        (snapshot.amount !== attempt.amount ||
-          snapshot.currency?.toUpperCase() !== attempt.currency.toUpperCase())
-      ) {
-        // Never approve money that doesn't reconcile — same guard
-        // `HandleMercadoPagoNotificationService` applies.
+      if (!isSnapshotConsistentWithAttempt(state, attempt)) {
+        // Never approve money that doesn't reconcile — same guard the
+        // provider webhooks apply.
         this.logger.error({
           event: 'my_engagement_payment_attempt_amount_mismatch',
           attemptId: attempt.id,
           expectedAmount: attempt.amount,
           expectedCurrency: attempt.currency,
-          reportedAmount: snapshot.amount,
-          reportedCurrency: snapshot.currency,
+          reportedAmount: state.amount,
+          reportedCurrency: state.currency,
         });
         return attempt;
       }
 
       const resolved = await this.applyPaymentResultService.apply(attempt.id, {
-        status: snapshot.status,
-        providerPaymentId,
-        rejectionReason: snapshot.rejectionReason,
+        status: state.status,
+        // A checkout attempt learns its payment id only once one exists.
+        providerPaymentId: state.providerPaymentId ?? attempt.providerPaymentId,
+        rejectionReason: state.rejectionReason,
       });
       return resolved ?? attempt;
     } catch (error) {

@@ -11,6 +11,7 @@ import { CURRENCY_BY_COUNTRY } from '../../ledger/constants/country-currency.con
 import { UsersRepository } from '../../users/users.repository';
 import { CardPaymentAccessService } from '../card-payment-access.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
+import { PaymentProviderRegistry } from '../payment-provider.registry';
 import { cardPaymentAlreadyInProgress } from '../errors/card-payment-already-in-progress.error';
 import { engagementNotPayableByCard } from '../errors/engagement-not-payable-by-card.error';
 import { invalidCardPaymentInput } from '../errors/invalid-card-payment-input.error';
@@ -20,7 +21,6 @@ import { paymentProviderUnavailable } from '../errors/payment-provider-unavailab
 import {
   ChargeCardResult,
   PaymentProviderNotConfiguredError,
-  PaymentProviderPort,
   PaymentProviderUnavailableError,
   PaymentRequestRejectedError,
 } from '../ports/payment-provider.port';
@@ -41,7 +41,8 @@ const PAYMENT_METHOD_ID_PATTERN = /^[A-Za-z0-9_-]{1,40}$/;
 
 /**
  * Orchestrates `Mutation.payEngagementWithCard` (GOS-85) — a Customer pays an
- * Engagement by card through `PaymentProviderPort`, with NO redirect (the card
+ * Engagement by card through the Mercado Pago card-token capability
+ * (`PaymentProviderRegistry.cardToken`), with NO redirect (the card
  * is tokenized client-side; only the token reaches this server).
  *
  * 1. Ownership: only the Engagement's Customer
@@ -57,7 +58,7 @@ const PAYMENT_METHOD_ID_PATTERN = /^[A-Za-z0-9_-]{1,40}$/;
  *    committed BEFORE the provider is called (no DB transaction is held across
  *    an HTTP call). The partial unique index makes a second PENDING/APPROVED
  *    attempt impossible → `CARD_PAYMENT_ALREADY_IN_PROGRESS`.
- * 5. `PaymentProviderPort.chargeCard`, SIMPLE charge to GoService's own
+ * 5. `CardTokenCapability.chargeCard`, SIMPLE charge to GoService's own
  *    account, with the attempt's id as idempotency key (a retry can't charge
  *    twice).
  * 6. Hand the outcome to `ApplyPaymentResultService` — the same function
@@ -86,7 +87,7 @@ export class PayEngagementWithCardService {
     private readonly engagementsRepository: EngagementsRepository,
     private readonly usersRepository: UsersRepository,
     private readonly paymentAttemptRepository: PaymentAttemptRepository,
-    private readonly paymentProvider: PaymentProviderPort,
+    private readonly paymentProviderRegistry: PaymentProviderRegistry,
     private readonly applyPaymentResultService: ApplyPaymentResultService,
   ) {}
 
@@ -136,10 +137,19 @@ export class PayEngagementWithCardService {
       throw engagementNotFound(); // the session's user vanished — same fold
     }
 
+    // Resolved BEFORE the attempt is inserted: a registry wiring error must
+    // never leave a PENDING attempt behind.
+    const provider = this.paymentProviderRegistry.cardToken(
+      PaymentMethod.MERCADOPAGO,
+    );
+
     let attempt: PaymentAttempt;
     try {
       attempt = await this.paymentAttemptRepository.createPending({
         engagementId: engagement.id,
+        // GOS-146: `payEngagementWithCard` is the Mercado Pago card-token flow
+        // (its contract does not change); Rapyd has its own start mutation.
+        method: PaymentMethod.MERCADOPAGO,
         amount,
         currency,
         installments: input.installments,
@@ -167,7 +177,7 @@ export class PayEngagementWithCardService {
 
     let result: ChargeCardResult;
     try {
-      result = await this.paymentProvider.chargeCard({
+      result = await provider.chargeCard({
         cardToken: input.cardToken,
         amount,
         currency,

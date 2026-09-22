@@ -2,16 +2,16 @@ import { CanActivate, Injectable } from '@nestjs/common';
 import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import { walletPaymentModuleDisabled } from '../errors/wallet-payment-module-disabled.error';
 
-// Sibling leaf of `payments.payment-methods.card.enabled` under the same
+// Sibling leaf of `payments.payment-methods.mercadopago.card.enabled` under the same
 // `payments.payment-methods` group — same dot-path-derivation mechanism
 // every other module-enabled key relies on.
 export const MERCADOPAGO_WALLET_PAYMENT_ENABLED_KEY =
-  'payments.payment-methods.mercadopago-wallet.enabled';
+  'payments.payment-methods.mercadopago.wallet.enabled';
 
 /**
  * The GLOBAL kill switch for the Mercado Pago Wallet Payment capability
  * (`startEngagementWalletPayment`) — reads the
- * `payments.payment-methods.mercadopago-wallet.enabled` `PlatformSetting` via
+ * `payments.payment-methods.mercadopago.wallet.enabled` `PlatformSetting` via
  * `PlatformSettingPort.isEnabled`. Mirrors `CardPaymentModuleEnabledGuard`
  * exactly (same mechanism, same guard-ordering convention, same
  * seeded-`false` default and the same reasoning: `PlatformSettingPort.isEnabled`

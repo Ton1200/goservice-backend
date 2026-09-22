@@ -149,6 +149,40 @@ describe('classifyLedgerEventRows', () => {
     ).toBe(0);
   });
 
+  it('DIGITAL_PAYMENT (GOS-146): an event paid through Rapyd is the SAME branch — the ledger records the collector nowhere, so the 3-row event classifies identically to a Mercado Pago one', () => {
+    // `RecordDigitalPaymentService` writes the exact same CUSTOMER_CHARGE (−) +
+    // PLATFORM_COMMISSION + PROFESSIONAL_NET_CREDIT trio whichever provider
+    // approved the attempt (`ApplyPaymentResultService` is provider-agnostic),
+    // and `classifyLedgerEventRows` reads only the rows.
+    const rows = [
+      makeRow({
+        id: 'entry-charge',
+        type: LedgerEntryType.CUSTOMER_CHARGE,
+        amount: -50000,
+      }),
+      makeRow({
+        id: 'entry-commission',
+        type: LedgerEntryType.PLATFORM_COMMISSION,
+        amount: 5000,
+      }),
+      makeRow({
+        id: 'entry-net',
+        type: LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+        amount: 45000,
+      }),
+    ];
+
+    const result = classifyLedgerEventRows(rows, 50000);
+
+    expect(result).toEqual({
+      eventType: 'DIGITAL_PAYMENT',
+      totalPaidByCustomer: 50000,
+      platformCommission: 5000,
+      professionalNetAmount: 45000,
+      cashCommissionDebtAmount: 0,
+    });
+  });
+
   it('DIGITAL_PAYMENT (GOS-85): reports the persisted amounts, not a re-derivation from quotedPrice', () => {
     // 3333 at 10%: commission = round(333.3) = 333, net = 3000 (a remainder,
     // never independently rounded). A `quotedPrice * 0.9` re-derivation

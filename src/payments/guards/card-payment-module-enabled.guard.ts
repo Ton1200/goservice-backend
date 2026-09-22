@@ -8,11 +8,12 @@ import { cardPaymentModuleDisabled } from '../errors/card-payment-module-disable
 // Methods" > "Card" in the admin panel's settings tree with zero frontend
 // changes — same dot-path-derivation mechanism every other module-enabled key
 // relies on.
-export const CARD_PAYMENT_ENABLED_KEY = 'payments.payment-methods.card.enabled';
+export const CARD_PAYMENT_ENABLED_KEY =
+  'payments.payment-methods.mercadopago.card.enabled';
 
 /**
  * The GLOBAL kill switch for the Card Payment capability
- * (`payEngagementWithCard`) — reads the `payments.payment-methods.card.enabled`
+ * (`payEngagementWithCard`) — reads the `payments.payment-methods.mercadopago.card.enabled`
  * `PlatformSetting` via `PlatformSettingPort.isEnabled`. Mirrors
  * `CashPaymentModuleEnabledGuard` exactly (same mechanism, same
  * guard-ordering convention), with ONE deliberate difference in its DEFAULT:

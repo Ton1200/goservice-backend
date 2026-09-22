@@ -4,7 +4,7 @@ const CARD_PAYMENT_MODULE_DISABLED_CODE = 'CARD_PAYMENT_MODULE_DISABLED';
 
 /**
  * Thrown by `CardPaymentModuleEnabledGuard` when the
- * `payments.payment-methods.card.enabled` `PlatformSetting` currently
+ * `payments.payment-methods.mercadopago.card.enabled` `PlatformSetting` currently
  * resolves to `false` — the GLOBAL kill switch for card payments
  * (`payEngagementWithCard`). Unlike Cash Payment this switch is seeded OFF: a
  * real end-to-end card charge is not certified for production yet.

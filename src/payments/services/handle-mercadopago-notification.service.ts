@@ -1,12 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { CountryCode, PaymentAttempt } from '@prisma/client';
+import { CountryCode, PaymentAttempt, PaymentMethod } from '@prisma/client';
 import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
+import { MercadoPagoPaymentAdapter } from '../adapters/mercadopago-payment.adapter';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
 import { mercadoPagoSettingKeys } from '../constants/payments-setting-keys.constants';
-import {
-  PaymentProviderPort,
-  type ProviderPaymentSnapshot,
-} from '../ports/payment-provider.port';
+import type { ProviderPaymentSnapshot } from '../ports/payment-provider.port';
+import { isSnapshotConsistentWithAttempt } from '../utils/payment-snapshot-consistency.util';
 import {
   MercadoPagoSignatureInput,
   verifyMercadoPagoSignature,
@@ -39,7 +38,9 @@ const UUID_PATTERN =
  * **The notification body is never trusted.** The signature proves the request
  * came from Mercado Pago, but this service still ignores the body's claimed
  * status: it takes only the order id (`data.id`, from the signed URL) and
- * RE-READS the order from Mercado Pago (`PaymentProviderPort.getPayment`),
+ * RE-READS the order from Mercado Pago (`MercadoPagoPaymentAdapter.getPayment`
+ * — this handler is Mercado Pago-specific by design, so it reads through the
+ * MP adapter itself rather than the multi-provider registry; GOS-146),
  * then applies that. Two consequences: a replayed or out-of-order notification
  * is harmless (it just re-reads the current truth), and a forged one cannot
  * cause a state change even if the signature check were bypassed.
@@ -74,7 +75,7 @@ export class HandleMercadoPagoNotificationService {
 
   constructor(
     private readonly platformSettingPort: PlatformSettingPort,
-    private readonly paymentProvider: PaymentProviderPort,
+    private readonly paymentProvider: MercadoPagoPaymentAdapter,
     private readonly paymentAttemptRepository: PaymentAttemptRepository,
     private readonly applyPaymentResultService: ApplyPaymentResultService,
   ) {}
@@ -160,11 +161,7 @@ export class HandleMercadoPagoNotificationService {
       return;
     }
 
-    if (
-      snapshot.status === 'approved' &&
-      (snapshot.amount !== attempt.amount ||
-        snapshot.currency?.toUpperCase() !== attempt.currency.toUpperCase())
-    ) {
+    if (!isSnapshotConsistentWithAttempt(snapshot, attempt)) {
       // Never approve money we can't reconcile to what we asked for.
       this.logger.error({
         event: 'card_payment_amount_mismatch',
@@ -191,14 +188,20 @@ export class HandleMercadoPagoNotificationService {
     providerId: string,
     externalReference: string | null,
   ): Promise<PaymentAttempt | null> {
+    // GOS-146: scoped to Mercado Pago's own attempts — another provider's id
+    // can never be adopted by a Mercado Pago notification.
     const byProviderId =
-      await this.paymentAttemptRepository.findByProviderPaymentId(providerId);
+      await this.paymentAttemptRepository.findByProviderPaymentId(
+        providerId,
+        PaymentMethod.MERCADOPAGO,
+      );
     if (byProviderId) {
       return byProviderId;
     }
     if (externalReference && UUID_PATTERN.test(externalReference)) {
       return this.paymentAttemptRepository.findPendingWithoutProviderIdByEngagementId(
         externalReference,
+        PaymentMethod.MERCADOPAGO,
       );
     }
     return null;
