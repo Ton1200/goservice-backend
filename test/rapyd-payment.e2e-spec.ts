@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  AddressOwnerRole,
   AuthProvider,
   CountryCode,
   ProfessionalVerificationStatus,
@@ -545,12 +546,25 @@ describe('GraphQL Rapyd Payment + multi-provider (GOS-146, e2e)', () => {
     const categoryId = await seedCategory();
 
     const customer = await seedUser();
-    await prisma.customerProfile.create({
+    const customerProfile = await prisma.customerProfile.create({
       data: {
         userId: customer.userId,
         firstName: 'Cliente',
         lastName: 'de Prueba',
         country,
+      },
+    });
+    // GOS-155 — publishServiceRequest now requires a resolvable addressId;
+    // this seeds the caller's own default Address so it can fall back to it.
+    await prisma.address.create({
+      data: {
+        ownerRole: AddressOwnerRole.CUSTOMER,
+        customerProfileId: customerProfile.id,
+        formattedAddress: 'Av. Corrientes 1234, CABA',
+        placeId: `place-${Date.now()}-${Math.random()}`,
+        latitude: -34.6037,
+        longitude: -58.3816,
+        isDefault: true,
       },
     });
     const professional = await seedUser();

@@ -40,6 +40,17 @@ export class PublishServiceRequestInput {
   @IsUUID('4')
   category!: string;
 
+  // GOS-155 — optional at the input layer: when omitted,
+  // `PublishServiceRequestService` falls back to the caller's own
+  // `isDefault` Address, rejecting with `SERVICE_REQUEST_ADDRESS_REQUIRED`
+  // if none exists. When given, it must resolve to an Address owned by the
+  // caller's own `CustomerProfile` — enforced server-side, never trusted as
+  // given (see that service's own header comment).
+  @Field(() => ID, { nullable: true })
+  @IsOptional()
+  @IsUUID('4')
+  addressId?: string;
+
   @Field()
   @IsString()
   @MinLength(1)

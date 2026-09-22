@@ -36,6 +36,15 @@ export class ServiceRequestModel {
   @Field(() => ID)
   customerProfileId!: string;
 
+  // GOS-155 — the raw `Address` id this ServiceRequest was published
+  // against, `null` for ServiceRequests published before this column
+  // existed (no backfill was run — see this field's own schema comment).
+  // Deliberately just the id, never the full `Address` object here — see
+  // `NearbyServiceRequest`'s own header comment for why full Address
+  // exposure stays confined to that gated wrapper type.
+  @Field(() => ID, { nullable: true })
+  addressId!: string | null;
+
   @Field(() => Category)
   category!: Category;
 

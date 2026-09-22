@@ -33,3 +33,25 @@
 export const MAPS_ENABLED_KEY = 'maps.enabled';
 export const MAPS_GOOGLE_API_KEY_ANDROID = 'maps.google.api-key.android';
 export const MAPS_GOOGLE_API_KEY_IOS = 'maps.google.api-key.ios';
+
+/**
+ * GOS-155 — `nearbyProfessionals`/`nearbyServiceRequests` proximity search
+ * radius configuration, both `NUMBER`-typed `PlatformSetting`s, `isPublic:
+ * false` (backend-only tuning, not something `goservice-mobile` needs to
+ * branch on). Read together by `resolveEffectiveSearchRadiusKm`
+ * (`src/addresses/services/resolve-effective-search-radius.util.ts`), the
+ * SAME "inject `PlatformSettingPort`, `Number(raw)`, null/NaN -> fail
+ * closed" pattern
+ * `RecordCashCommissionDebtService`/`payments.general-settings.commission.percent`
+ * already establishes — never cached, so an admin can retune either value
+ * without a deploy.
+ *
+ * `MAPS_SEARCH_DEFAULT_RADIUS_KM_KEY` is used when the caller does not pass
+ * an explicit `radiusKm` argument; `MAPS_SEARCH_MAX_RADIUS_KM_KEY` is an
+ * absolute ceiling ALWAYS applied on top of either the default or a
+ * caller-supplied value (`Math.min(effective, max)`) — a client can narrow
+ * its own search radius, never widen it past the platform-enforced max.
+ */
+export const MAPS_SEARCH_DEFAULT_RADIUS_KM_KEY =
+  'maps.search.default-radius-km';
+export const MAPS_SEARCH_MAX_RADIUS_KM_KEY = 'maps.search.max-radius-km';
