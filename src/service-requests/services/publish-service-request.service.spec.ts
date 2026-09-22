@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { ServiceRequestUrgency } from '@prisma/client';
+import { AddressesRepository } from '../../addresses/addresses.repository';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { PublishServiceRequestInput } from '../models/publish-service-request-input.model';
 import { ServiceRequestsRepository } from '../service-requests.repository';
@@ -7,6 +8,7 @@ import { PublishServiceRequestService } from './publish-service-request.service'
 
 describe('PublishServiceRequestService', () => {
   const customerProfile = { id: 'customer-profile-1', userId: 'user-1' };
+  const defaultAddress = { id: 'address-default-1', isDefault: true };
   const createdServiceRequest = {
     id: 'service-request-1',
     customerProfileId: customerProfile.id,
@@ -18,6 +20,7 @@ describe('PublishServiceRequestService', () => {
     indicativeBudgetMax: null,
     status: 'OPEN',
     cancelledAt: null,
+    addressId: defaultAddress.id,
     attachments: [],
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -27,6 +30,8 @@ describe('PublishServiceRequestService', () => {
     customerProfile?: typeof customerProfile | null;
     existingCategoryIds?: string[];
     usableRefs?: { id: string; fileUrl: string }[];
+    defaultAddress?: { id: string } | null;
+    ownedAddress?: { id: string } | null;
   }) {
     const findCustomerProfileByUserId = jest
       .fn()
@@ -52,9 +57,29 @@ describe('PublishServiceRequestService', () => {
       publish,
     } as unknown as ServiceRequestsRepository;
 
+    const findDefaultForCustomerProfile = jest
+      .fn()
+      .mockResolvedValue(
+        overrides?.defaultAddress === undefined
+          ? defaultAddress
+          : overrides.defaultAddress,
+      );
+    const findOneOwnedByEitherProfile = jest
+      .fn()
+      .mockResolvedValue(
+        overrides?.ownedAddress === undefined
+          ? defaultAddress
+          : overrides.ownedAddress,
+      );
+    const addressesRepository = {
+      findDefaultForCustomerProfile,
+      findOneOwnedByEitherProfile,
+    } as unknown as AddressesRepository;
+
     const service = new PublishServiceRequestService(
       profilesRepository,
       serviceRequestsRepository,
+      addressesRepository,
     );
 
     return {
@@ -63,6 +88,8 @@ describe('PublishServiceRequestService', () => {
       findExistingCategoryIds,
       findUsablePendingUploadRefs,
       publish,
+      findDefaultForCustomerProfile,
+      findOneOwnedByEitherProfile,
     };
   }
 
@@ -176,5 +203,65 @@ describe('PublishServiceRequestService', () => {
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({ attachmentRefs: [] }),
     );
+  });
+
+  // GOS-155 — addressId resolution.
+  describe('addressId resolution (GOS-155)', () => {
+    it("falls back to the caller's own default Address when addressId is omitted", async () => {
+      const { service, publish, findDefaultForCustomerProfile } = makeService();
+
+      await service.publishServiceRequest('user-1', validInput());
+
+      expect(findDefaultForCustomerProfile).toHaveBeenCalledWith(
+        customerProfile.id,
+      );
+      expect(publish).toHaveBeenCalledWith(
+        expect.objectContaining({ addressId: defaultAddress.id }),
+      );
+    });
+
+    it('throws SERVICE_REQUEST_ADDRESS_REQUIRED when addressId is omitted and the caller has no default Address', async () => {
+      const { service } = makeService({ defaultAddress: null });
+
+      await expect(
+        service.publishServiceRequest('user-1', validInput()),
+      ).rejects.toMatchObject({ code: 'SERVICE_REQUEST_ADDRESS_REQUIRED' });
+    });
+
+    it('uses an explicit addressId once ownership under the CUSTOMER profile is confirmed', async () => {
+      const explicitAddress = { id: 'address-explicit-1' };
+      const {
+        service,
+        publish,
+        findOneOwnedByEitherProfile,
+        findDefaultForCustomerProfile,
+      } = makeService({ ownedAddress: explicitAddress });
+
+      await service.publishServiceRequest(
+        'user-1',
+        validInput({ addressId: explicitAddress.id }),
+      );
+
+      expect(findOneOwnedByEitherProfile).toHaveBeenCalledWith(
+        explicitAddress.id,
+        customerProfile.id,
+        null,
+      );
+      expect(findDefaultForCustomerProfile).not.toHaveBeenCalled();
+      expect(publish).toHaveBeenCalledWith(
+        expect.objectContaining({ addressId: explicitAddress.id }),
+      );
+    });
+
+    it('throws ADDRESS_NOT_FOUND when the explicit addressId does not resolve under the CUSTOMER profile', async () => {
+      const { service } = makeService({ ownedAddress: null });
+
+      await expect(
+        service.publishServiceRequest(
+          'user-1',
+          validInput({ addressId: 'address-not-mine' }),
+        ),
+      ).rejects.toMatchObject({ code: 'ADDRESS_NOT_FOUND' });
+    });
   });
 });

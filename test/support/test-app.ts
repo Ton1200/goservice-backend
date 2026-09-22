@@ -515,6 +515,107 @@ export async function enableTestIdentityVerification(
 }
 
 /**
+ * GOS-155 — deletes all `Address` rows. `Address.customerProfileId`/
+ * `professionalProfileId` are `onDelete: Cascade` toward
+ * `CustomerProfile`/`ProfessionalProfile` (so `cleanProfilesData`'s own
+ * `deleteMany()` calls would sweep these away too), and
+ * `ServiceRequest.addressId` is `onDelete: SetNull` (so deleting an Address
+ * never blocks on a referencing ServiceRequest) — included explicitly
+ * anyway, same "independently callable, matches every other `clean*Data`
+ * helper's own convention" reasoning `cleanIdentityVerificationData`
+ * already documents. Call BEFORE `cleanProfilesData`/`cleanUsersData`.
+ */
+export async function cleanAddressesData(prisma: PrismaService): Promise<void> {
+  await prisma.address.deleteMany();
+}
+
+/**
+ * GOS-155 — every `maps.*` `PlatformSetting` key `enableTestMaps` writes,
+ * for `cleanPlatformSettingsData` cleanup. Deliberately does NOT include
+ * `maps.enabled` itself — that row is SHARED, seeded baseline data other
+ * suites may depend on existing (same reasoning
+ * `cleanPlatformSettingsData`'s own header comment documents for
+ * `customer.social-login.*`) — `enableTestMaps` upserts it in place rather
+ * than creating a suite-owned duplicate, so a suite calling this helper
+ * should restore it (or leave it `true`, since GOS-155's own e2e suites are
+ * the only ones that need it `true` today) rather than delete it in
+ * `afterAll`.
+ */
+export const MAPS_SEARCH_TEST_SETTING_KEYS = [
+  'maps.search.default-radius-km',
+  'maps.search.max-radius-km',
+];
+
+/**
+ * Upserts the Maps `PlatformSetting` rows to a known-good,
+ * ENABLED-and-fully-configured baseline — `maps.enabled` is seeded `false`
+ * (`prisma/seed.ts`), so every e2e suite exercising `addAddress`/
+ * `nearbyProfessionals`/`nearbyServiceRequests` must opt this baseline IN
+ * for itself first, same idempotent-upsert pattern `enableTestCardPayments`
+ * already establishes. `defaultRadiusKm`/`maxRadiusKm` default to generous
+ * values so a typical e2e fixture's Addresses (a few km apart) fall well
+ * inside them without every spec needing to pass its own `radiusKm`.
+ */
+export async function enableTestMaps(
+  prisma: PrismaService,
+  overrides?: {
+    mapsEnabled?: boolean;
+    defaultRadiusKm?: number;
+    maxRadiusKm?: number;
+  },
+): Promise<void> {
+  const rows: {
+    key: string;
+    value: string;
+    description: string;
+    valueType: 'BOOLEAN' | 'NUMBER';
+    isPublic: boolean;
+  }[] = [
+    {
+      key: 'maps.enabled',
+      value: String(overrides?.mapsEnabled ?? true),
+      description: 'Global kill switch for the Maps capability.',
+      valueType: 'BOOLEAN',
+      isPublic: true,
+    },
+    {
+      key: 'maps.search.default-radius-km',
+      value: String(overrides?.defaultRadiusKm ?? 50),
+      description:
+        'Default proximity search radius (km) applied when the caller does not pass radiusKm.',
+      valueType: 'NUMBER',
+      isPublic: false,
+    },
+    {
+      key: 'maps.search.max-radius-km',
+      value: String(overrides?.maxRadiusKm ?? 500),
+      description: 'Absolute ceiling (km) applied to any proximity search.',
+      valueType: 'NUMBER',
+      isPublic: false,
+    },
+  ];
+
+  for (const row of rows) {
+    await prisma.platformSetting.upsert({
+      where: { key: row.key },
+      update: {
+        isEncrypted: false,
+        isPublic: row.isPublic,
+        value: row.value,
+      },
+      create: {
+        key: row.key,
+        description: row.description,
+        valueType: row.valueType,
+        isEncrypted: false,
+        isPublic: row.isPublic,
+        value: row.value,
+      },
+    });
+  }
+}
+
+/**
  * Deletes every platform-admin (GOS-30/31/32) `AdminUser`-owned row —
  * child tables first (FK order) — but deliberately does NOT delete
  * `AdminRole` rows (a small, effectively-fixed seeded catalog, same

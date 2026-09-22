@@ -530,10 +530,18 @@ enum AddressOwnerRole {
 // caller submitted; deleting the default while other Addresses exist is
 // blocked (the caller must `setDefaultAddress` on another one first).
 //
-// Explicitly OUT of scope here (a later GOS-36/GOS-155 subtask):
-// `nearbyProfessionals`/`nearbyServiceRequests`, and any `addressId` FK on
-// `ServiceRequest` — this model only owns the CRUD of an owner's saved
-// Address list, nothing that reads it for proximity matching yet.
+// GOS-155 — proximity matching now reads this table for BOTH directions:
+// `nearbyProfessionals` (Query.nearbyProfessionals,
+// `ProfilesRepository.findNearbyProfessionals`) joins a Professional's own
+// `isDefault` Address, and `nearbyServiceRequests`
+// (`ServiceRequestsRepository.findNearbyCompatible`) joins the `Address` a
+// `ServiceRequest` was published against (see `ServiceRequest.addressId`
+// below). `@@index([latitude, longitude])` supports the bounding-box
+// pre-filter both raw-SQL queries apply before the exact Haversine
+// distance check — see `resolve-effective-search-radius.util.ts` and each
+// repository method's own header comment for the full design (DEC-005 is
+// still "Proposed"; no PostGIS/`geography` column was introduced — see
+// `goservice-docs/architecture/performance.md`).
 model Address {
   id                    String               @id @default(uuid()) @db.Uuid
   ownerRole             AddressOwnerRole
@@ -564,8 +572,16 @@ model Address {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // GOS-155 — every ServiceRequest published against this Address (see
+  // `ServiceRequest.addressId` below). Never Cascade from this side: a
+  // ServiceRequest's own `onDelete: SetNull` FK is what governs what
+  // happens to IT if this Address is later deleted — this Address is never
+  // deleted just because a ServiceRequest referencing it is.
+  serviceRequests ServiceRequest[]
+
   @@index([customerProfileId])
   @@index([professionalProfileId])
+  @@index([latitude, longitude])
 }
 
 // GOS-38 — first ServiceRequest-side domain entities. A ServiceRequest
@@ -635,6 +651,20 @@ model ServiceRequest {
   // Prisma requires an explicit name to disambiguate the two.
   acceptedQuoteId     String?               @unique @db.Uuid
   acceptedQuote       Quote?                @relation("ServiceRequestAcceptedQuote", fields: [acceptedQuoteId], references: [id], onDelete: Cascade)
+  // GOS-155 — the Address this ServiceRequest was published against, used
+  // by `nearbyServiceRequests`'s proximity matching. Nullable at the
+  // schema level for two reasons: (1) no backfill was run for
+  // ServiceRequests published before this column existed — those rows keep
+  // `addressId: null` forever; (2) `onDelete: SetNull` — deleting the
+  // Address a still-OPEN ServiceRequest points at must never cascade-delete
+  // the ServiceRequest itself, it just stops being proximity-matchable.
+  // `PublishServiceRequestService` enforces the REAL, application-level
+  // rule that every NEWLY published ServiceRequest always gets a non-null
+  // `addressId` (explicit input, or the Customer's own default Address) —
+  // see that service's own header comment; `serviceRequestAddressRequired()`
+  // is what it throws when neither is available.
+  addressId           String?               @db.Uuid
+  address             Address?              @relation(fields: [addressId], references: [id], onDelete: SetNull)
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
 
@@ -656,6 +686,11 @@ model ServiceRequest {
   // lesson ProfessionalSpecialization's own @@index([categoryId]) already
   // documents.
   @@index([customerProfileId, createdAt])
+  // GOS-155 — supports `nearbyServiceRequests`'s raw-SQL JOIN against
+  // `Address` (`ServiceRequestsRepository.findNearbyCompatible`) without a
+  // sequential scan. Postgres does NOT auto-index FK columns — same lesson
+  // this model's own `customerProfileId` index above already documents.
+  @@index([addressId])
   // The index `compatibleServiceRequests` needs — see
   // ServiceRequestsRepository.findManyCompatible.
   @@index([status, categoryId])

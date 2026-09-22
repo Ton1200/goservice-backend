@@ -160,6 +160,49 @@ export class AddressesRepository {
    * which the caller (`SetDefaultAddressService`) translates into
    * `addressDefaultConflict()`.
    */
+  /**
+   * GOS-155 — the caller's own `isDefault` Address for a given
+   * `CustomerProfile`, or `null` if that profile has no Addresses (or none
+   * marked default — should not happen once the profile has at least one,
+   * see this model's own schema comment on the "first Address is always
+   * forced default" rule, but this method treats it defensively rather
+   * than assuming it). Used by `PublishServiceRequestService` to
+   * auto-fill `ServiceRequest.addressId` when the caller omits it.
+   */
+  findDefaultForCustomerProfile(
+    customerProfileId: string,
+  ): Promise<Address | null> {
+    return this.prisma.address.findFirst({
+      where: {
+        ownerRole: AddressOwnerRole.CUSTOMER,
+        customerProfileId,
+        isDefault: true,
+      },
+    });
+  }
+
+  /**
+   * GOS-155 — plain, unscoped hydration read for a known set of `Address`
+   * ids, used by `FindNearbyProfessionalsService`/
+   * `FindNearbyServiceRequestsService` to fetch the FULL `Address` rows for
+   * whatever candidate ids their own repository's raw-SQL proximity query
+   * already narrowed down (ownership/visibility — `isDefault`,
+   * `locationSharingEnabled`, radius — is already enforced by that raw SQL,
+   * not re-checked here) — same "the raw SQL owns the filtering, this is
+   * just a typed re-fetch of the rows it already selected" split as
+   * `ServiceRequestsRepository.findManyByIds` documents for the
+   * `ServiceRequest` side of the same feature. NOT owner-scoped (unlike
+   * every other method on this class) — deliberately, since the caller here
+   * is never resolving "is this MY address", only "hydrate these already-
+   * validated ids".
+   */
+  findManyByIds(ids: string[]): Promise<Address[]> {
+    if (ids.length === 0) {
+      return Promise.resolve([]);
+    }
+    return this.prisma.address.findMany({ where: { id: { in: ids } } });
+  }
+
   setDefaultForOwner(
     ownerRole: AddressOwnerRole,
     ownerProfileId: string,
