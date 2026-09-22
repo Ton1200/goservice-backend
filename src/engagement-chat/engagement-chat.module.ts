@@ -10,6 +10,8 @@ import { EngagementChatAccessService } from './engagement-chat-access.service';
 import { EngagementChatModuleEnabledGuard } from './guards/engagement-chat-module-enabled.guard';
 import { EngagementChatRepository } from './engagement-chat.repository';
 import { EngagementChatResolver } from './engagement-chat.resolver';
+import { EngagementMessageFieldResolver } from './engagement-message-field.resolver';
+import { EmitEngagementLifecycleSystemMessageService } from './services/emit-engagement-lifecycle-system-message.service';
 import { ListEngagementMessagesService } from './services/list-engagement-messages.service';
 import { SendEngagementMessageService } from './services/send-engagement-message.service';
 
@@ -43,6 +45,16 @@ import { SendEngagementMessageService } from './services/send-engagement-message
  * for the same reason (see those modules' own header comments) — so
  * `EngagementChatModuleEnabledGuard` can read the
  * `customer.chat.enabled` `PlatformSetting`.
+ *
+ * **GOS-125**: `EngagementMessageFieldResolver` adds
+ * `EngagementMessage.engagementStatus`; `EmitEngagementLifecycleSystemMessageService`
+ * is the SYSTEM-message emitter called from inside `src/engagements/`'s 5
+ * lifecycle-transition transactions — it's provided here (not imported by
+ * `EngagementsModule`) but ALSO listed directly as a concrete provider in
+ * `EngagementsModule.providers` itself, same "reuse the concrete
+ * class directly, never import the resolver-bearing Module" pattern this
+ * module already uses for `EngagementsRepository` above, mirrored back the
+ * other way.
  */
 @Module({
   imports: [
@@ -61,6 +73,9 @@ import { SendEngagementMessageService } from './services/send-engagement-message
     MediaUploadsRepository,
     SendEngagementMessageService,
     ListEngagementMessagesService,
+    // GOS-125
+    EngagementMessageFieldResolver,
+    EmitEngagementLifecycleSystemMessageService,
   ],
   exports: [EngagementChatRepository],
 })

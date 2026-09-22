@@ -19,6 +19,11 @@ import '../quote-negotiation/models/quote-price-proposal-status.enum'; // GraphQ
 import '../engagement-chat/models/engagement-chat-party.enum'; // GraphQL enum registration side effect
 import '../appointments/models/appointment-status.enum'; // GraphQL enum registration side effect
 import '../appointments/models/appointment-party.enum'; // GraphQL enum registration side effect
+import '../reviews/models/engagement-review-party.enum'; // GraphQL enum registration side effect
+import '../reviews/models/review-comment-moderation-status.enum'; // GraphQL enum registration side effect
+import '../ledger/models/ledger-entry-type.enum'; // GraphQL enum registration side effect
+import '../ledger/models/payment-method.enum'; // GraphQL enum registration side effect
+import './ledger/models/admin-engagement-payment-event-type.enum'; // GraphQL enum registration side effect
 import './admin-auth/models/admin-user-status.enum'; // GraphQL enum registration side effect
 import { AdminRolesRepository } from './admin-rbac/admin-roles.repository';
 import { AdminRbacService } from './admin-rbac/services/admin-rbac.service';
@@ -104,6 +109,18 @@ import { SendTestEmailTemplateService } from './email-templates/services/send-te
 import { GetEmailLayoutService } from './email-templates/services/get-email-layout.service';
 import { UpdateEmailLayoutService } from './email-templates/services/update-email-layout.service';
 import { RequestEmailLogoUploadUrlService } from './email-templates/services/request-email-logo-upload-url.service';
+import { ReviewsRepository } from '../reviews/reviews.repository';
+import { AdminReviewsResolver } from './reviews/admin-reviews.resolver';
+import { ListAdminReviewsService } from './reviews/services/list-admin-reviews.service';
+import { ModerateEngagementReviewCommentService } from './reviews/services/moderate-engagement-review-comment.service';
+import { LedgerModule } from '../ledger/ledger.module';
+import { AdminLedgerResolver } from './ledger/admin-ledger.resolver';
+import { GetAdminPlatformBalanceService } from './ledger/services/get-admin-platform-balance.service';
+import { ListAdminEngagementPaymentSummariesService } from './ledger/services/list-admin-engagement-payment-summaries.service';
+import { ListAdminLedgerEntriesService } from './ledger/services/list-admin-ledger-entries.service';
+import { PaymentAttemptRepository } from '../payments/payment-attempt.repository';
+import { AdminPaymentAttemptsResolver } from './payment-attempts/admin-payment-attempts.resolver';
+import { ListAdminPaymentAttemptsService } from './payment-attempts/services/list-admin-payment-attempts.service';
 
 /**
  * Root module for the isolated `/admin/graphql` endpoint (see
@@ -245,7 +262,7 @@ import { RequestEmailLogoUploadUrlService } from './email-templates/services/req
  * `__schema.types`") is unaffected.
  */
 @Module({
-  imports: [PlatformSettingsModule, EmailModule],
+  imports: [PlatformSettingsModule, EmailModule, LedgerModule],
   providers: [
     // admin-rbac
     AdminRolesRepository,
@@ -541,6 +558,61 @@ import { RequestEmailLogoUploadUrlService } from './email-templates/services/req
     // random signing secret whenever `STORAGE_LOCAL_SIGNING_SECRET` is
     // unset, breaking upload-token verification across modules).
     RequestEmailLogoUploadUrlService,
+
+    // Mutual Engagement Reviews admin audit/moderation surface (GOS-121,
+    // 2026-09-11) — `adminReviews`/`moderateEngagementReviewComment`, gated
+    // by its own dedicated `Permission.REVIEWS_READ`/`REVIEWS_WRITE` (see
+    // the `Permission` enum's own comment in `prisma/schema.prisma`). No
+    // module-enabled kill switch — `adminReviews` is deliberately NOT gated
+    // by `reviews.rating.enabled`/`reviews.comment.enabled` (see
+    // `ListAdminReviewsService`'s own header comment for the reasoning,
+    // same "not gated" choice as `adminEngagementChatThread`, the opposite
+    // of `adminQuoteNegotiationThread`). `ReviewsRepository` is reused
+    // CONCRETE CLASS from `src/reviews/` — same "never import the
+    // resolver-bearing module" pattern as every other admin submodule in
+    // this file; `ReviewsModule` itself is never imported here (it has its
+    // own `ReviewsResolver`/`ReviewsQueriesResolver`, the same leak class
+    // documented throughout this file).
+    ReviewsRepository,
+    AdminReviewsResolver,
+    ListAdminReviewsService,
+    ModerateEngagementReviewCommentService,
+
+    // Financial ledger admin audit surface (GOS-109, 2026-09-12) —
+    // `adminLedgerEntries`, READ-ONLY, gated by its own dedicated
+    // `Permission.LEDGER_READ` (see the `Permission` enum's own comment in
+    // `prisma/schema.prisma`). No module-enabled kill switch. Unlike
+    // `ReviewsRepository`/`EngagementsRepository`/etc. above,
+    // `LedgerRepository` is NOT redeclared as a direct provider here — it
+    // comes from the imported `LedgerModule` (deliberately resolver-free,
+    // same "safe to import directly" pattern as `PlatformSettingsModule`),
+    // which already exports it.
+    AdminLedgerResolver,
+    ListAdminLedgerEntriesService,
+    // 2026-09-14 follow-up (human-requested) — adminEngagementPaymentSummaries,
+    // same LEDGER_READ gate, same resolver class.
+    ListAdminEngagementPaymentSummariesService,
+    // 2026-09-18 — adminPlatformBalance, same LEDGER_READ gate, same
+    // resolver class.
+    GetAdminPlatformBalanceService,
+
+    // Payment attempt admin audit surface (GOS-87/GOS-85, generalized
+    // 2026-09-18 — cash lives in `PaymentAttempt` together with every other
+    // method) — `adminPaymentAttempts`, READ-ONLY, gated by its own
+    // dedicated `Permission.CASH_PAYMENTS_READ` (kept its original name —
+    // see the resolver's own comment). No module-enabled kill switch — same
+    // "auditing existing history stays available regardless of the
+    // client-facing toggle" reasoning `AdminLedgerResolver` above already
+    // documents. `PaymentAttemptRepository` IS redeclared as a direct
+    // provider here (unlike `LedgerRepository` above) — same "reuse the
+    // concrete repository class directly, never import the resolver-bearing
+    // module" pattern `AppointmentsRepository`/`ReviewsRepository` already
+    // establish elsewhere in this file, since `PaymentsModule` (unlike
+    // `LedgerModule`) has its own resolver/controller that must never leak
+    // into this schema.
+    PaymentAttemptRepository,
+    AdminPaymentAttemptsResolver,
+    ListAdminPaymentAttemptsService,
   ],
 })
 export class PlatformAdminModule {}

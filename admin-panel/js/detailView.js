@@ -87,6 +87,23 @@ export function buildStatusBadge(text, variant) {
   return badge;
 }
 
+// GOS-121 admin follow-up — Reviews is the first place this panel renders a
+// numeric 1-5 rating. No icon/graphic component exists anywhere else in
+// this panel (badges are text pills, not icons — see `buildStatusBadge`
+// above), so this stays consistent with that: a plain text string via
+// Unicode star glyphs, safe to drop into `buildField`'s `value` (plain
+// text) or a grid cell formatter alike — never a new DOM-building
+// component. Shared here (not hand-copied into `js/reviews.js` AND
+// `js/quotes.js`) since both need it from day one — same "don't wait for a
+// third copy" reasoning as everything else already extracted into this
+// file.
+export function formatRating(rating) {
+  if (rating == null) {
+    return '—';
+  }
+  return `${'★'.repeat(rating)}${'☆'.repeat(5 - rating)} (${rating}/5)`;
+}
+
 /**
  * Builds a real, accessible tab strip (`role="tablist"`/`role="tab"`/
  * `role="tabpanel"`, Left/Right/Home/End keyboard navigation, roving

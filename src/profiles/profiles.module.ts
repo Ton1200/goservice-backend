@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { PlatformSettingsModule } from '../platform-admin/platform-settings/platform-settings.module';
+import { ReviewsRepository } from '../reviews/reviews.repository';
 import { UsersModule } from '../users/users.module';
+import { CustomerProfileFieldResolver } from './customer-profile-field.resolver';
+import { ProfessionalProfileFieldResolver } from './professional-profile-field.resolver';
 import { ProfilesRepository } from './profiles.repository';
 import { ProfilesResolver } from './profiles.resolver';
 import { GetMyAccountService } from './services/get-my-account.service';
@@ -40,6 +43,15 @@ import { UpsertProfessionalProfileService } from './services/upsert-professional
     RequestProfilePhotoUploadUrlService,
     UpsertCustomerProfileService,
     UpsertProfessionalProfileService,
+    // GOS-121 — `ProfessionalProfile.averageRating`/`.reviewCount`, plus the
+    // `CustomerProfile` mirror (human-requested follow-up, same ship).
+    // `ReviewsRepository` is reused here as a CONCRETE provider class (same
+    // "never import the resolver-bearing Module" pattern this codebase
+    // already establishes) — `ProfilesModule` never imports `ReviewsModule`
+    // itself, avoiding a cycle (`ReviewsModule` imports `ProfilesModule`).
+    ReviewsRepository,
+    ProfessionalProfileFieldResolver,
+    CustomerProfileFieldResolver,
   ],
   // Forward-looking seam for future modules (ServiceRequest belongs to
   // CustomerProfile, Quote belongs to ProfessionalProfile) that will need

@@ -3,14 +3,22 @@ import { EngagementStatus } from '@prisma/client';
 
 /**
  * Registers the Prisma-generated `EngagementStatus` enum directly as a
- * GraphQL enum type. Deliberately a single value for now (`ACCEPTED`) — no
- * `IN_PROGRESS`/`COMPLETED`/etc. is added speculatively; see
- * `prisma/schema.prisma`'s own comment on this enum.
+ * GraphQL enum type. GOS-111 grew this from a single value to the
+ * work-execution state machine — see `prisma/schema.prisma`'s own comment.
+ * `ACCEPTED → IN_PROGRESS → PENDING_CUSTOMER_CONFIRMATION` are the
+ * Professional-driven transitions implemented by GOS-111
+ * (`startEngagementWork` / `markEngagementWorkFinished`); `PENDING_CUSTOMER_CONFIRMATION
+ * → COMPLETED` is the Customer-driven transition implemented by GOS-113
+ * (`confirmEngagementCompletion`). `ACCEPTED|IN_PROGRESS → CANCELLED` is
+ * reachable via either the Customer-driven `cancelEngagementByCustomer`
+ * (GOS-114) or the Professional-driven `cancelEngagementByProfessional`
+ * (GOS-117) — both share the same role-agnostic
+ * `EngagementsRepository.cancelIfActive` CAS.
  */
 registerEnumType(EngagementStatus, {
   name: 'EngagementStatus',
   description:
-    'ACCEPTED is the only value today — set the moment a Quote is accepted. Reserved for future values (e.g. IN_PROGRESS/COMPLETED) once a real trigger for them exists.',
+    'Work-execution lifecycle of an Engagement. ACCEPTED (set when a Quote is accepted) → IN_PROGRESS (Professional called startEngagementWork; requires a CONFIRMED Appointment) → PENDING_CUSTOMER_CONFIRMATION (Professional called markEngagementWorkFinished) → COMPLETED (Customer called confirmEngagementCompletion, GOS-113). ACCEPTED/IN_PROGRESS → CANCELLED, reachable via either cancelEngagementByCustomer (GOS-114) or cancelEngagementByProfessional (GOS-117).',
 });
 
 export { EngagementStatus };

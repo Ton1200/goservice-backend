@@ -15,8 +15,17 @@ import { UserAccountDetailModel } from './user-account-detail.model';
  * rely on, applied here instead of re-constructing a new plain object by
  * hand.
  */
+/**
+ * `professionalPaymentBalance` is passed in rather than computed here — this
+ * mapper stays a pure, synchronous field copy (same convention every other
+ * `to*Model` util in this codebase follows); the balance itself needs an
+ * async ledger read, done by the caller (`GetUserAccountDetailService`)
+ * BEFORE calling this function. `null` when the row has no
+ * `professionalProfile` at all.
+ */
 export function toUserAccountDetailModel(
   row: AdminUserAccountDetailRow,
+  professionalPaymentBalance: number | null,
 ): UserAccountDetailModel {
   const model = new UserAccountDetailModel();
   model.id = row.id;
@@ -33,5 +42,6 @@ export function toUserAccountDetailModel(
   model.hasProfessionalProfile = row.professionalProfile !== null;
   model.customerProfile = row.customerProfile;
   model.professionalProfile = row.professionalProfile;
+  model.professionalPaymentBalance = professionalPaymentBalance;
   return model;
 }

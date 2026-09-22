@@ -342,6 +342,33 @@ const PLATFORM_SETTINGS: {
     value: 'true',
     isPublic: false,
   },
+  // GOS-121 — Mutual Engagement Reviews. TWO independent flags, same
+  // "module-wide kill switch" + "a second, more granular flag" pattern
+  // `quote-negotiation.general.enabled` +
+  // `quote-negotiation.price-edit.*-can-propose` already establish —
+  // `reviews.comment.enabled` is checked in ADDITION to
+  // `reviews.rating.enabled`, never instead of it. Top-level `reviews.*`
+  // (not nested under `customer.*`), same "own top-level capability
+  // namespace" convention as `quote-negotiation.*` — this is a distinct
+  // capability, not a Customer-only concern (both Customer and Professional
+  // submit/receive reviews). `isPublic: false` for both — backend/admin-only
+  // gates; `goservice-mobile` just calls `submitEngagementReview` and
+  // handles `REVIEWS_MODULE_DISABLED`/`REVIEW_COMMENTS_DISABLED` like any
+  // other domain error, same reasoning as every other capability flag above.
+  {
+    key: 'reviews.rating.enabled',
+    description:
+      'Global kill switch for the mutual Engagement review capability (submitEngagementReview) — with or without a comment.',
+    value: 'true',
+    isPublic: false,
+  },
+  {
+    key: 'reviews.comment.enabled',
+    description:
+      'Controls ONLY the free-text comment field on a review — independent of reviews.rating.enabled. When false, submitEngagementReview still accepts a rating-only call but rejects any non-empty comment with REVIEW_COMMENTS_DISABLED (never silently drops it).',
+    value: 'true',
+    isPublic: false,
+  },
   // GOS-70 — storage / image-processing knobs. Managed from the admin panel
   // by the DEDICATED `updateStorageSettings` mutation (permission
   // `STORAGE_SETTINGS_WRITE`), NOT the generic `setPlatformSetting`, which
@@ -371,6 +398,159 @@ const PLATFORM_SETTINGS: {
     value: '80',
     isPublic: false,
     valueType: 'NUMBER',
+  },
+  // GOS-109 — the single, global commission percentage confirmed by
+  // DEC-008 (`goservice-docs/decisions/DEC-008-commission-and-cancellation-fee.md`),
+  // applied uniformly to a completed job's `CUSTOMER_CHARGE` (GOS-79/80,
+  // not yet built) AND to the Customer cancellation-fee amount itself
+  // (GOS-109, `RecordCustomerCancellationChargeService`) — DEC-008
+  // deliberately reuses ONE number for both rather than a separate
+  // `payments.cancellation.customerFeePercent` key. `isPublic: false` —
+  // an internal pricing/commission detail, not something `goservice-mobile`
+  // needs to branch on. Read via `PlatformSettingPort.getValue`, never
+  // cached — a later admin change never rewrites a past `LedgerEntry`'s own
+  // frozen `commissionPercentApplied`.
+  //
+  // Nested under a `general-settings` group (2026-09-14 follow-up,
+  // human-requested settings-IA reorganization) — a sibling of
+  // `payments.payment-methods.*` (below): a configuration value that
+  // applies platform-wide across every payment method, not a per-method
+  // on/off switch, so it belongs in its own "General Settings" group rather
+  // than piling up next to `payment-methods.cash`/a future
+  // `payment-methods.card`. RENAMED from the flatter
+  // `payments.commission.percent` — the existing row was renamed in place
+  // (same id/value), never re-seeded as a duplicate.
+  {
+    key: 'payments.general-settings.commission.percent',
+    description:
+      "GoService's global commission percentage, applied to completed jobs and to the Customer cancellation fee alike (DEC-008).",
+    value: '10',
+    isPublic: false,
+    valueType: 'NUMBER',
+  },
+  // GOS-87 — Pago en Efectivo: the GLOBAL kill switch for the whole Cash
+  // Payment capability (`confirmCashPayment` only —
+  // `myPendingCashCommissionDebt` is a read of already-existing data and is
+  // NOT gated by this switch, see `CashPaymentModuleEnabledGuard`'s own
+  // header comment). `value: 'true'` (default ON) — same "already-working,
+  // real MVP payment method, not an experimental opt-in" reasoning
+  // `customer.appointments.enabled`'s own comment documents: the point of
+  // this switch is letting an admin turn it OFF during an incident, not
+  // requiring an opt-in before it works at all. `isPublic: true` (GOS-80
+  // follow-up, 2026-09-18 — was `false`): `goservice-mobile` must show/hide
+  // the Cash option based on this flag BEFORE the user ever attempts
+  // `confirmCashPayment`, so it is exposed via `platformConfig` (as
+  // `payments.paymentMethods.cash.enabled`), same as
+  // `customer.social-login.*.enabled`. Because this seed only ever
+  // `create`s (`update: {}`), existing environments are flipped by the
+  // `20260918120000_gos_80_make_cash_enabled_public` data-fixup migration,
+  // not by this file. The backend still enforces the switch itself
+  // (`CashPaymentModuleEnabledGuard`) regardless of what the client shows.
+  //
+  // Nested under a `payment-methods` group (2026-09-14 follow-up,
+  // human-requested) — a sibling slot for a future `payments.payment-methods.card.*`
+  // (GOS-79) to join without piling up flat next to Commission. RENAMED
+  // from the flatter `payments.cash.enabled` — the existing row was renamed
+  // in place (same id/value), never re-seeded as a duplicate.
+  {
+    key: 'payments.payment-methods.cash.enabled',
+    description:
+      'Global kill switch for the Cash Payment capability (confirmCashPayment).',
+    value: 'true',
+    isPublic: true,
+  },
+  // Customer-facing display name for the Cash payment method — 2026-09-14
+  // follow-up, human-requested: "cash" in a given market may really mean a
+  // bundle of local options (e.g. a Nequi transfer or a bank transfer in
+  // Colombia, not literal banknotes), so the admin needs to be able to set
+  // the actual label shown in the app, rather than a hardcoded "Cash"/
+  // "Efectivo" string baked into the mobile client. `isPublic: true` —
+  // this is DELIBERATELY exposed via `platformConfig` (as
+  // `payments.paymentMethods.cash.displayName`), the same generic,
+  // dot-path-driven mechanism `customer.social-login.google.client-id`
+  // already establishes for a non-secret, consumer-relevant STRING value —
+  // that is the whole point of this field, so `goservice-mobile` can render
+  // it instead of a hardcoded label. Default is a plain, generic Spanish
+  // label — an admin customizes it further per market (e.g. appending
+  // "(Nequi, transferencia)" for Colombia) through this same Settings row;
+  // there is NO per-country variant of this key today (matching DEC-008's
+  // own "single global value, not split by country" precedent for
+  // `payments.general-settings.commission.percent`) — flagged as an open
+  // question if a real per-country need ever comes up.
+  //
+  // NOT itself consumed by `goservice-mobile` as part of this change — same
+  // "backend prepares the data, the frontend's own follow-up work decides
+  // how to render it" posture already documented for `myPaymentReceipts`.
+  {
+    key: 'payments.payment-methods.cash.display-name',
+    description:
+      'Customer-facing display name for the Cash payment method, shown by goservice-mobile (e.g. "Efectivo (Nequi, transferencia)").',
+    value: 'Efectivo',
+    isPublic: true,
+  },
+  // GOS-85 — the GLOBAL kill switch for card payments (`payEngagementWithCard`
+  // only). `value: 'false'` (default OFF) — the deliberate OPPOSITE of
+  // `payments.payment-methods.cash.enabled` above: `PlatformSettingPort.isEnabled`
+  // is FAIL-OPEN for a missing row, so "off until certified" only holds
+  // because this row is seeded explicitly. Card is off by default because a
+  // real end-to-end card charge is not yet certified in production
+  // (DEC-009), and because until the Mercado Pago credentials below are
+  // configured it could not work anyway. `isPublic: false` — a
+  // backend/admin-only gate, same as every other capability flag.
+  {
+    key: 'payments.payment-methods.card.enabled',
+    description:
+      'Global kill switch for the Card Payment capability (payEngagementWithCard). Off until the real card flow is certified.',
+    value: 'false',
+    isPublic: false,
+  },
+  // GOS-142 — the GLOBAL kill switch for wallet (redirect-to-Mercado-Pago-
+  // account) payments (`startEngagementWalletPayment` only). `value: 'false'`
+  // (default OFF), same reasoning as `payments.payment-methods.card.enabled`
+  // above: `PlatformSettingPort.isEnabled` is FAIL-OPEN for a missing row, so
+  // "off until certified" only holds because this row is seeded explicitly.
+  // Off by default because the wallet flow's redirect/webhook circle has
+  // never been completed live (no public HTTPS URL exists in any environment
+  // yet — see `payments.mercadopago.public-base-url` and the
+  // `payments.mercadopago.wallet.back-url-*` keys, deliberately NOT seeded
+  // with a real value, same precedent as the credential rows below).
+  // `isPublic: false` — a backend/admin-only gate, same as Card's.
+  {
+    key: 'payments.payment-methods.mercadopago-wallet.enabled',
+    description:
+      'Global kill switch for the Mercado Pago Wallet Payment capability (startEngagementWalletPayment). Off until a public HTTPS URL exists to receive the redirect/webhook.',
+    value: 'false',
+    isPublic: false,
+  },
+  // GOS-85 — which Mercado Pago credential set is in use: `sandbox` or
+  // `production`. Seeded `sandbox` (the safe default) for EACH country
+  // (2026-09-18: a Mercado Pago account belongs to exactly one country's
+  // marketplace — one credential pair cannot serve two countries — so this
+  // is now independent per country, human-confirmed: one country may go to
+  // production while another is still being certified). NOTE the API base
+  // URL is the same in both (`https://api.mercadopago.com`) — Mercado Pago
+  // tells sandbox from production by the CREDENTIAL used, not by the host —
+  // so this value is a deliberate, admin-visible statement of intent (and is
+  // logged on every charge), not something that switches an endpoint. The
+  // other 3 `payments.mercadopago.<country>.*` keys per country
+  // (`access-token`, `webhook-secret` — encrypted; `public-key` — plain,
+  // meant to be `isPublic` so the mobile card form can read the RIGHT
+  // country's key via `platformConfig`) are real credentials and are NOT
+  // seeded, same precedent as the `identity.didit.*` credentials — they are
+  // set from the admin panel (`KNOWN_SETTING_SLOTS`).
+  {
+    key: 'payments.mercadopago.co.environment',
+    description:
+      'Which Mercado Pago credential set is in use for Colombia: sandbox or production.',
+    value: 'sandbox',
+    isPublic: false,
+  },
+  {
+    key: 'payments.mercadopago.ar.environment',
+    description:
+      'Which Mercado Pago credential set is in use for Argentina: sandbox or production.',
+    value: 'sandbox',
+    isPublic: false,
   },
 ];
 

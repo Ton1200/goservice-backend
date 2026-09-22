@@ -1,23 +1,40 @@
 import { UseGuards } from '@nestjs/common';
-import { Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { AccountApprovedGuard } from '../identity-verification/guards/account-approved.guard';
 import { EngagementModel } from './models/engagement.model';
+import { CancelEngagementByCustomerService } from './services/cancel-engagement-by-customer.service';
+import { CancelEngagementByProfessionalService } from './services/cancel-engagement-by-professional.service';
+import { ConfirmEngagementCompletionService } from './services/confirm-engagement-completion.service';
 import { ListMyEngagementsAsCustomerService } from './services/list-my-engagements-as-customer.service';
 import { ListMyEngagementsAsProfessionalService } from './services/list-my-engagements-as-professional.service';
+import { MarkEngagementWorkFinishedService } from './services/mark-engagement-work-finished.service';
+import { ReportEngagementNoShowService } from './services/report-engagement-no-show.service';
+import { StartEngagementWorkService } from './services/start-engagement-work.service';
 
 /**
  * Thin delivery adapter — no business logic here, same pattern as
- * `ServiceRequestsResolver`/`QuotesResolver`. Both queries require
- * `SessionGuard` + `AccountApprovedGuard`, in that exact order, and take no
- * arguments — ownership is always derived from `@CurrentUser()`.
+ * `ServiceRequestsResolver`/`QuotesResolver`. Every operation requires
+ * `SessionGuard` + `AccountApprovedGuard`, in that exact order, applied
+ * per-method (this resolver is not decorated at the class level). The two
+ * read queries take no arguments; the three GOS-111/GOS-113 work-execution
+ * mutations take only `engagementId` — ownership/role is always derived
+ * from `@CurrentUser()`, never passed in. `cancelEngagementByCustomer`
+ * (GOS-114), `cancelEngagementByProfessional`, and `reportEngagementNoShow`
+ * (both GOS-117) additionally take a required `reason`.
  */
 @Resolver()
 export class EngagementsResolver {
   constructor(
     private readonly listMyEngagementsAsCustomerService: ListMyEngagementsAsCustomerService,
     private readonly listMyEngagementsAsProfessionalService: ListMyEngagementsAsProfessionalService,
+    private readonly startEngagementWorkService: StartEngagementWorkService,
+    private readonly markEngagementWorkFinishedService: MarkEngagementWorkFinishedService,
+    private readonly confirmEngagementCompletionService: ConfirmEngagementCompletionService,
+    private readonly cancelEngagementByCustomerService: CancelEngagementByCustomerService,
+    private readonly cancelEngagementByProfessionalService: CancelEngagementByProfessionalService,
+    private readonly reportEngagementNoShowService: ReportEngagementNoShowService,
   ) {}
 
   @UseGuards(SessionGuard, AccountApprovedGuard)
@@ -43,6 +60,102 @@ export class EngagementsResolver {
   ): Promise<EngagementModel[]> {
     return this.listMyEngagementsAsProfessionalService.listMyEngagementsAsProfessional(
       userId,
+    );
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Mutation(() => EngagementModel, {
+    description:
+      'The Professional owner of an Engagement reports they have started the work: ACCEPTED → IN_PROGRESS, stamping startedAt. Requires the Engagement to have at least one CONFIRMED Appointment (ENGAGEMENT_HAS_NO_CONFIRMED_APPOINTMENT otherwise). A caller who is not this Engagement’s Professional — the Customer or a third party — gets ENGAGEMENT_NOT_FOUND (anti-enumeration). Wrong current state → ENGAGEMENT_NOT_ACCEPTED; lost concurrent race → ENGAGEMENT_WORK_START_CONFLICT.',
+  })
+  startEngagementWork(
+    @CurrentUser() userId: string,
+    @Args('engagementId', { type: () => ID }) engagementId: string,
+  ): Promise<EngagementModel> {
+    return this.startEngagementWorkService.startEngagementWork(
+      userId,
+      engagementId,
+    );
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Mutation(() => EngagementModel, {
+    description:
+      'The Professional owner reports the work is finished and awaiting Customer confirmation: IN_PROGRESS → PENDING_CUSTOMER_CONFIRMATION, stamping finishedAt. Non-owner → ENGAGEMENT_NOT_FOUND (anti-enumeration). Wrong current state → ENGAGEMENT_NOT_IN_PROGRESS; lost concurrent race → ENGAGEMENT_WORK_FINISH_CONFLICT.',
+  })
+  markEngagementWorkFinished(
+    @CurrentUser() userId: string,
+    @Args('engagementId', { type: () => ID }) engagementId: string,
+  ): Promise<EngagementModel> {
+    return this.markEngagementWorkFinishedService.markEngagementWorkFinished(
+      userId,
+      engagementId,
+    );
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Mutation(() => EngagementModel, {
+    description:
+      'The Customer owner of an Engagement confirms the work is done: PENDING_CUSTOMER_CONFIRMATION → COMPLETED. A caller who is not this Engagement’s Customer — the Professional or a third party — gets ENGAGEMENT_NOT_FOUND (anti-enumeration). Wrong current state → ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION; lost concurrent race → ENGAGEMENT_COMPLETION_CONFLICT.',
+  })
+  confirmEngagementCompletion(
+    @CurrentUser() userId: string,
+    @Args('engagementId', { type: () => ID }) engagementId: string,
+  ): Promise<EngagementModel> {
+    return this.confirmEngagementCompletionService.confirmEngagementCompletion(
+      userId,
+      engagementId,
+    );
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Mutation(() => EngagementModel, {
+    description:
+      'The Customer owner of a still-open Engagement (ACCEPTED or IN_PROGRESS) cancels it, recording a required reason: → CANCELLED. A caller who is not this Engagement’s Customer — the Professional or a third party — gets ENGAGEMENT_NOT_FOUND (anti-enumeration). Wrong current state (PENDING_CUSTOMER_CONFIRMATION, COMPLETED, or already CANCELLED) → ENGAGEMENT_NOT_CANCELLABLE_BY_CUSTOMER; lost concurrent race → ENGAGEMENT_CANCEL_CONFLICT. Financial charge/refund calculation is out of scope (GOS-109).',
+  })
+  cancelEngagementByCustomer(
+    @CurrentUser() userId: string,
+    @Args('engagementId', { type: () => ID }) engagementId: string,
+    @Args('reason') reason: string,
+  ): Promise<EngagementModel> {
+    return this.cancelEngagementByCustomerService.cancelEngagementByCustomer(
+      userId,
+      engagementId,
+      reason,
+    );
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Mutation(() => EngagementModel, {
+    description:
+      'The Professional owner of a still-open Engagement (ACCEPTED or IN_PROGRESS) cancels it, recording a required reason: → CANCELLED. A caller who is not this Engagement’s Professional — the Customer or a third party — gets ENGAGEMENT_NOT_FOUND (anti-enumeration). Wrong current state (PENDING_CUSTOMER_CONFIRMATION, COMPLETED, or already CANCELLED) → ENGAGEMENT_NOT_CANCELLABLE_BY_PROFESSIONAL; lost concurrent race → ENGAGEMENT_CANCEL_CONFLICT. Financial refund calculation is out of scope (GOS-109).',
+  })
+  cancelEngagementByProfessional(
+    @CurrentUser() userId: string,
+    @Args('engagementId', { type: () => ID }) engagementId: string,
+    @Args('reason') reason: string,
+  ): Promise<EngagementModel> {
+    return this.cancelEngagementByProfessionalService.cancelEngagementByProfessional(
+      userId,
+      engagementId,
+      reason,
+    );
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Mutation(() => EngagementModel, {
+    description:
+      'Either party on a still-open Engagement (ACCEPTED or IN_PROGRESS) reports that the OTHER party did not show up, recording a required reason. Increments the OTHER party’s no-show trust/reliability counter (not exposed via GraphQL yet) — does NOT change Engagement.status and has no automatic consequence. A caller who is not a party to this Engagement gets ENGAGEMENT_NOT_FOUND (anti-enumeration). Wrong current state → ENGAGEMENT_NOT_REPORTABLE_FOR_NO_SHOW.',
+  })
+  reportEngagementNoShow(
+    @CurrentUser() userId: string,
+    @Args('engagementId', { type: () => ID }) engagementId: string,
+    @Args('reason') reason: string,
+  ): Promise<EngagementModel> {
+    return this.reportEngagementNoShowService.reportEngagementNoShow(
+      userId,
+      engagementId,
+      reason,
     );
   }
 }

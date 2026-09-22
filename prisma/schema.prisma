@@ -251,9 +251,9 @@ model Category {
 }
 
 model CustomerProfile {
-  id          String      @id @default(uuid()) @db.Uuid
-  userId      String      @unique @db.Uuid
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                     String      @id @default(uuid()) @db.Uuid
+  userId                 String      @unique @db.Uuid
+  user                   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   // The person's real name, split into two fields (nombre / apellido).
   // Replaced the former single free-text `displayName` column — see
   // `prisma/migrations/*_split_profile_name_into_first_last/migration.sql`'s
@@ -261,8 +261,8 @@ model CustomerProfile {
   // retroactive change used (demo/seed data only). Both NOT NULL, same as
   // the column they replace. `User.firstName`/`User.lastName` are a
   // separate identity-level name and deliberately not reused here.
-  firstName   String
-  lastName    String
+  firstName              String
+  lastName               String
   // Structured address (addressLine/city/province) was REMOVED
   // (GOS-62b, 2026-09-08) — destructive migration
   // `*_remove_structured_address_from_profiles`, no data retained (test
@@ -278,11 +278,11 @@ model CustomerProfile {
   // `String @default("AR")` — see
   // `prisma/migrations/*_convert_country_to_enum/migration.sql`'s own
   // comment for the `USING country::"CountryCode"` cast this required.
-  country     CountryCode @default(AR)
+  country                CountryCode @default(AR)
   // Reference to an externally-stored image (no object-storage provider is
   // decided yet — see infrastructure.md's open hosting-provider question —
   // so this is just a URL string today, not backed by any real upload flow).
-  photoUrl    String?
+  photoUrl               String?
   // GOS-62 — explicit opt-in consent flag ONLY: whether this Customer is
   // willing to share their location, added ahead of any real geolocation
   // capability (DEC-005, still status "Proposed" — this field does not
@@ -294,9 +294,18 @@ model CustomerProfile {
   // latitude/longitude pair or any coordinate — no real geospatial data
   // exists anywhere in this schema yet; that belongs to a separate future
   // story once DEC-005 is actually decided.
-  locationSharingEnabled Boolean @default(false)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  locationSharingEnabled Boolean     @default(false)
+  // GOS-117 — trust/reliability counter: incremented each time the OTHER
+  // party (the Professional) on one of this Customer's Engagements reports
+  // this Customer as a no-show via `reportEngagementNoShow`. Deliberately
+  // NOT exposed on `CustomerProfileModel` yet — no GraphQL surface for
+  // profile counters exists today — and deliberately has ZERO automatic
+  // consequence (no blocking/threshold logic anywhere) — see
+  // `ReportEngagementNoShowService`'s own header comment. Never
+  // deduplicated: repeated reports on the same Engagement all count.
+  noShowReportedCount    Int         @default(0)
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
 
   // GOS-38 — purely additive back-reference, no new column here.
   serviceRequests             ServiceRequest[]
@@ -318,6 +327,14 @@ model CustomerProfile {
   // GOS-59 — purely additive back-reference, no new column here. A
   // CustomerProfile may be the proposing party on an Appointment.
   proposedAppointments        Appointment[]
+  // GOS-121 — purely additive back-reference, no new column here. A
+  // CustomerProfile may author a Review on any COMPLETED Engagement it is
+  // party to (see Review's own header comment above).
+  authoredReviews             Review[]
+  // GOS-109 — every `LedgerEntry` ever written where this CustomerProfile is
+  // the customer-side party (`onDelete: SetNull` — see that model's own
+  // header comment).
+  ledgerEntries               LedgerEntry[]
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -370,6 +387,12 @@ model ProfessionalProfile {
   // rationale) — independent per profile: a User holding both a
   // CustomerProfile and a ProfessionalProfile may set each one differently.
   locationSharingEnabled Boolean                        @default(false)
+  // GOS-117 — same trust/reliability counter as `CustomerProfile`'s own
+  // field of the same name (see that field's own comment for the full
+  // rationale) — incremented each time the OTHER party (the Customer) on
+  // one of this Professional's Engagements reports this Professional as a
+  // no-show.
+  noShowReportedCount    Int                            @default(0)
   createdAt              DateTime                       @default(now())
   updatedAt              DateTime                       @updatedAt
 
@@ -398,8 +421,19 @@ model ProfessionalProfile {
   // Engagement this ProfessionalProfile is the party of (denormalized,
   // regardless of who proposed it), and, separately, every Appointment this
   // ProfessionalProfile itself proposed.
-  appointments                 Appointment[]                @relation("AppointmentProfessional")
-  proposedAppointments         Appointment[]                @relation("AppointmentProposedByProfessional")
+  appointments                Appointment[]                @relation("AppointmentProfessional")
+  proposedAppointments        Appointment[]                @relation("AppointmentProposedByProfessional")
+  // GOS-121 — purely additive back-reference, no new column here. A
+  // ProfessionalProfile may author a Review on any COMPLETED Engagement it
+  // is party to (see Review's own header comment above). `averageRating`/
+  // `reviewCount` (ratings RECEIVED, i.e. authored by the Customer
+  // counterparty) are resolved separately, via `ReviewsRepository`, NOT
+  // through this relation — see `ProfessionalProfileFieldResolver`.
+  authoredReviews             Review[]
+  // GOS-109 — every `LedgerEntry` ever written where this ProfessionalProfile
+  // is the professional-side party (`onDelete: SetNull` — see that model's
+  // own header comment).
+  ledgerEntries               LedgerEntry[]
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
   // User" constraint. Indexes anticipate Discovery (by country) and a
@@ -722,14 +756,45 @@ model QuotePriceProposal {
   @@index([quoteId, status])
 }
 
-// GOS-41 — deliberately a single value for now (`ACCEPTED`). No
-// IN_PROGRESS/COMPLETED/etc. is added speculatively — see the GOS-41 plan's
-// decision #6: those states get added when a real trigger for them exists,
-// not before, same "reserved for later" posture as
-// ProfessionalVerificationStatus/ServiceRequestStatus already establish
-// elsewhere in this schema.
+// Which payment METHOD (who collects the money) an Engagement is/was using —
+// GOS-87 (`CASH`) and GOS-85 (`MERCADOPAGO`). The one enum shared by
+// `Engagement.paymentMethod` and `PaymentAttempt.method`. HOW it was paid
+// inside a method (credit card, debit card, account money…) is
+// `PaymentAttemptType`. `MERCADOPAGO` replaced the reserved value `CARD`
+// (2026-09-18): a wallet payment made with Mercado Pago account money is not a
+// card, and a future second provider needs its own value, so the method names
+// the collector, not the instrument. A new provider = a new value here.
+enum PaymentMethod {
+  CASH
+  MERCADOPAGO
+}
+
+// GOS-111 — the Engagement work-execution state machine (épico GOS-100
+// "Ejecución y Cierre del Trabajo"). Declared in lifecycle order:
+//   ACCEPTED                       -> set the moment a Quote is accepted (GOS-41).
+//   IN_PROGRESS                    -> Professional called startEngagementWork
+//                                    ("empecé el trabajo"); requires >= 1
+//                                    CONFIRMED Appointment. Stamps startedAt.
+//   PENDING_CUSTOMER_CONFIRMATION  -> Professional called markEngagementWorkFinished
+//                                    ("terminé, falta que el Cliente confirme").
+//                                    Stamps finishedAt.
+//   COMPLETED / CANCELLED          -> RESERVED. Added to the enum now so
+//                                    GOS-113/114/117 (Customer confirmation,
+//                                    cancellations) attach with no further
+//                                    migration — NO transition into either
+//                                    exists yet.
+// GOS-111 implements only ACCEPTED -> IN_PROGRESS -> PENDING_CUSTOMER_CONFIRMATION,
+// both Professional-driven, via the guarded-CAS-inside-$transaction idiom
+// (see EngagementsRepository.startWorkIfAccepted / finishWorkIfInProgress and
+// AcceptQuoteService's own decision #4). Values are only ever appended
+// (`ALTER TYPE ... ADD VALUE`), never removed — same additive-only posture
+// as ServiceRequestStatus/ProfessionalVerificationStatus.
 enum EngagementStatus {
   ACCEPTED
+  IN_PROGRESS
+  PENDING_CUSTOMER_CONFIRMATION
+  COMPLETED
+  CANCELLED
 }
 
 // GOS-41 — created exactly once, atomically, inside AcceptQuoteService's
@@ -757,8 +822,55 @@ model Engagement {
   professionalProfileId String              @db.Uuid
   professionalProfile   ProfessionalProfile @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
   status                EngagementStatus    @default(ACCEPTED)
+  // GOS-111 — stamped exactly once each, by their respective Professional-driven
+  // transitions (startEngagementWork sets startedAt on ACCEPTED -> IN_PROGRESS;
+  // markEngagementWorkFinished sets finishedAt on IN_PROGRESS ->
+  // PENDING_CUSTOMER_CONFIRMATION). Nullable, no @default — same criterion as
+  // Appointment.confirmedAt/cancelledAt. Existing rows stay NULL / ACCEPTED.
+  startedAt             DateTime?
+  finishedAt            DateTime?
+  // GOS-114 — stamped exactly once, by cancelEngagementByCustomer
+  // (ACCEPTED|IN_PROGRESS -> CANCELLED). Nullable, no @default — same
+  // criterion as startedAt/finishedAt above and as
+  // Appointment.cancelReason/cancelledAt. Existing rows stay NULL.
+  cancelledAt           DateTime?
+  cancelReason          String?
+  // GOS-121 — stamped exactly once, by confirmEngagementCompletion
+  // (PENDING_CUSTOMER_CONFIRMATION -> COMPLETED), inside the SAME guarded
+  // CAS write `completeIfPendingCustomerConfirmation` already performs (see
+  // `EngagementsRepository`'s own comment on that method) — never a second,
+  // separate write. `null` before then. Added retroactively, expanding
+  // GOS-121's own scope beyond `src/reviews/` — GOS-113 explicitly shipped
+  // WITHOUT this column (see that migration's own comment), and GOS-121's
+  // 14-day double-blind review window needs a real "when did this Engagement
+  // finish" timestamp to measure against. No backfill: no existing COMPLETED
+  // Engagement in test data has a real completion moment to reconstruct —
+  // same accepted "nullable retroactive column, no backfill" criterion this
+  // schema already uses elsewhere (e.g. `locationSharingEnabled`'s own
+  // migration note).
+  completedAt           DateTime?
+  // GOS-87 — which payment method this Engagement is/was using; `null`
+  // until the FIRST party confirms a payment through some payment-method
+  // capability (today: `confirmCashPayment`). The single point of truth
+  // "what method is/was this job using" — any future method (card
+  // included) reuses this exact column, never a `cash-payment`-specific
+  // field. Set ONLY via `EngagementsRepository.setPaymentMethodIfUnset`'s
+  // guarded CAS (`WHERE paymentMethod IS NULL`) — never overwritten once
+  // set, matching `Quote.price`'s own "never rewritten once set" posture.
+  paymentMethod         PaymentMethod?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
+
+  // Every payment attempt made against this Engagement, whatever the method
+  // (`PaymentAttempt`, `src/payments/`): the cash confirmation (GOS-87, one
+  // row that goes PENDING -> APPROVED once both parties confirm) and every
+  // digital attempt (GOS-85). One-to-MANY: a REJECTED digital attempt does
+  // not consume the Engagement's right to pay — the Customer may try again
+  // with another card. At most ONE attempt can be PENDING/APPROVED at a
+  // time, whatever its method, enforced by a partial unique index (see that
+  // model's own comment) — so an Engagement can never be paid twice, nor by
+  // two methods at once.
+  paymentAttempts PaymentAttempt[]
 
   // GOS-46 — the one Engagement Chat coordination conversation for this
   // Engagement, if any (created transparently the first time either party
@@ -766,12 +878,24 @@ model Engagement {
   // EngagementChatConversation.engagementId (`@unique`) below, same
   // "child holds the FK" convention ServiceRequest.engagement/Quote.engagement
   // already establish above.
-  chatConversation      EngagementChatConversation?
+  chatConversation EngagementChatConversation?
 
   // GOS-59 — every Appointment ever proposed/confirmed/cancelled on this
   // Engagement (deliberately NOT a single 1:1 field — see
   // Appointment.engagementId's own comment for why it's not `@unique`).
-  appointments          Appointment[]
+  appointments Appointment[]
+
+  // GOS-121 — at most two rows (one per EngagementReviewParty, enforced by
+  // Review's own `@@unique([engagementId, authorRole])`), only ever created
+  // once this Engagement is COMPLETED.
+  reviews Review[]
+
+  // GOS-109 — every `LedgerEntry` ever written against this Engagement
+  // (cancellation-charge/refund events today; a completed-job charge later,
+  // GOS-79/80). `onDelete: SetNull` on `LedgerEntry.engagementId` — see that
+  // model's own header comment for why this diverges from `reviews`/
+  // `appointments` above.
+  ledgerEntries LedgerEntry[]
 
   // Supports myEngagementsAsCustomer/myEngagementsAsProfessional (WHERE
   // <profile>Id = ? ORDER BY createdAt DESC). serviceRequestId/quoteId
@@ -793,9 +917,18 @@ model Engagement {
 // committed via an accepted Quote, matching this ticket's own business goal
 // ("Cliente y Profesional de un Engagement ya aceptado"). See
 // domain-model.md's own updated section for the full writeup.
+// GOS-125 — `SYSTEM` added as a third party: a system-authored message
+// narrating an Engagement lifecycle transition (e.g. "El profesional inició
+// el trabajo"), emitted by `EmitEngagementLifecycleSystemMessageService`
+// from inside the same transaction as the transition itself. Unlike
+// `CUSTOMER`/`PROFESSIONAL`, a `SYSTEM` message has BOTH
+// `senderCustomerProfileId`/`senderProfessionalProfileId` null — see the
+// updated `engagement_chat_message_sender_shape_check` CHECK constraint
+// below, which now has a third branch for this shape.
 enum EngagementChatParty {
   CUSTOMER
   PROFESSIONAL
+  SYSTEM
 }
 
 // GOS-46 — one per Engagement, created transparently (idempotent upsert
@@ -822,12 +955,16 @@ model EngagementChatConversation {
 }
 
 // GOS-46 — one free-text coordination message. `senderCustomerProfileId`/
-// `senderProfessionalProfileId` is the same nullable pair (exactly one
-// non-null, matching `senderRole`) as `QuoteNegotiationMessage`'s own
-// `authorCustomerProfileId`/`authorProfessionalProfileId`, enforced by the
-// same kind of raw-SQL CHECK constraint in the migration
-// (`engagement_chat_message_sender_shape_check`) — a structural guardrail,
-// not just application-code discipline.
+// `senderProfessionalProfileId` is the same nullable pair as
+// `QuoteNegotiationMessage`'s own `authorCustomerProfileId`/
+// `authorProfessionalProfileId` — enforced by the same kind of raw-SQL
+// CHECK constraint in the migration
+// (`engagement_chat_message_sender_shape_check`), a structural guardrail,
+// not just application-code discipline. As of GOS-125, the constraint has
+// three branches, not two: `senderRole = CUSTOMER`/`PROFESSIONAL` still each
+// require exactly the matching one of the two ids non-null, but
+// `senderRole = SYSTEM` (see `EngagementChatParty`'s own comment) requires
+// BOTH ids null — it is no longer true that exactly one is always set.
 //
 // Deliberately carries NO structured business field — no price, no status,
 // no reference back into `Quote`/`Engagement` state. `content` is the ONLY
@@ -1093,6 +1230,343 @@ model MediaUploadRef {
   @@index([userId, status])
 }
 
+// GOS-121 — mutual Engagement ratings/reviews, with admin comment moderation.
+// Both parties of a COMPLETED Engagement may rate each other exactly once
+// each (1-5 stars, optional free-text comment) — double-blind (see
+// `ListMyReceivedReviewsService`'s own header comment for the exact
+// resolution rule) — and, a NEW rule confirmed for this ticket (still
+// pending a DEC-002 documentation update — see `domain-model.md`), a
+// non-empty `comment`'s TEXT is held `PENDING` admin moderation before the
+// counterparty can ever read it; the numeric `rating` is NEVER moderated.
+enum EngagementReviewParty {
+  CUSTOMER
+  PROFESSIONAL
+}
+
+enum ReviewCommentModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// One party's rating (+ optional moderated comment) of the OTHER party on
+// one COMPLETED Engagement. `authorCustomerProfileId`/
+// `authorProfessionalProfileId` are the same nullable-pair-exactly-one-set
+// shape `QuoteNegotiationMessage`/`EngagementChatMessage` already establish
+// for "who acted, relative to a specific parent entity" — enforced
+// structurally by `review_author_shape_check` (see the migration), not just
+// application discipline.
+//
+// **Deliberately NO "reviews received" relation/FK.** Who RECEIVED a given
+// Review is never stored directly — it's always the OTHER party on
+// `engagement` (if `authorRole = CUSTOMER`, the recipient is
+// `engagement.professionalProfileId`, and vice versa), resolved via a join
+// to `Engagement`, same as every other "who is the counterparty" lookup in
+// this schema. Do NOT "fix" this later with a redundant `recipientProfileId`
+// column — it would just be a second, driftable copy of information already
+// fully derivable from `authorRole` + `engagement`.
+//
+// `@@unique([engagementId, authorRole])` is the physical "each party may
+// rate this Engagement at most once" constraint the ticket requires — no
+// edit, no retraction, no second attempt (P2002 on a repeat `create()` —
+// see `SubmitEngagementReviewService`'s own header comment for why this is
+// the first place in this codebase that catches `P2002` directly instead of
+// a pre-check `findFirst`/CAS, a deliberate, ticket-instructed exception).
+//
+// `commentModerationStatus` is `NULL` exactly when `comment` is `NULL`
+// (nothing to moderate); the instant a non-empty `comment` is submitted
+// (with `reviews.comment.enabled` on), it starts `PENDING` and can only ever
+// move to `APPROVED`/`REJECTED` via `moderateEngagementReviewComment` — see
+// `review_comment_moderation_status_shape_check` in the migration. This is
+// this schema's 4th "make an invariant physically impossible, not just an
+// application rule" CHECK constraint, matching the precedent already set by
+// `quote_negotiation_message_author_shape_check`/
+// `quote_price_proposal_proposed_by_shape_check`/
+// `quote_price_proposal_resolved_by_shape_check`/
+// `platform_setting_encrypted_shape_check`.
+model Review {
+  id           String     @id @default(uuid()) @db.Uuid
+  engagementId String     @db.Uuid
+  engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  authorRole                  EngagementReviewParty
+  authorCustomerProfileId     String?               @db.Uuid
+  authorCustomerProfile       CustomerProfile?      @relation(fields: [authorCustomerProfileId], references: [id], onDelete: Cascade)
+  authorProfessionalProfileId String?               @db.Uuid
+  authorProfessionalProfile   ProfessionalProfile?  @relation(fields: [authorProfessionalProfileId], references: [id], onDelete: Cascade)
+
+  rating                  Int
+  // Free-text, optional. `NULL` means "rating only, nothing to moderate" —
+  // see `commentModerationStatus`'s own comment above.
+  comment                 String?
+  // `NULL` iff `comment` is `NULL`. `PENDING` the instant a non-empty
+  // comment is submitted; `APPROVED`/`REJECTED` ONLY via
+  // `moderateEngagementReviewComment` — never reverted, never resubmitted.
+  commentModerationStatus ReviewCommentModerationStatus?
+  // Same `onDelete: SetNull` pattern already used 3 times in this schema for
+  // "which admin last touched this row" (`PlatformSetting.updatedByAdminUser`/
+  // `EmailTemplate.updatedByAdminUser`/`EmailLayout.updatedByAdminUser`) — an
+  // admin account being deleted must never block/cascade-delete a Review.
+  moderatedByAdminUserId  String?                        @db.Uuid
+  moderatedByAdminUser    AdminUser?                     @relation(fields: [moderatedByAdminUserId], references: [id], onDelete: SetNull)
+  moderatedAt             DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([engagementId, authorRole])
+}
+
+// GOS-85 — one attempt to pay an Engagement DIGITALLY through the payment
+// provider (`PaymentProviderPort`, today Mercado Pago). Originally
+// `CardPaymentAttempt`; generalized to `PaymentAttempt` the same day, once the
+// decision was taken that Mercado Pago has no reusable token (so "save a card"
+// does not apply) and that the way to let a user pay with their own Mercado
+// Pago account (balance / saved cards) is a wallet payment — which is not a
+// card payment, so the entity cannot carry a card-shaped name.
+// PENDING is the only non-terminal state: created BEFORE the provider is
+// called, resolved exactly once to APPROVED or REJECTED — either by the
+// provider's synchronous answer or, when that answer is itself `pending`
+// (e.g. a 3DS challenge, `processing/in_process`), by the provider's later
+// asynchronous notification. Both paths go through the same
+// `ApplyPaymentResultService`, whose guarded CAS
+// (`WHERE id = ? AND status = 'PENDING'`) is what makes a repeated
+// notification a no-op instead of a second ledger write.
+enum PaymentAttemptStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// The Customer's payment TYPE — HOW they paid inside a method (PaymentMethod
+// says WHO collects: CASH | MERCADOPAGO). Follows Mercado Pago's own
+// `payment_type_id` standard (`credit_card`, `debit_card`, `account_money`),
+// plus CASH. Nullable on the row because a wallet payment (pay inside the
+// Customer's own Mercado Pago account) only learns whether it was account
+// money or a card once the provider reports it; a card attempt knows its type
+// from the start (credit vs debit is derived from the card brand id), and a
+// cash attempt is always CASH.
+enum PaymentAttemptType {
+  CASH
+  CREDIT_CARD
+  DEBIT_CARD
+  ACCOUNT_MONEY
+}
+
+// GOS-85 — see `PaymentAttemptStatus` above.
+//
+// **"No double charge" is enforced by the database, not by a read-then-write
+// in application code**: the migration adds a PARTIAL unique index,
+// `PaymentAttempt_engagementId_active_key ON ("engagementId") WHERE
+// status IN ('PENDING','APPROVED')`, which Prisma's schema language cannot
+// express (hence it is NOT declared here — same "constraint that lives only
+// in the migration" precedent as `platform_setting_encrypted_shape_check`).
+// A second concurrent PENDING/APPROVED insert fails with `P2002`, which the
+// service turns into `CARD_PAYMENT_ALREADY_IN_PROGRESS` (digital) or
+// `PAYMENT_METHOD_CONFLICT` (cash finding another method already active).
+//
+// `providerPaymentId` is the PROVIDER's own id for the charge — for Mercado
+// Pago's Orders API, the ORDER id (`ORD…`), not the nested payment id
+// (`PAY…`), because the asynchronous notification identifies the resource
+// by `data.id` = the order id. Null until the provider has answered at least
+// once (it stays null if the create call itself timed out with an unknown
+// outcome).
+//
+// `amount`/`currency` are a frozen copy of what was charged (major-unit
+// `Int`, same convention as `LedgerEntry.amount`) — never re-derived later,
+// so a Quote/price edit can never make an old attempt disagree with what the
+// provider actually charged. `rejectionReason` is a small, stable DOMAIN code
+// (`CARD_DECLINED`, `INSUFFICIENT_FUNDS`, `INVALID_CARD_DATA`, `OTHER`),
+// never the processor's raw `status_detail`.
+//
+// **Non-sensitive facts about HOW it was paid** (`paymentTypeId` … `moneyReleaseAt`,
+// all nullable): filled from Mercado Pago's own payment record once a payment is
+// APPROVED, so GoService keeps a trace of the transaction and can show the
+// Customer "Visa •••• 6260". Deliberately NEVER stored: the card number, the
+// CVV, the card token (single-use, passed through memory only), the cardholder's
+// name/document, the payer's phone — none of it is needed to follow a payment.
+// `cardBrand`/`cardLastFour` are what a card receipt shows; both are null for a
+// wallet payment made with balance. They are best-effort: an approved payment
+// whose payment record could not be read yet keeps them null — the payment is
+// never failed or delayed for it.
+// `providerFeeAmount`/`providerTaxAmount`/`netReceivedAmount` are what Mercado
+// Pago reports it charged GoService for this payment (its fee, the tax
+// withholdings it applied, and what GoService actually receives). Major-unit
+// `Int` like every amount here — rounded to whole units when the provider
+// reports decimals (ARS) — and INFORMATIONAL: the ledger never reads them
+// (DEC-009 item 3, who absorbs the provider's cost, is still undecided; this is
+// the real per-payment data that decision needs). NOT exposed to the Customer.
+//
+// **Cash lives here too (2026-09-18, product decision).** A cash attempt is ONE
+// row per Engagement (`method = CASH`, `type = CASH`) that starts PENDING the
+// first time EITHER party calls `confirmCashPayment` and goes APPROVED the
+// instant BOTH have — through the very same guarded CAS
+// (`WHERE id = ? AND status = PENDING`) card payments use, which is what
+// makes "record the commission debt exactly once" a status flip instead of a
+// separate flag (the old `CashPaymentConfirmation.commissionDebtRecorded`).
+// `customerConfirmedAt`/`professionalConfirmedAt` are the two independent
+// confirmations and are ONLY used by cash (null on every digital attempt).
+// `providerPaymentId`, card facts and provider amounts stay null for cash.
+// APPROVED therefore means "the payment is settled": the provider approved it,
+// or both parties confirmed the cash hand-over. A cash attempt is never
+// REJECTED (there is no reject flow).
+//
+// `onDelete: Cascade` toward `Engagement` — an attempt never outlives its
+// Engagement. The financial record that matters (`LedgerEntry`) is
+// `SetNull`, not cascaded, and survives.
+model PaymentAttempt {
+  id           String               @id @default(uuid()) @db.Uuid
+  engagementId String               @db.Uuid
+  engagement   Engagement           @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  method       PaymentMethod
+  type         PaymentAttemptType?
+  status       PaymentAttemptStatus @default(PENDING)
+
+  customerConfirmedAt     DateTime?
+  professionalConfirmedAt DateTime?
+
+  providerPaymentId String?
+  amount            Int
+  currency          String
+  installments      Int                      @default(1)
+  rejectionReason   String?
+
+  paymentTypeId      String?
+  cardBrand          String?
+  cardLastFour       String?
+  providerFeeAmount  Int?
+  providerTaxAmount  Int?
+  netReceivedAmount  Int?
+  providerApprovedAt DateTime?
+  moneyReleaseAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([engagementId])
+  @@index([providerPaymentId])
+}
+
+// GOS-109 — the first real, append-only financial ledger row, unblocked by
+// DEC-008 (commission percentage + customer-cancellation-fee policy, both
+// Accepted 2026-09-12). Replaces the two documented, exercised stubs that
+// used to always return `null`:
+// `CancelEngagementByCustomerService.computeCustomerCancellationCharge`
+// (GOS-114) and `CancelEngagementByProfessionalService.recordProfessionalCancellationRefund`
+// (GOS-117). See `goservice-docs/decisions/DEC-008-commission-and-cancellation-fee.md`.
+//
+// `CUSTOMER_CHARGE` was RESERVED for a future digital-payment capability —
+// same "reserved for later, added when the trigger exists" posture
+// `EngagementStatus.COMPLETED`/`CANCELLED` established in GOS-111. GOS-85
+// (card payments) is now its writer (`RecordDigitalPaymentService`): a
+// NEGATIVE balancing leg written together with a `PLATFORM_COMMISSION` and a
+// `PROFESSIONAL_NET_CREDIT`, the same zero-sum shape as the cancellation
+// charge below. `CASH_COMMISSION_DEBT` is no longer reserved either — GOS-87
+// (Pago en Efectivo) is its real writer, below.
+// `WITHDRAWAL`/`WITHDRAWAL_HOLD_RELEASE` are likewise RESERVED for a future
+// Professional wallet/withdrawal capability (GOS-82).
+//
+// This story's writers:
+//   - `CUSTOMER_CANCELLATION_FEE` (negative) + `PLATFORM_COMMISSION`
+//     (positive) + `PROFESSIONAL_NET_CREDIT` (positive) — written together,
+//     atomically, by `RecordCustomerCancellationChargeService` ONLY when a
+//     Customer cancels an Engagement that was already `IN_PROGRESS` (DEC-008
+//     point 3) — a pure 2-row commission/net split can never sum to zero on
+//     its own, so the negative fee entry is the required third, balancing
+//     leg (see that service's own header comment for the exact rounding
+//     rule that keeps `-fee + commission + net === 0` exactly, even under
+//     integer rounding).
+//   - `REFUND` (positive, full quoted price) — written alone by
+//     `RecordProfessionalCancellationRefundService` on EVERY
+//     Professional-initiated cancellation (DEC-008: "unaffected by this
+//     DEC ... full refund to the Customer, no charge") — deliberately NOT
+//     run through `computeCommission`: nothing was ever charged, so there
+//     is nothing to split.
+//   - `CASH_COMMISSION_DEBT` (positive, GOS-87) — written ALONE (never
+//     alongside a `PLATFORM_COMMISSION`/`PROFESSIONAL_NET_CREDIT` split,
+//     unlike the cancellation-charge event above) by
+//     `RecordCashCommissionDebtService`, the instant BOTH parties confirm a
+//     `CashPaymentConfirmation` for the same `Engagement` — the Professional
+//     already collected 100% of the price directly from the Customer, in
+//     cash, outside GoService, so there is nothing to split: this single row
+//     IS the commission the Professional owes the platform for that job.
+enum LedgerEntryType {
+  CUSTOMER_CHARGE
+  PLATFORM_COMMISSION
+  PROFESSIONAL_NET_CREDIT
+  CASH_COMMISSION_DEBT
+  CUSTOMER_CANCELLATION_FEE
+  REFUND
+  WITHDRAWAL
+  WITHDRAWAL_HOLD_RELEASE
+}
+
+// One append-only ledger row. No `update`/`delete` Prisma call exists
+// anywhere for this model (see `LedgerRepository`'s own header comment) —
+// a financial audit trail is corrected by writing a NEW, offsetting entry,
+// never by mutating history.
+//
+// `amount` is a bare major-unit `Int`, the SAME convention as
+// `Quote.price`/`ServiceRequest.indicativeBudgetMin/Max` — this schema has
+// no cents/minor-unit precedent anywhere, so `LedgerEntry` does not
+// introduce one on its own. `currency` is derived at write time from
+// `CustomerProfile.country` via `CURRENCY_BY_COUNTRY`
+// (`src/ledger/constants/country-currency.constants.ts`) — the same
+// `AR -> ARS` / `CO -> COP` mapping `ServiceRequest.indicativeBudgetMin`'s
+// own comment already assumes, now made real. Flagged as a proposal (no
+// ADR/DEC formally owns this mapping) — revisit if multi-currency/FX ever
+// becomes a real concern.
+//
+// `engagementId`/`customerProfileId`/`professionalProfileId` are ALL
+// `onDelete: SetNull` — a deliberate divergence from every other
+// Engagement-adjacent model (`Review`/`Appointment` use `Cascade`). A
+// financial audit record must never be destroyed by a
+// `deleteUserAccount`/`bulkDeleteUserAccounts` hard-delete cascade; it
+// should be anonymized, not erased — same principle (not direction) as
+// `Review.moderatedByAdminUserId`'s own `SetNull`. Flagged for explicit
+// human sign-off since this is new precedent, not a copy of an existing
+// one.
+//
+// `commissionPercentApplied` freezes the `payments.commission.percent`
+// value actually used at write time — a later admin change to that
+// `PlatformSetting` must never rewrite a past entry's own frozen value.
+// `null` on a `REFUND` row (no commission was ever applied to a refund).
+model LedgerEntry {
+  id       String          @id @default(uuid()) @db.Uuid
+  // Human-facing "comprobante interno" (internal receipt) sequential number
+  // — 2026-09-14 follow-up, human-requested. A plain, globally-increasing
+  // Postgres sequence (`@default(autoincrement())` on a NON-`@id` column —
+  // `id` stays the real UUID primary key everywhere else in this schema),
+  // assigned once at insert time, NEVER reused or renumbered. One number per
+  // ROW, i.e. per individual ledger movement — a compound event (e.g. the
+  // 3-row customer-cancellation-charge event) yields 3 consecutive numbers,
+  // not one shared "receipt" number for the whole event. This mirrors how a
+  // real accounting ledger numbers each individual "asiento", and avoids
+  // inventing a new "PaymentEvent"/grouping entity nobody asked for.
+  // FLAGGED: whether a compound event should instead get ONE shared receipt
+  // number is an open product question, not decided here.
+  receiptNumber Int @unique @default(autoincrement())
+  type     LedgerEntryType
+  amount   Int
+  currency String
+
+  engagementId String?     @db.Uuid
+  engagement   Engagement? @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+
+  customerProfileId String?          @db.Uuid
+  customerProfile   CustomerProfile? @relation(fields: [customerProfileId], references: [id], onDelete: SetNull)
+
+  professionalProfileId String?              @db.Uuid
+  professionalProfile   ProfessionalProfile? @relation(fields: [professionalProfileId], references: [id], onDelete: SetNull)
+
+  commissionPercentApplied Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([engagementId])
+  @@index([professionalProfileId, createdAt])
+  @@index([customerProfileId, createdAt])
+}
+
 // Identity Verification (Didit integration) — DEC-006's own "open question"
 // (automated KYC). See `src/identity-verification/` for the full
 // Port/Registry/Adapter design. `User.accountStatus` (PENDING_APPROVAL ->
@@ -1307,6 +1781,46 @@ enum Permission {
   // access. Same "its own dedicated permission" reasoning as
   // `EMAIL_TEMPLATES_WRITE` above.
   STORAGE_SETTINGS_WRITE
+  // Mutual Engagement Reviews admin audit/moderation surface (GOS-121,
+  // 2026-09-11) — gates the read-only `adminReviews` query
+  // (`src/platform-admin/reviews/`): full visibility into every Review,
+  // including `PENDING`/`REJECTED` comments a Customer/Professional can
+  // never see. A genuinely NEW, dedicated permission — same "its own
+  // dedicated permission, not reused from a sibling read permission"
+  // reasoning already established throughout this enum (see
+  // `QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ`/`APPOINTMENTS_READ`
+  // above) — deliberately NOT `SERVICE_REQUESTS_READ`.
+  REVIEWS_READ
+  // GOS-121 — gates `moderateEngagementReviewComment` (approve/reject a
+  // PENDING comment). Separate from `REVIEWS_READ`, mirroring every other
+  // `*_READ`/`*_WRITE` split in this enum (e.g. `EMAIL_TEMPLATES_READ`/
+  // `EMAIL_TEMPLATES_WRITE`) — a role can audit Reviews without being able
+  // to moderate them.
+  REVIEWS_WRITE
+  // Financial ledger admin audit surface (GOS-109, 2026-09-12) — gates the
+  // read-only `adminLedgerEntries` query (`src/platform-admin/ledger/`):
+  // full visibility into every append-only `LedgerEntry` row. A genuinely
+  // NEW, dedicated permission — same "its own dedicated permission, not
+  // reused from a sibling read permission" reasoning already established
+  // throughout this enum (see `QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ`/
+  // `APPOINTMENTS_READ`/`REVIEWS_READ` above) — deliberately NOT
+  // `SERVICE_REQUESTS_READ`. No `LEDGER_WRITE`: nothing in this story writes
+  // a `LedgerEntry` from the admin panel — every write is a server-side
+  // consequence of a consumer-domain state transition
+  // (`cancelEngagementByCustomer`/`cancelEngagementByProfessional`).
+  LEDGER_READ
+  // GOS-87 — gates the read-only `adminCashPaymentConfirmations` query
+  // (`src/platform-admin/cash-payment/`): visibility into every
+  // `CashPaymentConfirmation`, INCLUDING half-confirmed cases (only one
+  // party has confirmed so far) that `adminLedgerEntries`/`LEDGER_READ`
+  // alone cannot show — a `LedgerEntry` only ever appears once BOTH parties
+  // have confirmed. A genuinely NEW, dedicated permission — same "its own
+  // dedicated permission, not reused from a sibling read permission"
+  // reasoning already established throughout this enum (see
+  // `QUOTE_NEGOTIATION_READ`/`ENGAGEMENT_CHAT_READ`/`APPOINTMENTS_READ`/
+  // `REVIEWS_READ`/`LEDGER_READ` above) — deliberately NOT `LEDGER_READ`
+  // itself.
+  CASH_PAYMENTS_READ
 }
 
 // Fixed, code-seeded catalog for Slice 1 (see
@@ -1365,6 +1879,11 @@ model AdminUser {
   // a relation declared together" requirement as `updatedEmailTemplates`
   // above. See `EmailLayout`'s own header comment below.
   updatedEmailLayouts     EmailLayout[]
+  // GOS-121 — `Review.moderatedByAdminUser`'s inverse relation, same "both
+  // sides of a relation declared together" requirement as
+  // `updatedEmailTemplates`/`updatedEmailLayouts` above. See `Review`'s own
+  // header comment above.
+  moderatedReviews        Review[]
 
   @@index([status])
 }
@@ -1546,7 +2065,7 @@ model PlatformSetting {
 // own `onDelete: SetNull` pattern exactly — a deleted admin's past edits are
 // not themselves erased, just anonymized.
 model EmailTemplate {
-  id        String @id @default(uuid()) @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
   // 'verification_code' | 'password_reset_code' | 'admin_invite' — see this
   // model's own header comment; validated against
   // `KNOWN_EMAIL_TEMPLATE_KEYS` at the application layer
@@ -1554,10 +2073,10 @@ model EmailTemplate {
   // stays the single source of truth for the whole feature (seed, admin-UI
   // labels/variable hints, and validation) without a schema migration if
   // the key SET itself ever needs to change.
-  key       String @unique
-  subject   String
-  htmlBody  String
-  textBody  String
+  key      String @unique
+  subject  String
+  htmlBody String
+  textBody String
 
   updatedByAdminUserId String?    @db.Uuid
   updatedByAdminUser   AdminUser? @relation(fields: [updatedByAdminUserId], references: [id], onDelete: SetNull)

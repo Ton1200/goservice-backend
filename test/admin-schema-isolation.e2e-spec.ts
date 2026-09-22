@@ -180,6 +180,10 @@ const ADMIN_ONLY_FIELDS = [
   // `STORAGE_SETTINGS_READ`/`_WRITE`.
   'storageSettings',
   'updateStorageSettings',
+  // Mutual Engagement Reviews admin audit/moderation surface (GOS-121,
+  // 2026-09-11) — `src/platform-admin/reviews/`, `REVIEWS_READ`/`_WRITE`.
+  'adminReviews',
+  'moderateEngagementReviewComment',
 ];
 
 // Fields that must NEVER appear on `/admin/graphql` — consumer-only
@@ -201,6 +205,9 @@ const CONSUMER_ONLY_FIELDS = [
   'upsertProfessionalProfile',
   'requestProfilePhotoUploadUrl',
   'platformConfig',
+  // Mutual Engagement Reviews (GOS-121, 2026-09-11) — `src/reviews/`.
+  'submitEngagementReview',
+  'myReceivedReviews',
 ];
 
 /**
@@ -337,6 +344,19 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         'emailTemplates',
         // Shared email header/footer follow-up (2026-08-25).
         'emailLayout',
+        // Mutual Engagement Reviews admin audit/moderation surface
+        // (GOS-121, 2026-09-11).
+        'adminReviews',
+        // Financial ledger admin audit surface (GOS-109, 2026-09-12).
+        'adminLedgerEntries',
+        // Payment attempt admin audit surface (GOS-87/GOS-85, generalized
+        // 2026-09-18 — replaces the cash-only adminCashPaymentConfirmations).
+        'adminPaymentAttempts',
+        // One-row-per-job payments summary follow-up (2026-09-14,
+        // human-requested).
+        'adminEngagementPaymentSummaries',
+        // GoService's own current balance (2026-09-18).
+        'adminPlatformBalance',
       ].sort(),
     );
     expect(
@@ -378,6 +398,9 @@ describe('GraphQL schema isolation between /graphql and /admin/graphql (e2e)', (
         'updateEmailLayout',
         // Uploadable-logo follow-up (same day).
         'requestEmailLogoUploadUrl',
+        // Mutual Engagement Reviews admin audit/moderation surface
+        // (GOS-121, 2026-09-11).
+        'moderateEngagementReviewComment',
       ].sort(),
     );
   });

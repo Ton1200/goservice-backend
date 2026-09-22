@@ -1,0 +1,12 @@
+-- GOS-125 — adds the SYSTEM party to EngagementChatParty, for
+-- system-authored Engagement lifecycle-narration chat messages (see
+-- prisma/schema.prisma's own comment on this enum).
+--
+-- Deliberately its OWN migration, separate from the CHECK constraint update
+-- in the next migration: Postgres forbids using a newly-added enum value in
+-- the same transaction that added it ("unsafe use of new value of enum
+-- type"), and Prisma applies each migration.sql as a single transaction —
+-- so the CHECK constraint referencing 'SYSTEM' must live in a later,
+-- separate migration.
+-- AlterEnum
+ALTER TYPE "EngagementChatParty" ADD VALUE 'SYSTEM';

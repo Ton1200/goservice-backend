@@ -22,6 +22,7 @@ import {
   buildField,
   buildStatusBadge,
   buildSubsection,
+  formatRating,
   renderDetailTabs,
 } from './detailView.js';
 import { clearSession } from './session.js';
@@ -153,6 +154,51 @@ const ADMIN_APPOINTMENTS_BY_ENGAGEMENT_QUERY = `
       cancelledAt
       confirmedAt
       createdAt
+    }
+  }
+`;
+
+// "Reviews" tab (GOS-121 admin follow-up, human-requested) — fetched lazily,
+// only the first time that tab is actually activated, same convention as
+// `ADMIN_ENGAGEMENT_CHAT_THREAD_QUERY`/`ADMIN_APPOINTMENTS_BY_ENGAGEMENT_QUERY`
+// above. Only meaningful once `detail.engagement` exists (same gate). Gated
+// server-side by `Permission.REVIEWS_READ` only — deliberately NOT gated by
+// `reviews.rating.enabled`/`reviews.comment.enabled` (see
+// `AdminReviewsResolver`'s own header comment), same posture the two
+// sibling tabs' own queries already established, so no
+// `REVIEWS_MODULE_DISABLED`-style code is ever expected here. Filtered to
+// this one Engagement via `AdminReviewsFilterInput.engagementId` — the SAME
+// query the standalone "Reviews" grid section uses (js/reviews.js), just
+// scoped down to one Engagement instead of a full page.
+const ADMIN_REVIEWS_QUERY = `
+  query AdminReviews($engagementId: ID!) {
+    adminReviews(filter: { engagementId: $engagementId }, limit: 10) {
+      items {
+        id
+        engagementId
+        authorRole
+        rating
+        comment
+        commentModerationStatus
+        moderatedAt
+        createdAt
+      }
+    }
+  }
+`;
+
+// Moderating a comment right from this tab (Approve/Reject a PENDING
+// review authored on THIS Engagement) reuses the exact same mutation the
+// standalone Reviews grid calls (js/reviews.js) — see that file's own
+// header comment for the full contract (`REVIEWS_WRITE`, a decision is
+// terminal, never reverted).
+const MODERATE_REVIEW_MUTATION = `
+  mutation ModerateEngagementReviewComment($reviewId: ID!, $decision: ReviewModerationDecision!) {
+    moderateEngagementReviewComment(reviewId: $reviewId, decision: $decision) {
+      id
+      commentModerationStatus
+      moderatedByAdminUserId
+      moderatedAt
     }
   }
 `;
@@ -508,6 +554,17 @@ const APPOINTMENT_STATUS_VARIANTS = {
   PENDING: 'warning',
   CONFIRMED: 'success',
   CANCELLED: 'error',
+};
+
+/** `Review.commentModerationStatus` -> badge-variant lookup (GOS-121 admin
+ * follow-up), same "hardcoded, mirrors the Prisma enum" trade-off as
+ * `APPOINTMENT_STATUS_VARIANTS`/`QUOTE_STATUS_VARIANTS` above. A `null`
+ * status (no comment submitted at all) never reaches `buildStatusBadge` —
+ * `buildReviewCard` below only renders this badge when `comment` exists. */
+const REVIEW_COMMENT_MODERATION_STATUS_VARIANTS = {
+  PENDING: 'warning',
+  APPROVED: 'success',
+  REJECTED: 'error',
 };
 
 /** CUSTOMER/PROFESSIONAL author-role badge — not a status per se, but reuses
@@ -931,6 +988,214 @@ async function loadAppointments(engagementId, container) {
   }
 }
 
+/**
+ * Approve/Reject a review comment from right inside this tab — same
+ * confirm -> mutate -> reload shape `js/reviews.js`'s own standalone grid
+ * uses, except the "reload" here is just re-rendering THIS tab's own
+ * container (`loadEngagementReviews`) rather than a whole grid — the
+ * modal stays open, showing the now-updated moderation status immediately.
+ */
+async function handleModerateReviewInTab(
+  review,
+  decision,
+  engagementId,
+  container,
+  button,
+) {
+  const confirmed = window.confirm(
+    decision === 'APPROVE'
+      ? 'Approve this review comment? It will become visible to the counterparty once the double-blind window resolves.'
+      : 'Reject this review comment? This cannot be undone — the text stays hidden from the counterparty forever, but the rating itself is unaffected.',
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  button.disabled = true;
+
+  try {
+    const body = await graphqlRequest(MODERATE_REVIEW_MUTATION, {
+      reviewId: review.id,
+      decision,
+    });
+
+    if (body.errors && body.errors.length > 0) {
+      if (handleAdminUnauthenticated(body)) {
+        detailDialog.close();
+        return;
+      }
+      const code = body.errors[0]?.extensions?.code;
+      window.alert(
+        code === 'ADMIN_FORBIDDEN'
+          ? 'You do not have permission to moderate reviews.'
+          : code === 'REVIEW_COMMENT_ALREADY_MODERATED'
+            ? 'This review comment has already been moderated — refreshing.'
+            : code === 'REVIEW_NOT_FOUND'
+              ? 'This review no longer exists — refreshing.'
+              : 'Could not moderate this review. Please try again.',
+      );
+      await loadEngagementReviews(engagementId, container);
+      return;
+    }
+
+    await loadEngagementReviews(engagementId, container);
+  } catch (error) {
+    window.alert(
+      error instanceof GraphQLNetworkError
+        ? error.message
+        : 'Something went wrong. Please try again.',
+    );
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/** One `Review` in the "Reviews" tab — an author-role badge, the star
+ * rating, a timestamp, and — only when a comment was submitted — its text
+ * plus a moderation-status badge and (only while `PENDING`) Approve/Reject
+ * buttons. Reuses the existing `gs-negotiation-message*` CSS classes, same
+ * "already generic chat/card-style styling" reasoning `buildAppointmentCard`
+ * above already established for non-chat content. */
+function buildReviewCard(review, engagementId, container) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'gs-negotiation-message';
+
+  const header = document.createElement('div');
+  header.className = 'gs-negotiation-message-header';
+  header.appendChild(
+    buildStatusBadge(review.authorRole, authorRoleVariant(review.authorRole)),
+  );
+  const timestamp = document.createElement('span');
+  timestamp.className = 'gs-negotiation-message-timestamp text-secondary';
+  timestamp.textContent = formatDateTime(review.createdAt);
+  header.appendChild(timestamp);
+  wrapper.appendChild(header);
+
+  const body = document.createElement('p');
+  body.className = 'gs-negotiation-message-body mb-0';
+  body.textContent = formatRating(review.rating);
+  wrapper.appendChild(body);
+
+  if (review.comment) {
+    const details = document.createElement('div');
+    details.className = 'gs-detail-specialization gs-negotiation-proposal';
+    details.append(
+      buildField('Comment', review.comment),
+      buildBadgeField(
+        'Moderation',
+        buildStatusBadge(
+          review.commentModerationStatus,
+          REVIEW_COMMENT_MODERATION_STATUS_VARIANTS[
+            review.commentModerationStatus
+          ],
+        ),
+      ),
+    );
+    if (review.moderatedAt) {
+      details.appendChild(
+        buildField('Moderated at', formatDateTime(review.moderatedAt)),
+      );
+    }
+
+    if (review.commentModerationStatus === 'PENDING') {
+      const actions = document.createElement('div');
+      actions.className = 'd-flex gap-1 mt-2';
+
+      const approveButton = document.createElement('button');
+      approveButton.type = 'button';
+      approveButton.className = 'btn btn-sm btn-outline-success';
+      approveButton.textContent = 'Approve';
+      approveButton.addEventListener('click', () => {
+        void handleModerateReviewInTab(
+          review,
+          'APPROVE',
+          engagementId,
+          container,
+          approveButton,
+        );
+      });
+
+      const rejectButton = document.createElement('button');
+      rejectButton.type = 'button';
+      rejectButton.className = 'btn btn-sm btn-outline-danger';
+      rejectButton.textContent = 'Reject';
+      rejectButton.addEventListener('click', () => {
+        void handleModerateReviewInTab(
+          review,
+          'REJECT',
+          engagementId,
+          container,
+          rejectButton,
+        );
+      });
+
+      actions.append(approveButton, rejectButton);
+      details.appendChild(actions);
+    }
+
+    wrapper.appendChild(details);
+  }
+
+  return wrapper;
+}
+
+/**
+ * Fetches `adminReviews(filter: { engagementId })` and renders it into
+ * `container` — called lazily by the "Reviews" tab's `onActivate` (see
+ * `openQuoteDetailModal`), AND re-called after a successful Approve/Reject
+ * right from this tab (see `handleModerateReviewInTab`) to reflect the new
+ * moderation status immediately without closing the modal. Same "no cheap
+ * count field to skip an empty fetch" scope trim as
+ * `loadEngagementChatThread`/`loadAppointments` above. Handles the known
+ * error cases scoped to THIS tab: lacking `Permission.REVIEWS_READ`, or the
+ * target Engagement no longer existing (practically unreachable — same
+ * caveat as the sibling tabs' own loaders).
+ */
+async function loadEngagementReviews(engagementId, container) {
+  try {
+    const body = await graphqlRequest(ADMIN_REVIEWS_QUERY, { engagementId });
+
+    if (body.errors && body.errors.length > 0) {
+      if (handleAdminUnauthenticated(body)) {
+        detailDialog.close();
+        return;
+      }
+      const code = body.errors[0]?.extensions?.code;
+      container.textContent = '';
+      const message = document.createElement('p');
+      message.className = 'text-secondary mb-0';
+      message.textContent =
+        code === 'ADMIN_FORBIDDEN'
+          ? "You don't have permission to view this engagement's reviews."
+          : 'Could not load reviews. Please try again.';
+      container.appendChild(message);
+      return;
+    }
+
+    container.textContent = '';
+    const reviews = body.data.adminReviews.items;
+    if (reviews.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'text-secondary mb-0';
+      empty.textContent = 'No reviews yet.';
+      container.appendChild(empty);
+      return;
+    }
+    for (const review of reviews) {
+      container.appendChild(buildReviewCard(review, engagementId, container));
+    }
+  } catch (error) {
+    container.textContent = '';
+    const message = document.createElement('p');
+    message.className = 'text-secondary mb-0';
+    message.textContent =
+      error instanceof GraphQLNetworkError
+        ? error.message
+        : 'Something went wrong. Please try again.';
+    container.appendChild(message);
+  }
+}
+
 async function openQuoteDetailModal(rowData) {
   detailContentEl.textContent = '';
   showDetailError('');
@@ -1037,6 +1302,33 @@ async function openQuoteDetailModal(rowData) {
           }
           appointmentsLoaded = true;
           void loadAppointments(detail.engagement.id, appointmentsContainer);
+        },
+      });
+
+      // "Reviews" tab (GOS-121 admin follow-up, human-requested) — same
+      // `detail.engagement` gate as Chat/Appointments above (a Review only
+      // ever exists once an Engagement reaches COMPLETED, and an Engagement
+      // only exists once a Quote is accepted). Same always-fetch-on-first-
+      // activation shape, but ALSO re-fetched after every in-tab Approve/
+      // Reject (see `handleModerateReviewInTab`) so the modal reflects the
+      // new moderation status without closing.
+      const reviewsContainer = document.createElement('div');
+      const reviewsLoading = document.createElement('p');
+      reviewsLoading.className = 'text-secondary mb-0';
+      reviewsLoading.textContent = 'Loading…';
+      reviewsContainer.appendChild(reviewsLoading);
+      let reviewsLoaded = false;
+
+      tabs.push({
+        id: 'reviews',
+        label: 'Reviews',
+        content: reviewsContainer,
+        onActivate: () => {
+          if (reviewsLoaded) {
+            return;
+          }
+          reviewsLoaded = true;
+          void loadEngagementReviews(detail.engagement.id, reviewsContainer);
         },
       });
     }

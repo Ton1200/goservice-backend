@@ -1,3 +1,4 @@
+import { LedgerRepository } from '../../../ledger/ledger.repository';
 import { UsersRepository } from '../../../users/users.repository';
 import { GetUserAccountDetailService } from './get-user-account-detail.service';
 
@@ -20,14 +21,22 @@ describe('GetUserAccountDetailService', () => {
     };
   }
 
-  function makeService(row: unknown) {
+  function makeService(row: unknown, balance = 0) {
     const findByIdForAdminWithProfiles = jest.fn().mockResolvedValue(row);
     const usersRepository = {
       findByIdForAdminWithProfiles,
     } as unknown as UsersRepository;
+    const sumProfessionalBalance = jest.fn().mockResolvedValue(balance);
+    const ledgerRepository = {
+      sumProfessionalBalance,
+    } as unknown as LedgerRepository;
     return {
-      service: new GetUserAccountDetailService(usersRepository),
+      service: new GetUserAccountDetailService(
+        usersRepository,
+        ledgerRepository,
+      ),
       findByIdForAdminWithProfiles,
+      sumProfessionalBalance,
     };
   }
 
@@ -79,9 +88,8 @@ describe('GetUserAccountDetailService', () => {
         },
       ],
     };
-    const { service, findByIdForAdminWithProfiles } = makeService(
-      makeRow({ customerProfile, professionalProfile }),
-    );
+    const { service, findByIdForAdminWithProfiles, sumProfessionalBalance } =
+      makeService(makeRow({ customerProfile, professionalProfile }), -2300);
 
     const result = await service.getUserAccountDetail('u1');
 
@@ -90,10 +98,12 @@ describe('GetUserAccountDetailService', () => {
     expect(result.hasProfessionalProfile).toBe(true);
     expect(result.customerProfile).toBe(customerProfile);
     expect(result.professionalProfile).toBe(professionalProfile);
+    expect(sumProfessionalBalance).toHaveBeenCalledWith('pp1');
+    expect(result.professionalPaymentBalance).toBe(-2300);
   });
 
-  it('returns null customerProfile/professionalProfile when the user never created either', async () => {
-    const { service } = makeService(makeRow());
+  it('returns null customerProfile/professionalProfile/professionalPaymentBalance when the user never created either', async () => {
+    const { service, sumProfessionalBalance } = makeService(makeRow());
 
     const result = await service.getUserAccountDetail('u1');
 
@@ -101,5 +111,7 @@ describe('GetUserAccountDetailService', () => {
     expect(result.hasProfessionalProfile).toBe(false);
     expect(result.customerProfile).toBeNull();
     expect(result.professionalProfile).toBeNull();
+    expect(result.professionalPaymentBalance).toBeNull();
+    expect(sumProfessionalBalance).not.toHaveBeenCalled();
   });
 });
