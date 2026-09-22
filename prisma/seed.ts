@@ -658,6 +658,35 @@ const PLATFORM_SETTINGS: {
     valueType: 'NUMBER',
     isPublic: false,
   },
+  // GOS-153 — Maps & Discovery. `maps.enabled` is the GLOBAL kill switch for
+  // the whole Maps capability (today: Address CRUD — addAddress/
+  // updateAddress/deleteAddress/setDefaultAddress/myAddresses; later: the
+  // Home Map view). `isPublic: true`: exposed via the unauthenticated
+  // `platformConfig` query (as `maps.enabled`) so mobile can decide whether
+  // to offer the feature at all, without a mobile deploy — same reasoning as
+  // `identity.enabled` above. Also registered in
+  // `src/platform-admin/platform-settings/public/known-platform-config-defaults.ts`
+  // so that branch is always present even before this seed has run.
+  //
+  // Seeded OFF (same "off until configured/certified" precedent as
+  // `payments.payment-methods.mercadopago.card.enabled`): this backend
+  // never calls Google itself (see Address's own header comment in
+  // schema.prisma — coordinates arrive already resolved from the mobile
+  // app's own Google Places SDK call), but the capability is still gated
+  // behind this switch until a human turns it on.
+  //
+  // `maps.google.api-key` (see `src/addresses/constants/maps-setting-keys.constants.ts`)
+  // is a real credential and is deliberately NOT seeded with any value —
+  // same precedent as `identity.didit.*`/`payments.payment-methods.mercadopago.*`:
+  // a human loads it from the admin panel (`KNOWN_SETTING_SLOTS`) once a
+  // server-side Maps usage that actually needs it exists.
+  {
+    key: 'maps.enabled',
+    description:
+      'Global kill switch for the Maps capability (Address CRUD, Home Map). Off until maps.google.api-key is configured.',
+    value: 'false',
+    isPublic: true,
+  },
 ];
 
 // Editable transactional-email templates follow-up (2026-08-24) — seeds the

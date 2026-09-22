@@ -340,6 +340,9 @@ model CustomerProfile {
   // the customer-side party (`onDelete: SetNull` — see that model's own
   // header comment).
   ledgerEntries               LedgerEntry[]
+  // GOS-153 — purely additive back-reference, no new column here. This
+  // Customer's saved Addresses (see Address's own header comment above).
+  addresses                   Address[]
 
   // @unique(userId) above is the physical "one CustomerProfile per User"
   // constraint the story requires — upsertCustomerProfile always targets
@@ -439,6 +442,9 @@ model ProfessionalProfile {
   // is the professional-side party (`onDelete: SetNull` — see that model's
   // own header comment).
   ledgerEntries               LedgerEntry[]
+  // GOS-153 — purely additive back-reference, no new column here. This
+  // Professional's saved Addresses (see Address's own header comment above).
+  addresses                   Address[]
 
   // @unique(userId) above is the physical "one ProfessionalProfile per
   // User" constraint. Indexes anticipate Discovery (by country) and a
@@ -488,6 +494,78 @@ model ProfessionalSpecialization {
   @@id([professionalProfileId, categoryId])
   // Anticipates Professional Discovery's "find professionals in category X".
   @@index([categoryId])
+}
+
+// GOS-153 — which kind of profile owns a given Address. Same "dual owner,
+// role + two nullable FKs, exactly one non-null and matching the role"
+// pattern QuoteNegotiationMessage.authorRole already established (see that
+// model's own header comment) — a User may hold both a CustomerProfile and
+// a ProfessionalProfile, so "which profile is this Address saved under"
+// must be recorded explicitly, never inferred.
+enum AddressOwnerRole {
+  CUSTOMER
+  PROFESSIONAL
+}
+
+// GOS-153 — a saved Address (a Customer's or a Professional's own "casa",
+// "trabajo", etc.), always carrying REAL coordinates already resolved
+// client-side by the Google Places SDK on the mobile app at pick time — this
+// backend never calls Google itself, only persists what it is given
+// (`formattedAddress`/`placeId`/`latitude`/`longitude`). `ownerRole` +
+// `customerProfileId`/`professionalProfileId` follow the exact dual-owner
+// shape `QuoteNegotiationMessage` established above; the CHECK constraint
+// making the mismatch physically impossible
+// (`address_owner_shape_check`) lives in this model's own migration SQL,
+// the same place `quote_negotiation_message_author_shape_check` lives, since
+// Prisma's schema language cannot express a conditional check across
+// columns.
+//
+// `isDefault` — at most ONE per owning profile may be `true`, enforced by
+// two partial unique indexes in that same migration
+// (`address_customer_default_unique` / `address_professional_default_unique`
+// — Prisma cannot express a partial index either). Application-level rule
+// (see AddAddressService/DeleteAddressService/SetDefaultAddressService):
+// a profile with zero Addresses has no default; the FIRST Address ever
+// saved for a profile is always forced default regardless of what the
+// caller submitted; deleting the default while other Addresses exist is
+// blocked (the caller must `setDefaultAddress` on another one first).
+//
+// Explicitly OUT of scope here (a later GOS-36/GOS-155 subtask):
+// `nearbyProfessionals`/`nearbyServiceRequests`, and any `addressId` FK on
+// `ServiceRequest` — this model only owns the CRUD of an owner's saved
+// Address list, nothing that reads it for proximity matching yet.
+model Address {
+  id                    String               @id @default(uuid()) @db.Uuid
+  ownerRole             AddressOwnerRole
+  customerProfileId     String?              @db.Uuid
+  customerProfile       CustomerProfile?     @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  professionalProfileId String?              @db.Uuid
+  professionalProfile   ProfessionalProfile? @relation(fields: [professionalProfileId], references: [id], onDelete: Cascade)
+
+  // The Google Places SDK's own human-readable formatted address string —
+  // opaque free text to this backend, never parsed/validated for shape.
+  formattedAddress String
+  // The Google Places `place_id` this address was resolved from — persisted
+  // as-is; this backend never re-resolves or re-validates it against Google
+  // (see this model's own header comment: no Google call ever happens here).
+  placeId          String
+  // Real coordinates already resolved by the mobile SDK. Range-validated at
+  // the GraphQL input layer only (`AddAddressInput`/`UpdateAddressInput`,
+  // @Min/@Max -90..90 / -180..180) — a real Argentina/Colombia bounding-box
+  // check is explicitly OUT of scope (TBD, no confirmed coordinates exist
+  // for one yet — see this story's own instructions); inventing a range here
+  // would risk rejecting real addresses near a border.
+  latitude         Float
+  longitude        Float
+  // Optional free-text owner label ("Casa", "Trabajo", "Depósito").
+  label            String?
+  isDefault        Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerProfileId])
+  @@index([professionalProfileId])
 }
 
 // GOS-38 — first ServiceRequest-side domain entities. A ServiceRequest
@@ -1458,7 +1536,7 @@ model PaymentAttempt {
   savedCard          SavedPaymentCard? @relation(fields: [savedCardId], references: [id], onDelete: SetNull)
   amount             Int
   currency           String
-  installments       Int     @default(1)
+  installments       Int               @default(1)
   rejectionReason    String?
 
   paymentTypeId      String?
@@ -1622,7 +1700,7 @@ enum LedgerEntryType {
 // `PlatformSetting` must never rewrite a past entry's own frozen value.
 // `null` on a `REFUND` row (no commission was ever applied to a refund).
 model LedgerEntry {
-  id       String          @id @default(uuid()) @db.Uuid
+  id            String          @id @default(uuid()) @db.Uuid
   // Human-facing "comprobante interno" (internal receipt) sequential number
   // — 2026-09-14 follow-up, human-requested. A plain, globally-increasing
   // Postgres sequence (`@default(autoincrement())` on a NON-`@id` column —
@@ -1635,10 +1713,10 @@ model LedgerEntry {
   // inventing a new "PaymentEvent"/grouping entity nobody asked for.
   // FLAGGED: whether a compound event should instead get ONE shared receipt
   // number is an open product question, not decided here.
-  receiptNumber Int @unique @default(autoincrement())
-  type     LedgerEntryType
-  amount   Int
-  currency String
+  receiptNumber Int             @unique @default(autoincrement())
+  type          LedgerEntryType
+  amount        Int
+  currency      String
 
   engagementId String?     @db.Uuid
   engagement   Engagement? @relation(fields: [engagementId], references: [id], onDelete: SetNull)

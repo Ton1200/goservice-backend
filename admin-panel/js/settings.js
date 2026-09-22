@@ -440,6 +440,42 @@ const KNOWN_SETTING_SLOTS = [
     valueType: 'STRING',
     isEncrypted: true,
   },
+  // GOS-153 — Maps (Saved Addresses + Home Map). `maps.*` is a new root-level
+  // segment, same mechanism as `admin.session.*`/`identity.*` above: this alone
+  // makes a new "Maps" tab appear (derived purely from the tree's root children
+  // by `renderRootTabs`). `maps.enabled` IS seeded by `prisma/seed.ts` (`false`
+  // by default) so it doesn't strictly need a slot here to render post-seed —
+  // included anyway for the same consistency reason `identity.enabled` already
+  // is. The two API-key fields are NOT seeded at all (no safe default exists —
+  // they're real Google Maps Platform credentials) — for THOSE, this manifest is
+  // load-bearing, exactly like `identity.didit.sandbox.api-key` above.
+  //
+  // TWO keys, not one (confirmed 2026-09-22 against Google's own docs): a Google
+  // Maps Platform API key's application restriction is mutually exclusive per
+  // platform (Android apps OR iOS apps, never both on the same key) — see
+  // `maps-setting-keys.constants.ts`'s own header comment for the full
+  // reasoning. Both are non-encrypted STRING settings (client-restricted keys
+  // are meant to be public, not secret) — the admin checks "Exponer en
+  // platformConfig" when saving so `goservice-mobile` can read the right one for
+  // its own platform, same as `customer.social-login.google.client-id` above.
+  {
+    key: 'maps.enabled',
+    description: 'Global kill switch for the Maps capability (Address CRUD, Home Map).',
+    valueType: 'BOOLEAN',
+    isEncrypted: false,
+  },
+  {
+    key: 'maps.google.api-key.android',
+    description: 'Google Maps/Places API key restricted to Android apps (package name + SHA-1).',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
+  {
+    key: 'maps.google.api-key.ios',
+    description: 'Google Maps/Places API key restricted to iOS apps (bundle ID).',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
 ];
 
 // Short, static, one-line descriptions shown under a leaf block's title
