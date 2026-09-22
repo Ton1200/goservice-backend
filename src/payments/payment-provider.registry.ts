@@ -8,6 +8,7 @@ import {
   PaymentProvider,
   PaymentProviderCapability,
   PaymentProviderCapabilityError,
+  SaveCardOnChargeCapability,
   SavedCardCapability,
   WalletRedirectCapability,
 } from './ports/payment-provider.port';
@@ -79,6 +80,16 @@ export class PaymentProviderRegistry {
 
   savedCards(method: PaymentMethod): PaymentProvider & SavedCardCapability {
     return this.withCapability<SavedCardCapability>(method, 'SAVED_CARDS');
+  }
+
+  /** GOS-149 — see `SaveCardOnChargeCapability`'s own comment. */
+  saveCardOnCharge(
+    method: PaymentMethod,
+  ): PaymentProvider & SaveCardOnChargeCapability {
+    return this.withCapability<SaveCardOnChargeCapability>(
+      method,
+      'SAVE_CARD_ON_CHARGE',
+    );
   }
 
   private withCapability<T>(

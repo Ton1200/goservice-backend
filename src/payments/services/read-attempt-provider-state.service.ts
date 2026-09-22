@@ -101,14 +101,26 @@ export class ReadAttemptProviderStateService {
       return checkoutSnapshotToState(checkout);
     }
 
-    if (attempt.providerPaymentId && provider.capabilities.has('SAVED_CARDS')) {
-      // A PENDING attempt that has a payment id but no checkout can only be a
-      // SERVER-SIDE saved-card charge (a checkout attempt gets its payment id
-      // only when it is resolved). Nobody can retry that payment, so a failed
-      // one is terminal (`readSavedCardCharge`), unlike one inside a checkout.
+    if (
+      attempt.providerPaymentId &&
+      attempt.savedCardId &&
+      provider.capabilities.has('SAVED_CARDS')
+    ) {
+      // GOS-149 — dispatch by the ATTEMPT'S OWN ORIGIN (`savedCardId`, set
+      // only by PayEngagementWithSavedCardService), never by provider
+      // capability alone: once Mercado Pago also declares SAVED_CARDS, its
+      // ordinary CARD_TOKEN/WALLET_REDIRECT charges ALSO produce a bare
+      // providerPaymentId with no checkout, and capability alone can no
+      // longer tell them apart from a saved-card charge (it only worked for
+      // Rapyd by coincidence — Rapyd's only non-checkout charging path IS the
+      // saved-card one). A PENDING attempt that has a payment id but no
+      // checkout and no savedCardId can only be a SERVER-SIDE saved-card
+      // charge (a checkout attempt gets its payment id only when it is
+      // resolved). Nobody can retry that payment, so a failed one is terminal
+      // (`readSavedCardCharge`), unlike one inside a checkout.
       const charge = await this.registry
         .savedCards(attempt.method)
-        .readSavedCardCharge(attempt.providerPaymentId);
+        .readSavedCardCharge(attempt.providerPaymentId, country);
       return charge ? paymentSnapshotToState(charge) : null;
     }
 

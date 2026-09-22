@@ -12,21 +12,23 @@ import {
 import { SavedCardRepository } from '../saved-card.repository';
 
 /**
- * Orchestrates `Mutation.deleteSavedCard` (GOS-146): the Customer erases one of
- * their saved cards — from Rapyd's vault FIRST, then from GoService's table, so
- * a failure never leaves a card that looks deleted but can still be charged.
+ * Orchestrates `Mutation.deleteSavedCard`: the Customer erases one of their
+ * saved cards, of WHATEVER provider it belongs to (GOS-146: Rapyd; GOS-149:
+ * Mercado Pago) — from the provider's own vault FIRST, then from GoService's
+ * table, so a failure never leaves a card that looks deleted but can still
+ * be charged.
  *
  * - The card must belong to the caller's Customer profile; anything else is
  *   the anti-enumeration `SAVED_CARD_NOT_FOUND`.
- * - Rapyd's delete is idempotent (a card Rapyd no longer knows is fine), so a
- *   retry after a partial failure completes cleanly.
- * - A card saved in ANOTHER Rapyd environment than the one currently
- *   configured (a sandbox card after switching to production) cannot be
- *   removed from Rapyd with today's credentials; it is unusable anyway
- *   (charging only ever considers the current environment) and is removed
- *   locally, logged for an operator.
- * - Deliberately NOT behind the saved-cards switch: a Customer can always erase
- *   their card, even after the feature was turned off.
+ * - Every provider's delete is idempotent (a card the provider no longer
+ *   knows is fine), so a retry after a partial failure completes cleanly.
+ * - A card saved in ANOTHER environment than the one currently configured
+ *   for its provider (a sandbox card after switching to production) cannot
+ *   be removed from that provider with today's credentials; it is unusable
+ *   anyway (charging only ever considers the current environment) and is
+ *   removed locally, logged for an operator.
+ * - Deliberately NOT behind either provider's saved-cards switch: a Customer
+ *   can always erase their card, even after the feature was turned off.
  */
 @Injectable()
 export class DeleteSavedCardService {
@@ -51,28 +53,32 @@ export class DeleteSavedCardService {
       throw savedCardNotFound();
     }
 
-    const provider = this.paymentProviderRegistry.savedCards(
-      PaymentMethod.RAPYD,
-    );
+    // GOS-149 — derived from the CARD's own method, never hardcoded: this
+    // service now erases a card of ANY provider that supports saved cards.
+    const provider = this.paymentProviderRegistry.savedCards(card.method);
+    const country =
+      card.method === PaymentMethod.MERCADOPAGO ? profile.country : undefined;
     try {
-      const environment = await provider.currentEnvironment();
+      const environment = await provider.currentEnvironment(country);
       if (card.environment !== environment) {
         this.logger.warn({
           event: 'saved_card_deleted_locally_other_environment',
           savedCardId: card.id,
+          method: card.method,
           cardEnvironment: card.environment,
           currentEnvironment: environment,
         });
       } else {
         const customer = await this.savedCardRepository.findProviderCustomer(
           profile.id,
-          PaymentMethod.RAPYD,
+          card.method,
           environment,
         );
         if (customer) {
           await provider.deleteSavedCard(
             customer.providerCustomerId,
             card.providerCardId,
+            country,
           );
         }
       }

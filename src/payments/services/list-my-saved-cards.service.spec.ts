@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
-import { PaymentMethod } from '@prisma/client';
+import { CountryCode, PaymentMethod } from '@prisma/client';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import { PaymentProviderRegistry } from '../payment-provider.registry';
 import {
   PaymentProviderNotConfiguredError,
@@ -9,9 +10,10 @@ import {
 } from '../ports/payment-provider.port';
 import { SavedCardRepository } from '../saved-card.repository';
 import { ListMySavedCardsService } from './list-my-saved-cards.service';
+import { MercadoPagoSavedCardsCustomerService } from './mercadopago-saved-cards-customer.service';
 import { RapydSavedCardsCustomerService } from './rapyd-saved-cards-customer.service';
 
-const PROVIDER_CARD: ProviderSavedCard = {
+const RAPYD_CARD: ProviderSavedCard = {
   providerCardId: 'card_1',
   brand: 'visa',
   lastFour: '1111',
@@ -19,6 +21,17 @@ const PROVIDER_CARD: ProviderSavedCard = {
   expirationMonth: 12,
   expirationYear: 2030,
 };
+
+const MERCADOPAGO_CARD: ProviderSavedCard = {
+  providerCardId: 'mp_card_1',
+  brand: 'master',
+  lastFour: '2222',
+  type: 'credit_card',
+  expirationMonth: 6,
+  expirationYear: 2031,
+};
+
+type Link = { providerCustomerId: string; environment: string } | null;
 
 describe('ListMySavedCardsService', () => {
   beforeAll(() => {
@@ -28,77 +41,150 @@ describe('ListMySavedCardsService', () => {
 
   function makeService(options?: {
     profile?: Record<string, unknown> | null;
-    link?: { providerCustomerId: string; environment: string } | null;
+    rapydEnabled?: boolean;
+    mercadoPagoEnabled?: boolean;
+    rapydLink?: Link;
+    mercadoPagoLink?: Link;
     linkError?: Error;
-    listSavedCards?: jest.Mock;
+    rapydListSavedCards?: jest.Mock;
+    mercadoPagoListSavedCards?: jest.Mock;
   }) {
     const profilesRepository = {
       findCustomerProfileByUserId: jest
         .fn()
         .mockResolvedValue(
           options?.profile === undefined
-            ? { id: 'profile-1' }
+            ? { id: 'profile-1', country: CountryCode.AR }
             : options.profile,
         ),
     } as unknown as ProfilesRepository;
-    const find = options?.linkError
+
+    const isEnabled = jest.fn((key: string) => {
+      if (key.includes('rapyd')) {
+        return Promise.resolve(options?.rapydEnabled ?? true);
+      }
+      return Promise.resolve(options?.mercadoPagoEnabled ?? true);
+    });
+    const platformSettingPort = {
+      isEnabled,
+    } as unknown as PlatformSettingPort;
+
+    const rapydFind = options?.linkError
       ? jest.fn().mockRejectedValue(options.linkError)
       : jest
           .fn()
           .mockResolvedValue(
-            options?.link === undefined
-              ? { providerCustomerId: 'cus_1', environment: 'sandbox' }
-              : options.link,
+            options?.rapydLink === undefined
+              ? { providerCustomerId: 'cus_rapyd', environment: 'sandbox' }
+              : options.rapydLink,
           );
-    const customerService = {
-      find,
+    const rapydCustomerService = {
+      find: rapydFind,
     } as unknown as RapydSavedCardsCustomerService;
-    const listSavedCards =
-      options?.listSavedCards ?? jest.fn().mockResolvedValue([PROVIDER_CARD]);
+
+    const mercadoPagoFind = options?.linkError
+      ? jest.fn().mockRejectedValue(options.linkError)
+      : jest
+          .fn()
+          .mockResolvedValue(
+            options?.mercadoPagoLink === undefined
+              ? { providerCustomerId: 'cus_mp', environment: 'sandbox' }
+              : options.mercadoPagoLink,
+          );
+    const mercadoPagoCustomerService = {
+      find: mercadoPagoFind,
+    } as unknown as MercadoPagoSavedCardsCustomerService;
+
+    const rapydListSavedCards =
+      options?.rapydListSavedCards ?? jest.fn().mockResolvedValue([RAPYD_CARD]);
+    const mercadoPagoListSavedCards =
+      options?.mercadoPagoListSavedCards ??
+      jest.fn().mockResolvedValue([MERCADOPAGO_CARD]);
+    const savedCards = jest.fn((method: PaymentMethod) =>
+      method === PaymentMethod.MERCADOPAGO
+        ? { listSavedCards: mercadoPagoListSavedCards }
+        : { listSavedCards: rapydListSavedCards },
+    );
     const registry = {
-      savedCards: jest.fn().mockReturnValue({ listSavedCards }),
+      savedCards,
     } as unknown as PaymentProviderRegistry;
-    const synced = [{ id: 'saved-1', lastFour: '1111' }];
-    const syncCards = jest.fn().mockResolvedValue(synced);
+
+    const rapydSynced = [{ id: 'saved-rapyd', lastFour: '1111' }];
+    const mercadoPagoSynced = [{ id: 'saved-mp', lastFour: '2222' }];
+    const syncCards = jest.fn((_profileId: string, method: PaymentMethod) =>
+      Promise.resolve(
+        method === PaymentMethod.MERCADOPAGO ? mercadoPagoSynced : rapydSynced,
+      ),
+    );
     const listCards = jest.fn().mockResolvedValue([{ id: 'stale-1' }]);
     const savedCardRepository = {
       syncCards,
       listCards,
     } as unknown as SavedCardRepository;
+
     return {
       service: new ListMySavedCardsService(
         profilesRepository,
         registry,
-        customerService,
+        platformSettingPort,
+        rapydCustomerService,
+        mercadoPagoCustomerService,
         savedCardRepository,
       ),
-      listSavedCards,
+      isEnabled,
+      rapydFind,
+      mercadoPagoFind,
+      rapydListSavedCards,
+      mercadoPagoListSavedCards,
       syncCards,
       listCards,
-      synced,
+      rapydSynced,
+      mercadoPagoSynced,
     };
   }
 
-  it("mirrors Rapyd's vault into the local table and returns the synced list", async () => {
+  it("mirrors BOTH providers' vaults into the local table and returns the merged, synced list", async () => {
     const m = makeService();
 
     const cards = await m.service.listMySavedCards('user-1');
 
-    expect(m.listSavedCards).toHaveBeenCalledWith('cus_1');
+    expect(m.rapydListSavedCards).toHaveBeenCalledWith('cus_rapyd');
+    expect(m.mercadoPagoListSavedCards).toHaveBeenCalledWith(
+      'cus_mp',
+      CountryCode.AR,
+    );
     expect(m.syncCards).toHaveBeenCalledWith(
       'profile-1',
       PaymentMethod.RAPYD,
       'sandbox',
-      [PROVIDER_CARD],
+      [RAPYD_CARD],
     );
-    expect(cards).toBe(m.synced);
+    expect(m.syncCards).toHaveBeenCalledWith(
+      'profile-1',
+      PaymentMethod.MERCADOPAGO,
+      'sandbox',
+      [MERCADOPAGO_CARD],
+    );
+    expect(cards).toEqual([...m.rapydSynced, ...m.mercadoPagoSynced]);
   });
 
-  it('a Customer with no Rapyd customer has no cards — and Rapyd is not called', async () => {
-    const m = makeService({ link: null });
+  it('a provider whose OWN saved-cards switch is off is silently excluded — not an error', async () => {
+    const m = makeService({ mercadoPagoEnabled: false });
 
-    await expect(m.service.listMySavedCards('user-1')).resolves.toEqual([]);
-    expect(m.listSavedCards).not.toHaveBeenCalled();
+    const cards = await m.service.listMySavedCards('user-1');
+
+    expect(m.mercadoPagoFind).not.toHaveBeenCalled();
+    expect(m.mercadoPagoListSavedCards).not.toHaveBeenCalled();
+    expect(cards).toEqual(m.rapydSynced);
+  });
+
+  it('a Customer with no Rapyd customer has no Rapyd cards — and Rapyd is not called for listing', async () => {
+    const m = makeService({ rapydLink: null });
+
+    const cards = await m.service.listMySavedCards('user-1');
+
+    expect(m.rapydListSavedCards).not.toHaveBeenCalled();
+    expect(cards).toEqual(m.mercadoPagoSynced);
   });
 
   it('a caller without a Customer profile gets an empty list', async () => {
@@ -107,22 +193,21 @@ describe('ListMySavedCardsService', () => {
     await expect(m.service.listMySavedCards('user-1')).resolves.toEqual([]);
   });
 
-  it('if Rapyd cannot be reached the LAST SYNCED list is returned — listing must not break because a provider is down', async () => {
+  it("if Mercado Pago cannot be reached the LAST SYNCED list is returned for IT ONLY — a Mercado Pago outage must never hide the Customer's Rapyd cards", async () => {
     const m = makeService({
-      listSavedCards: jest
+      mercadoPagoListSavedCards: jest
         .fn()
         .mockRejectedValue(new PaymentProviderUnavailableError('HTTP 503')),
     });
 
     const cards = await m.service.listMySavedCards('user-1');
 
-    expect(cards).toEqual([{ id: 'stale-1' }]);
+    expect(cards).toEqual([...m.rapydSynced, { id: 'stale-1' }]);
     expect(m.listCards).toHaveBeenCalledWith(
       'profile-1',
-      PaymentMethod.RAPYD,
+      PaymentMethod.MERCADOPAGO,
       'sandbox',
     );
-    expect(m.syncCards).not.toHaveBeenCalled();
   });
 
   it('missing credentials are PAYMENT_PROVIDER_NOT_CONFIGURED', async () => {

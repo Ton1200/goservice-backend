@@ -504,6 +504,21 @@ const PLATFORM_SETTINGS: {
     value: 'false',
     isPublic: false,
   },
+  // GOS-149 — the SAVED-CARDS feature of the Mercado Pago CARD method (a
+  // Mercado Pago customer per GoService Customer, a card attached to it the
+  // moment a normal card payment opts in to save it via `saveCard: true`,
+  // `mySavedCards`, `payEngagementWithSavedCard` with a re-tokenized CVV). A
+  // feature OF the Mercado Pago card flow, not a second method — only takes
+  // effect while `payments.payment-methods.mercadopago.card.enabled` is ON
+  // too. `value: 'false'` for the same fail-open reason as every sibling
+  // flag. Independent of Rapyd's own `payments.payment-methods.rapyd.saved-cards-enabled`.
+  {
+    key: 'payments.payment-methods.mercadopago.card.saved-cards-enabled',
+    description:
+      'Switch for the saved-cards feature of the Mercado Pago card payment method (save a card while paying, list saved cards, pay with a saved card — CVV re-entry required on every charge). Only effective while payments.payment-methods.mercadopago.card.enabled is ON. Independent of Rapyd. Off until certified with real cards.',
+    value: 'false',
+    isPublic: false,
+  },
   // GOS-142 — the GLOBAL kill switch for wallet (redirect-to-Mercado-Pago-
   // account) payments (`startEngagementWalletPayment` only). `value: 'false'`
   // (default OFF), same reasoning as `payments.payment-methods.mercadopago.card.enabled`

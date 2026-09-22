@@ -7,7 +7,9 @@ import {
 } from '@prisma/client';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
 import { EngagementsRepository } from '../../engagements/engagements.repository';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
+import { UsersRepository } from '../../users/users.repository';
 import { CardPaymentAccessService } from '../card-payment-access.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
 import { PaymentProviderRegistry } from '../payment-provider.registry';
@@ -19,8 +21,25 @@ import {
 } from '../ports/payment-provider.port';
 import { SavedCardRepository } from '../saved-card.repository';
 import { ApplyPaymentResultService } from './apply-payment-result.service';
+import { MercadoPagoSavedCardsCustomerService } from './mercadopago-saved-cards-customer.service';
 import { PayEngagementWithSavedCardService } from './pay-engagement-with-saved-card.service';
 import { RapydSavedCardsCustomerService } from './rapyd-saved-cards-customer.service';
+
+const RAPYD_CARD = {
+  id: 'saved-1',
+  method: PaymentMethod.RAPYD,
+  environment: 'sandbox',
+  providerCardId: 'card_1',
+  brand: 'visa',
+};
+
+const MERCADOPAGO_CARD = {
+  id: 'saved-2',
+  method: PaymentMethod.MERCADOPAGO,
+  environment: 'sandbox',
+  providerCardId: 'mp_card_1',
+  brand: 'visa',
+};
 
 function makeAttempt(overrides?: Record<string, unknown>) {
   return {
@@ -72,11 +91,18 @@ describe('PayEngagementWithSavedCardService', () => {
     engagement?: Record<string, unknown>;
     profile?: Record<string, unknown> | null;
     card?: Record<string, unknown> | null;
-    link?: { providerCustomerId: string; environment: string } | null;
+    rapydLink?: { providerCustomerId: string; environment: string } | null;
+    mercadoPagoLink?: {
+      providerCustomerId: string;
+      environment: string;
+    } | null;
     linkError?: Error;
     createPendingError?: Error;
     active?: Record<string, unknown> | null;
     charge?: jest.Mock;
+    savedCardsEnabled?: boolean;
+    moduleEnabled?: boolean;
+    user?: Record<string, unknown> | null;
   }) {
     const accessService = {
       resolveCustomerEngagement: options?.accessError
@@ -103,31 +129,56 @@ describe('PayEngagementWithSavedCardService', () => {
             : options.profile,
         ),
     } as unknown as ProfilesRepository;
-    const findCardOfCustomer = jest.fn().mockResolvedValue(
-      options?.card === undefined
-        ? {
-            id: 'saved-1',
-            method: PaymentMethod.RAPYD,
-            environment: 'sandbox',
-            providerCardId: 'card_1',
-          }
-        : options.card,
-    );
+    const usersRepository = {
+      findById: jest
+        .fn()
+        .mockResolvedValue(
+          options?.user === undefined
+            ? { id: 'user-1', email: 'buyer@example.com' }
+            : options.user,
+        ),
+    } as unknown as UsersRepository;
+    const isEnabled = jest.fn((key: string) => {
+      if (key.includes('saved-cards-enabled')) {
+        return Promise.resolve(options?.savedCardsEnabled ?? true);
+      }
+      return Promise.resolve(options?.moduleEnabled ?? true);
+    });
+    const platformSettingPort = {
+      isEnabled,
+    } as unknown as PlatformSettingPort;
+    const findCardOfCustomer = jest
+      .fn()
+      .mockResolvedValue(
+        options?.card === undefined ? RAPYD_CARD : options.card,
+      );
     const savedCardRepository = {
       findCardOfCustomer,
     } as unknown as SavedCardRepository;
-    const find = options?.linkError
+    const rapydFind = options?.linkError
       ? jest.fn().mockRejectedValue(options.linkError)
       : jest
           .fn()
           .mockResolvedValue(
-            options?.link === undefined
+            options?.rapydLink === undefined
               ? { providerCustomerId: 'cus_1', environment: 'sandbox' }
-              : options.link,
+              : options.rapydLink,
           );
-    const customerService = {
-      find,
+    const rapydCustomerService = {
+      find: rapydFind,
     } as unknown as RapydSavedCardsCustomerService;
+    const mercadoPagoFind = options?.linkError
+      ? jest.fn().mockRejectedValue(options.linkError)
+      : jest
+          .fn()
+          .mockResolvedValue(
+            options?.mercadoPagoLink === undefined
+              ? { providerCustomerId: 'cus_mp', environment: 'sandbox' }
+              : options.mercadoPagoLink,
+          );
+    const mercadoPagoCustomerService = {
+      find: mercadoPagoFind,
+    } as unknown as MercadoPagoSavedCardsCustomerService;
 
     const createPending = options?.createPendingError
       ? jest.fn().mockRejectedValue(options.createPendingError)
@@ -160,8 +211,11 @@ describe('PayEngagementWithSavedCardService', () => {
       accessService,
       engagementsRepository,
       profilesRepository,
+      usersRepository,
+      platformSettingPort,
       savedCardRepository,
-      customerService,
+      rapydCustomerService,
+      mercadoPagoCustomerService,
       paymentAttemptRepository,
       registry,
       applyService,
@@ -174,13 +228,15 @@ describe('PayEngagementWithSavedCardService', () => {
       chargeSavedCard,
       apply,
       savedCards,
+      isEnabled,
     };
   }
 
-  const pay = (m: ReturnType<typeof makeService>) =>
+  const pay = (m: ReturnType<typeof makeService>, providerToken?: string) =>
     m.service.payEngagementWithSavedCard('user-1', {
       engagementId: 'engagement-1',
       savedCardId: 'saved-1',
+      providerToken,
     });
 
   it('charges the stored token with SERVER-derived amount/currency, the attempt id as idempotency key and the Rapyd customer — then applies the approval through the shared service', async () => {
@@ -194,6 +250,7 @@ describe('PayEngagementWithSavedCardService', () => {
       amount: 50000, // negotiatedPrice ?? price
       currency: 'ARS',
       installments: 1,
+      savedCardId: 'saved-1',
     });
     expect(m.chargeSavedCard).toHaveBeenCalledWith({
       customerId: 'cus_1',
@@ -203,6 +260,10 @@ describe('PayEngagementWithSavedCardService', () => {
       description: 'GoService — Engagement engagement-1',
       externalReference: 'engagement-1',
       idempotencyKey: 'attempt-1',
+      country: undefined,
+      providerToken: undefined,
+      paymentMethodId: 'visa',
+      payerEmail: undefined,
     });
     expect(m.createPending.mock.invocationCallOrder[0]).toBeLessThan(
       m.chargeSavedCard.mock.invocationCallOrder[0],
@@ -211,6 +272,30 @@ describe('PayEngagementWithSavedCardService', () => {
       status: 'approved',
       providerPaymentId: 'payment_1',
       rejectionReason: undefined,
+    });
+  });
+
+  it('GOS-149 — charges a Mercado Pago saved card, threading country, the re-tokenized providerToken, paymentMethodId and the payer email', async () => {
+    const m = makeService({ card: MERCADOPAGO_CARD });
+
+    await pay(m, 'mp_single_use_token');
+
+    expect(m.savedCards).toHaveBeenCalledWith(PaymentMethod.MERCADOPAGO);
+    expect(m.createPending).toHaveBeenCalledWith(
+      expect.objectContaining({ method: PaymentMethod.MERCADOPAGO }),
+    );
+    expect(m.chargeSavedCard).toHaveBeenCalledWith({
+      customerId: 'cus_mp',
+      providerCardId: 'mp_card_1',
+      amount: 50000,
+      currency: 'ARS',
+      description: 'GoService — Engagement engagement-1',
+      externalReference: 'engagement-1',
+      idempotencyKey: 'attempt-1',
+      country: 'AR',
+      providerToken: 'mp_single_use_token',
+      paymentMethodId: 'visa',
+      payerEmail: 'buyer@example.com',
     });
   });
 
@@ -303,7 +388,10 @@ describe('PayEngagementWithSavedCardService', () => {
 
     it('a card saved in ANOTHER Rapyd environment than the current one is SAVED_CARD_NOT_FOUND', async () => {
       const m = makeService({
-        link: { providerCustomerId: 'cus_prod', environment: 'production' },
+        rapydLink: {
+          providerCustomerId: 'cus_prod',
+          environment: 'production',
+        },
       });
 
       await expect(pay(m)).rejects.toMatchObject({
@@ -313,7 +401,7 @@ describe('PayEngagementWithSavedCardService', () => {
     });
 
     it('a Customer with no Rapyd customer at all has no chargeable card', async () => {
-      const m = makeService({ link: null });
+      const m = makeService({ rapydLink: null });
 
       await expect(pay(m)).rejects.toMatchObject({
         code: 'SAVED_CARD_NOT_FOUND',
@@ -351,6 +439,29 @@ describe('PayEngagementWithSavedCardService', () => {
         code: 'PAYMENT_PROVIDER_NOT_CONFIGURED',
       });
       expect(m.createPending).not.toHaveBeenCalled();
+    });
+
+    it("GOS-149 — the Rapyd card's own saved-cards switch being off is RAPYD_SAVED_CARDS_DISABLED, checked BEFORE any provider call", async () => {
+      const m = makeService({ savedCardsEnabled: false });
+
+      await expect(pay(m)).rejects.toMatchObject({
+        code: 'RAPYD_SAVED_CARDS_DISABLED',
+      });
+      expect(m.createPending).not.toHaveBeenCalled();
+      expect(m.chargeSavedCard).not.toHaveBeenCalled();
+    });
+
+    it("GOS-149 — the Mercado Pago card's own saved-cards switch being off is MERCADOPAGO_SAVED_CARDS_DISABLED — independent of Rapyd", async () => {
+      const m = makeService({
+        card: MERCADOPAGO_CARD,
+        savedCardsEnabled: false,
+      });
+
+      await expect(pay(m)).rejects.toMatchObject({
+        code: 'MERCADOPAGO_SAVED_CARDS_DISABLED',
+      });
+      expect(m.createPending).not.toHaveBeenCalled();
+      expect(m.chargeSavedCard).not.toHaveBeenCalled();
     });
   });
 

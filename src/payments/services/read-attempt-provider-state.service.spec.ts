@@ -114,7 +114,7 @@ describe("ReadAttemptProviderStateService — dispatch by the ATTEMPT's method",
     });
   });
 
-  it('a payment id with NO checkout is a server-side saved-card charge: it is re-read terminal-aware, so a failed charge does not stay PENDING forever', async () => {
+  it('a payment id with NO checkout and a savedCardId is a server-side saved-card charge: it is re-read terminal-aware, so a failed charge does not stay PENDING forever', async () => {
     const m = makeService({
       capabilities: ['EMBEDDED_CHECKOUT', 'SAVED_CARDS'],
       readSavedCardCharge: jest.fn().mockResolvedValue({
@@ -128,18 +128,77 @@ describe("ReadAttemptProviderStateService — dispatch by the ATTEMPT's method",
     });
 
     const state = await m.service.read(
-      makeAttempt({ providerPaymentId: 'payment_1' }),
+      makeAttempt({ providerPaymentId: 'payment_1', savedCardId: 'saved-1' }),
       CountryCode.AR,
     );
 
     expect(m.savedCards).toHaveBeenCalledWith(PaymentMethod.RAPYD);
-    expect(m.readSavedCardCharge).toHaveBeenCalledWith('payment_1');
+    expect(m.readSavedCardCharge).toHaveBeenCalledWith('payment_1', 'AR');
     expect(m.readPayment).not.toHaveBeenCalled();
     expect(m.getCheckoutSnapshot).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       status: 'rejected',
       rejectionReason: 'CARD_DECLINED',
       providerPaymentId: 'payment_1',
+    });
+  });
+
+  it('GOS-149 — a Mercado Pago attempt with a payment id but NO savedCardId is an ORDINARY charge, even though Mercado Pago now also has SAVED_CARDS: capability alone must never decide this (it only worked for Rapyd by coincidence — Rapyd has no other non-checkout charging path)', async () => {
+    const m = makeService({
+      capabilities: ['CARD_TOKEN', 'WALLET_REDIRECT', 'SAVED_CARDS'],
+      readPayment: jest.fn().mockResolvedValue({
+        providerPaymentId: 'ORD_1',
+        status: 'approved',
+        externalReference: 'engagement-1',
+        amount: 50000,
+        currency: 'COP',
+      }),
+    });
+
+    const state = await m.service.read(
+      makeAttempt({
+        method: PaymentMethod.MERCADOPAGO,
+        providerPaymentId: 'ORD_1',
+        savedCardId: null,
+      }),
+      CountryCode.CO,
+    );
+
+    expect(m.readPayment).toHaveBeenCalledWith('ORD_1', 'CO');
+    expect(m.readSavedCardCharge).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      status: 'approved',
+      providerPaymentId: 'ORD_1',
+    });
+  });
+
+  it('GOS-149 — a Mercado Pago attempt WITH a savedCardId dispatches via readSavedCardCharge, country threaded through', async () => {
+    const m = makeService({
+      capabilities: ['CARD_TOKEN', 'WALLET_REDIRECT', 'SAVED_CARDS'],
+      readSavedCardCharge: jest.fn().mockResolvedValue({
+        providerPaymentId: 'ORD_2',
+        status: 'approved',
+        externalReference: 'engagement-1',
+        amount: 50000,
+        currency: 'COP',
+      }),
+    });
+
+    const state = await m.service.read(
+      makeAttempt({
+        method: PaymentMethod.MERCADOPAGO,
+        providerPaymentId: 'ORD_2',
+        savedCardId: 'saved-1',
+      }),
+      CountryCode.CO,
+    );
+
+    expect(m.savedCards).toHaveBeenCalledWith(PaymentMethod.MERCADOPAGO);
+    expect(m.readSavedCardCharge).toHaveBeenCalledWith('ORD_2', 'CO');
+    expect(m.readPayment).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      status: 'approved',
+      providerPaymentId: 'ORD_2',
     });
   });
 

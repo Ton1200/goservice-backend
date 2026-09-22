@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  CountryCode,
   PaymentAttempt,
   EngagementStatus,
   PaymentMethod,
@@ -8,10 +9,14 @@ import {
 import { EngagementsRepository } from '../../engagements/engagements.repository';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
 import { CURRENCY_BY_COUNTRY } from '../../ledger/constants/country-currency.constants';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
+import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { UsersRepository } from '../../users/users.repository';
 import { CardPaymentAccessService } from '../card-payment-access.service';
+import { PAYMENT_METHOD_SETTING_KEYS } from '../constants/payments-setting-keys.constants';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
 import { PaymentProviderRegistry } from '../payment-provider.registry';
+import { SavedCardRepository } from '../saved-card.repository';
 import { cardPaymentAlreadyInProgress } from '../errors/card-payment-already-in-progress.error';
 import { engagementNotPayableByCard } from '../errors/engagement-not-payable-by-card.error';
 import { invalidCardPaymentInput } from '../errors/invalid-card-payment-input.error';
@@ -25,6 +30,7 @@ import {
   PaymentRequestRejectedError,
 } from '../ports/payment-provider.port';
 import { ApplyPaymentResultService } from './apply-payment-result.service';
+import { MercadoPagoSavedCardsCustomerService } from './mercadopago-saved-cards-customer.service';
 
 export interface PayEngagementWithCardInput {
   engagementId: string;
@@ -32,6 +38,17 @@ export interface PayEngagementWithCardInput {
   cardToken: string;
   paymentMethodId: string;
   installments: number;
+  /**
+   * GOS-149 — MERCADO PAGO ONLY. When true and the charge APPROVES, this
+   * card is added to the Customer's Mercado Pago vault (creating their
+   * Mercado Pago customer first if this is their first saved card) so it
+   * later appears in `mySavedCards`. Best-effort: a failure here never fails
+   * the payment that already succeeded — see `saveCardBestEffort`'s own
+   * comment. This is the ONLY way a Mercado Pago saved card is ever created
+   * (Mercado Pago has no "save card" widget of its own, unlike Rapyd's
+   * embedded checkout).
+   */
+  saveCard?: boolean;
 }
 
 // The card brand id the client's tokenization reports (`visa`, `master`,
@@ -85,9 +102,13 @@ export class PayEngagementWithCardService {
   constructor(
     private readonly cardPaymentAccessService: CardPaymentAccessService,
     private readonly engagementsRepository: EngagementsRepository,
+    private readonly profilesRepository: ProfilesRepository,
     private readonly usersRepository: UsersRepository,
+    private readonly platformSettingPort: PlatformSettingPort,
     private readonly paymentAttemptRepository: PaymentAttemptRepository,
     private readonly paymentProviderRegistry: PaymentProviderRegistry,
+    private readonly savedCardRepository: SavedCardRepository,
+    private readonly mercadoPagoCustomerService: MercadoPagoSavedCardsCustomerService,
     private readonly applyPaymentResultService: ApplyPaymentResultService,
   ) {}
 
@@ -188,6 +209,7 @@ export class PayEngagementWithCardService {
         installments: input.installments,
         payerEmail: user.email,
         idempotencyKey: attempt.id,
+        saveCard: input.saveCard,
       });
     } catch (error) {
       if (error instanceof PaymentRequestRejectedError) {
@@ -222,6 +244,16 @@ export class PayEngagementWithCardService {
       throw paymentProviderUnavailable();
     }
 
+    if (input.saveCard && result.status === 'approved') {
+      // Best-effort: awaited so the vault is fresh by the time this call
+      // returns, but its own errors are caught inside and never surface here.
+      await this.saveCardBestEffort(
+        userId,
+        input.cardToken,
+        billingContext.customerProfile.country,
+      );
+    }
+
     return this.resolveOrCurrent(
       attempt.id,
       {
@@ -231,6 +263,69 @@ export class PayEngagementWithCardService {
       },
       attempt,
     );
+  }
+
+  /**
+   * GOS-149 — the ONLY place a Mercado Pago saved card is ever created:
+   * associates the token that was JUST charged (still valid for a short
+   * window after use, per Mercado Pago) to the Customer's Mercado Pago
+   * customer, creating that customer first if this is their first saved
+   * card, then re-syncs the FULL vault so `mySavedCards` reflects it. Called
+   * only after the charge itself already APPROVED — a failure here (missing
+   * profile, provider error, association refused) is logged and swallowed:
+   * the Customer already paid, and a payment must never be undone or fail
+   * because saving a card for NEXT time didn't work.
+   *
+   * Gated on `mercadoPagoCard.savedCardsEnabled` FIRST, before anything else
+   * — `saveCard: true` from an outdated/misbehaving client must not create a
+   * customer or associate a card while the admin has the feature OFF.
+   */
+  private async saveCardBestEffort(
+    userId: string,
+    cardToken: string,
+    country: CountryCode,
+  ): Promise<void> {
+    try {
+      if (
+        !(await this.platformSettingPort.isEnabled(
+          PAYMENT_METHOD_SETTING_KEYS.mercadoPagoCard.savedCardsEnabled,
+        ))
+      ) {
+        return;
+      }
+      const profile =
+        await this.profilesRepository.findCustomerProfileByUserId(userId);
+      if (!profile) {
+        return;
+      }
+      const { providerCustomerId, environment } =
+        await this.mercadoPagoCustomerService.ensure(profile, userId, country);
+      const provider = this.paymentProviderRegistry.saveCardOnCharge(
+        PaymentMethod.MERCADOPAGO,
+      );
+      await provider.associateCard(providerCustomerId, cardToken, country);
+      // `syncCards` replaces the WHOLE stored list for this (profile, method,
+      // environment) — always called with the full vault, never a partial one.
+      const savedCards = await this.paymentProviderRegistry
+        .savedCards(PaymentMethod.MERCADOPAGO)
+        .listSavedCards(providerCustomerId, country);
+      await this.savedCardRepository.syncCards(
+        profile.id,
+        PaymentMethod.MERCADOPAGO,
+        environment,
+        savedCards,
+      );
+      this.logger.log({
+        event: 'mercadopago_card_saved_on_charge',
+        customerProfileId: profile.id,
+      });
+    } catch (error) {
+      this.logger.warn({
+        event: 'mercadopago_card_save_on_charge_failed',
+        userId,
+        errorName: error instanceof Error ? error.name : 'unknown',
+      });
+    }
   }
 
   private async resolveOrCurrent(

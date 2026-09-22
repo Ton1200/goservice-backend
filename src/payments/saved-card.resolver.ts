@@ -3,7 +3,6 @@ import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { AccountApprovedGuard } from '../identity-verification/guards/account-approved.guard';
-import { RapydSavedCardsEnabledGuard } from './guards/rapyd-saved-cards-enabled.guard';
 import { PaymentAttemptModel } from './models/payment-attempt.model';
 import { SavedCardModel } from './models/saved-card.model';
 import { DeleteSavedCardService } from './services/delete-saved-card.service';
@@ -11,13 +10,17 @@ import { ListMySavedCardsService } from './services/list-my-saved-cards.service'
 import { PayEngagementWithSavedCardService } from './services/pay-engagement-with-saved-card.service';
 
 /**
- * Thin delivery adapter — no business logic here (GOS-146, Rapyd saved cards).
- * None of the operations accepts a `customerProfileId`/`userId`/amount/currency
- * argument: ownership comes from the session and the amount from the accepted
- * Quote, server-side. `mySavedCards` and `payEngagementWithSavedCard` sit behind
- * the saved-cards switch (`RapydSavedCardsEnabledGuard`: Rapyd ON + saved cards
- * ON); `deleteSavedCard` deliberately does not — a Customer can always erase a
- * stored card.
+ * Thin delivery adapter — no business logic here (GOS-146: Rapyd; GOS-149:
+ * Mercado Pago — saved cards of EITHER provider). None of the operations
+ * accepts a `customerProfileId`/`userId`/amount/currency argument: ownership
+ * comes from the session and the amount from the accepted Quote,
+ * server-side. `mySavedCards` and `payEngagementWithSavedCard` no longer sit
+ * behind a single-provider blanket guard (GOS-149: this resolver now serves
+ * more than one provider, so a per-CARD check replaces it — see
+ * `ListMySavedCardsService.isSavedCardsEnabledFor` and
+ * `PayEngagementWithSavedCardService.assertSavedCardsEnabledFor`);
+ * `deleteSavedCard` deliberately never had a feature-switch guard — a
+ * Customer can always erase a stored card.
  */
 @Resolver()
 export class SavedCardResolver {
@@ -27,28 +30,30 @@ export class SavedCardResolver {
     private readonly deleteSavedCardService: DeleteSavedCardService,
   ) {}
 
-  @UseGuards(SessionGuard, AccountApprovedGuard, RapydSavedCardsEnabledGuard)
+  @UseGuards(SessionGuard, AccountApprovedGuard)
   @Query(() => [SavedCardModel], {
     description:
-      "The caller's own saved Rapyd cards: brand, last four, type and expiry — never a card number or token. A card is saved by the Customer ticking \"Save card for future payments\" in Rapyd's widget while paying (startEngagementRapydCheckout links the checkout to the Customer when saved cards are on); it appears here the next time this is read. Rapyd's vault is the source of truth: every call re-syncs, and if Rapyd cannot be reached the last synced list is returned. Rejects with RAPYD_SAVED_CARDS_DISABLED / RAPYD_MODULE_DISABLED when the feature or Rapyd is switched off.",
+      "The caller's own saved cards, across every provider that currently supports them (RAPYD, one-tap; MERCADOPAGO, CVV re-entry required on every charge — see method): brand, last four, type and expiry — never a card number or token. A Rapyd card is saved by ticking \"Save card for future payments\" in Rapyd's widget while paying; a Mercado Pago card is saved by passing saveCard: true to payEngagementWithCard. Each provider's vault is the source of truth for its own cards: every call re-syncs, and if a provider cannot be reached its last synced list is returned. A provider whose saved-cards switch is off is silently excluded (not an error).",
   })
   async mySavedCards(@CurrentUser() userId: string): Promise<SavedCardModel[]> {
     return this.listMySavedCardsService.listMySavedCards(userId);
   }
 
-  @UseGuards(SessionGuard, AccountApprovedGuard, RapydSavedCardsEnabledGuard)
+  @UseGuards(SessionGuard, AccountApprovedGuard)
   @Mutation(() => PaymentAttemptModel, {
     description:
-      "Pays an Engagement with a saved card in ONE tap — no widget, no card data: the charge is made server-side with Rapyd's stored token while the Customer is in the app. Only the Engagement's own Customer can call it, with a card that is theirs, and only while the Engagement is IN_PROGRESS, PENDING_CUSTOMER_CONFIRMATION or COMPLETED. The amount and currency are derived server-side from the accepted Quote. Returns the PaymentAttempt: APPROVED (the ledger is written), REJECTED (see rejectionReason — AUTHENTICATION_REQUIRED means the issuer wants 3D Secure: nothing was charged and the client should fall back to startEngagementRapydCheckout) or PENDING (Rapyd has not answered definitively; poll myEngagementPaymentAttempt). Rejects with SAVED_CARD_NOT_FOUND (not the caller's card), CARD_PAYMENT_ALREADY_IN_PROGRESS (another attempt, e.g. an open Rapyd checkout — abandonEngagementPaymentAttempt first — or already paid), PAYMENT_METHOD_CONFLICT (committed to CASH), PAYMENT_PROVIDER_NOT_CONFIGURED, PAYMENT_PROVIDER_UNAVAILABLE (outcome unknown; the attempt is left PENDING), RAPYD_SAVED_CARDS_DISABLED / RAPYD_MODULE_DISABLED.",
+      "Pays an Engagement with a saved card — of whatever provider it belongs to (see SavedCard.method). A Rapyd card charges in ONE tap, server-side, with no further input. A Mercado Pago card requires providerToken: the client re-tokenizes { card_id, security_code: <CVV the Customer just typed> } with Mercado Pago's own SDK immediately before calling this mutation (providerToken is ignored for a Rapyd card). Only the Engagement's own Customer can call it, with a card that is theirs, and only while the Engagement is IN_PROGRESS, PENDING_CUSTOMER_CONFIRMATION or COMPLETED. The amount and currency are derived server-side from the accepted Quote. Returns the PaymentAttempt: APPROVED (the ledger is written), REJECTED (see rejectionReason — AUTHENTICATION_REQUIRED means the issuer wants 3D Secure, Rapyd only: nothing was charged and the client should fall back to startEngagementRapydCheckout) or PENDING (the provider has not answered definitively; poll myEngagementPaymentAttempt). Rejects with SAVED_CARD_NOT_FOUND (not the caller's card), CARD_PAYMENT_ALREADY_IN_PROGRESS (another attempt in progress — abandonEngagementPaymentAttempt first — or already paid), PAYMENT_METHOD_CONFLICT (committed to CASH), PAYMENT_PROVIDER_NOT_CONFIGURED, PAYMENT_PROVIDER_UNAVAILABLE (outcome unknown; the attempt is left PENDING), RAPYD_SAVED_CARDS_DISABLED / RAPYD_MODULE_DISABLED / MERCADOPAGO_SAVED_CARDS_DISABLED / CARD_PAYMENT_MODULE_DISABLED.",
   })
   async payEngagementWithSavedCard(
     @CurrentUser() userId: string,
     @Args('engagementId', { type: () => ID }) engagementId: string,
     @Args('savedCardId', { type: () => ID }) savedCardId: string,
+    @Args('providerToken', { type: () => String, nullable: true })
+    providerToken?: string,
   ): Promise<PaymentAttemptModel> {
     return this.payEngagementWithSavedCardService.payEngagementWithSavedCard(
       userId,
-      { engagementId, savedCardId },
+      { engagementId, savedCardId, providerToken },
     );
   }
 

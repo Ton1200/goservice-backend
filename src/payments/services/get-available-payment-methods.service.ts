@@ -30,7 +30,12 @@ interface DigitalCatalogEntry {
   method: PaymentMethod;
   capability: PaymentProviderCapability;
   kind: PaymentOptionKind;
-  keys: { enabled: string; displayName: string };
+  keys: {
+    enabled: string;
+    displayName: string;
+    /** GOS-149 — present only for an entry whose method can support saved cards at all (today: the two card entries, Mercado Pago and Rapyd — never the wallet entry). Its absence is what makes `supportsSavedCards` return false without asking the provider anything. */
+    savedCardsEnabled?: string;
+  };
   /** Label used until an admin sets `display-name`. */
   fallbackDisplayName: string;
 }
@@ -206,24 +211,27 @@ export class GetAvailablePaymentMethodsService {
   }
 
   /**
-   * Saved cards are a feature of the Rapyd method: offered only on the option
-   * whose adapter has the capability, and only while its own switch is ON (the
-   * method's own flag was already required for the option to be listed).
+   * GOS-149 — generalized: offered only on an entry that DECLARES
+   * `keys.savedCardsEnabled` (today: the two card entries, Mercado Pago and
+   * Rapyd — the wallet entry never does), whose adapter has the SAVED_CARDS
+   * capability, and only while that switch is ON (the method's own `enabled`
+   * flag was already required for the option to be listed at all). For Rapyd
+   * this is the exact same check as before — same key, same capability.
    */
   private async supportsSavedCards(
     entry: DigitalCatalogEntry,
   ): Promise<boolean> {
+    if (!entry.keys.savedCardsEnabled) {
+      return false;
+    }
     if (
-      entry.method !== PaymentMethod.RAPYD ||
       !this.paymentProviderRegistry
         .forMethod(entry.method)
         .capabilities.has('SAVED_CARDS')
     ) {
       return false;
     }
-    return this.platformSettingPort.isEnabled(
-      PAYMENT_METHOD_SETTING_KEYS.rapyd.savedCardsEnabled,
-    );
+    return this.platformSettingPort.isEnabled(entry.keys.savedCardsEnabled);
   }
 
   private async displayName(key: string, fallback: string): Promise<string> {

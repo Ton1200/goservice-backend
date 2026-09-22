@@ -11,6 +11,8 @@ import {
   CardTokenCapability,
   ChargeCardCommand,
   ChargeCardResult,
+  ChargeSavedCardCommand,
+  CreateProviderCustomerCommand,
   CreateWalletPreferenceCommand,
   PaymentProvider,
   PaymentProviderCapability,
@@ -18,7 +20,10 @@ import {
   PaymentProviderUnavailableError,
   PaymentRequestRejectedError,
   ProviderPaymentSnapshot,
+  ProviderSavedCard,
   ProviderTransactionDetails,
+  SaveCardOnChargeCapability,
+  SavedCardCapability,
   WalletPreferenceResult,
   WalletRedirectCapability,
 } from '../ports/payment-provider.port';
@@ -40,6 +45,7 @@ import {
   buildWalletPreferenceRequest,
   mapPreferenceResponse,
 } from '../utils/mercadopago-preference.mapper';
+import { mapMercadoPagoStoredCard } from '../utils/mercadopago-stored-card.mapper';
 
 // Mercado Pago tells sandbox from production by the CREDENTIAL, not the host.
 const MERCADOPAGO_API_BASE_URL = 'https://api.mercadopago.com';
@@ -135,17 +141,42 @@ interface Credentials {
  * countries. Every call here takes a `country` (`CustomerProfile.country`)
  * and reads that country's own settings — see
  * `mercadoPagoSettingKeys`'s own header comment for the key shape.
+ *
+ * **GOS-149 (saved cards) additions**: `SavedCardCapability` +
+ * `SaveCardOnChargeCapability` over Mercado Pago's Customers & Cards API
+ * (`/v1/customers`, `/v1/customers/{id}/cards`). Mercado Pago has NO CVV-less
+ * server-side charge of a stored card (unlike Rapyd's true one-tap Card on
+ * File) — `chargeSavedCard` requires a fresh token the CLIENT obtained by
+ * re-tokenizing `{ card_id, security_code }` with Mercado Pago's own SDK,
+ * immediately before the call (see `ChargeSavedCardCommand.providerToken`'s
+ * own comment), and otherwise reuses the SAME `POST /v1/orders` shape
+ * `chargeCard` does (a saved-card recharge IS just another order under the
+ * hood) — deliberately NOT extracted into a helper shared with `chargeCard`,
+ * so that method (already verified live) is never touched by this change.
+ * **NOT verified live**: every Customers/Cards API shape below is written
+ * against Mercado Pago's documentation only, the same "not verified" posture
+ * already used for the wallet flow's own unconfirmed parts above.
  */
 @Injectable()
 export class MercadoPagoPaymentAdapter
-  implements PaymentProvider, CardTokenCapability, WalletRedirectCapability
+  implements
+    PaymentProvider,
+    CardTokenCapability,
+    WalletRedirectCapability,
+    SavedCardCapability,
+    SaveCardOnChargeCapability
 {
   private readonly logger = new Logger(MercadoPagoPaymentAdapter.name);
 
   /** GOS-146 — see `PaymentProvider.method`. */
   readonly method = PaymentMethod.MERCADOPAGO;
   readonly capabilities: ReadonlySet<PaymentProviderCapability> =
-    new Set<PaymentProviderCapability>(['CARD_TOKEN', 'WALLET_REDIRECT']);
+    new Set<PaymentProviderCapability>([
+      'CARD_TOKEN',
+      'WALLET_REDIRECT',
+      'SAVED_CARDS',
+      'SAVE_CARD_ON_CHARGE',
+    ]);
 
   constructor(private readonly platformSettingPort: PlatformSettingPort) {}
 
@@ -436,6 +467,260 @@ export class MercadoPagoPaymentAdapter
     throw new PaymentProviderUnavailableError(`HTTP ${status}`);
   }
 
+  // ---- SavedCardCapability + SaveCardOnChargeCapability (GOS-149) --------
+
+  /** GOS-149 — see `SavedCardCapability.currentEnvironment`'s own comment. */
+  async currentEnvironment(country?: CountryCode): Promise<string> {
+    return (await this.loadCredentials(this.requireCountry(country)))
+      .environment;
+  }
+
+  /** GOS-149 — `POST /v1/customers`. Not verified live — see this class's own header comment. */
+  async createCustomer(
+    command: CreateProviderCustomerCommand,
+  ): Promise<{ customerId: string }> {
+    const credentials = await this.loadCredentials(
+      this.requireCountry(command.country),
+    );
+    const [firstName, ...rest] = command.name.trim().split(/\s+/);
+    const { status, json } = await this.request(
+      'POST',
+      '/v1/customers',
+      credentials,
+      {
+        body: {
+          email: command.email,
+          ...(firstName ? { first_name: firstName } : {}),
+          ...(rest.length > 0 ? { last_name: rest.join(' ') } : {}),
+          // Traces a Mercado Pago customer back to the GoService Customer —
+          // same intent as the Rapyd adapter's own metadata field.
+          description: command.externalReference,
+        },
+      },
+    );
+    if (status >= 200 && status < 300) {
+      const customer = json as { id?: string } | null;
+      if (!customer?.id) {
+        throw new PaymentProviderUnavailableError(
+          'success response without a customer id',
+        );
+      }
+      return { customerId: customer.id };
+    }
+    if (status === 401 || status === 403) {
+      throw new PaymentProviderNotConfiguredError(
+        'credentials rejected by the provider',
+      );
+    }
+    if (status === 408 || status === 409 || status === 429 || status >= 500) {
+      throw new PaymentProviderUnavailableError(`HTTP ${status}`);
+    }
+    this.logger.error({
+      event: 'mercadopago_create_customer_refused',
+      httpStatus: status,
+      errorCodes: this.extractErrorCodes(json),
+      environment: credentials.environment,
+    });
+    throw new PaymentRequestRejectedError('OTHER');
+  }
+
+  /** GOS-149 — `GET /v1/customers/{id}/cards`. Not verified live. */
+  async listSavedCards(
+    customerId: string,
+    country?: CountryCode,
+  ): Promise<ProviderSavedCard[]> {
+    const credentials = await this.loadCredentials(
+      this.requireCountry(country),
+    );
+    const { status, json } = await this.request(
+      'GET',
+      `/v1/customers/${customerId}/cards`,
+      credentials,
+    );
+    if (status >= 200 && status < 300) {
+      return (Array.isArray(json) ? json : [])
+        .map(mapMercadoPagoStoredCard)
+        .filter((card): card is ProviderSavedCard => card !== null);
+    }
+    if (status === 404) {
+      return [];
+    }
+    if (status === 401 || status === 403) {
+      throw new PaymentProviderNotConfiguredError(
+        'credentials rejected by the provider',
+      );
+    }
+    throw new PaymentProviderUnavailableError(`HTTP ${status}`);
+  }
+
+  /**
+   * GOS-149 — `POST /v1/customers/{id}/cards`, associating a JUST-USED token
+   * to the vault (`SaveCardOnChargeCapability`) — Mercado Pago has no "save
+   * card" widget in this codebase, so this is the ONLY way a card ever
+   * enters the vault (see `PayEngagementWithCardService`'s own comment on
+   * `saveCard`). Not verified live.
+   */
+  async associateCard(
+    customerId: string,
+    cardToken: string,
+    country: CountryCode,
+  ): Promise<ProviderSavedCard> {
+    const credentials = await this.loadCredentials(country);
+    const { status, json } = await this.request(
+      'POST',
+      `/v1/customers/${customerId}/cards`,
+      credentials,
+      { body: { token: cardToken } },
+    );
+    if (status >= 200 && status < 300) {
+      const card = mapMercadoPagoStoredCard(json);
+      if (!card) {
+        throw new PaymentProviderUnavailableError(
+          'success response without a card',
+        );
+      }
+      return card;
+    }
+    if (status === 401 || status === 403) {
+      throw new PaymentProviderNotConfiguredError(
+        'credentials rejected by the provider',
+      );
+    }
+    if (status === 408 || status === 409 || status === 429 || status >= 500) {
+      throw new PaymentProviderUnavailableError(`HTTP ${status}`);
+    }
+    this.logger.error({
+      event: 'mercadopago_associate_card_refused',
+      httpStatus: status,
+      errorCodes: this.extractErrorCodes(json),
+      environment: credentials.environment,
+    });
+    throw new PaymentRequestRejectedError('OTHER');
+  }
+
+  /** GOS-149 — idempotent, `DELETE /v1/customers/{id}/cards/{cardId}`. Not verified live. */
+  async deleteSavedCard(
+    customerId: string,
+    providerCardId: string,
+    country?: CountryCode,
+  ): Promise<void> {
+    const credentials = await this.loadCredentials(
+      this.requireCountry(country),
+    );
+    const { status } = await this.request(
+      'DELETE',
+      `/v1/customers/${customerId}/cards/${providerCardId}`,
+      credentials,
+    );
+    if ((status >= 200 && status < 300) || status === 404) {
+      return; // idempotent — a card the provider no longer knows is a no-op success
+    }
+    if (status === 401 || status === 403) {
+      throw new PaymentProviderNotConfiguredError(
+        'credentials rejected by the provider',
+      );
+    }
+    throw new PaymentProviderUnavailableError(`HTTP ${status}`);
+  }
+
+  /**
+   * GOS-149 — charges a saved card by reusing the Orders API `chargeCard`
+   * already POSTs to (a saved-card recharge is just another order). Requires
+   * `providerToken`/`paymentMethodId` (see `ChargeSavedCardCommand`'s own
+   * comments) — their absence is a definitive "no charge", same posture as
+   * `chargeCard`'s own debit+instalments guard.
+   */
+  async chargeSavedCard(
+    command: ChargeSavedCardCommand,
+  ): Promise<ProviderPaymentSnapshot> {
+    const country = this.requireCountry(command.country);
+    if (!command.providerToken || !command.paymentMethodId) {
+      throw new PaymentRequestRejectedError('INVALID_CARD_DATA');
+    }
+    const paymentType = resolveMercadoPagoPaymentType(command.paymentMethodId);
+    const credentials = await this.loadCredentials(country);
+
+    const response = await this.request('POST', '/v1/orders', credentials, {
+      idempotencyKey: command.idempotencyKey,
+      body: {
+        type: 'online',
+        processing_mode: 'automatic',
+        external_reference: command.externalReference,
+        description: command.description,
+        total_amount: formatMercadoPagoAmount(command.amount, command.currency),
+        payer: { email: command.payerEmail },
+        transactions: {
+          payments: [
+            {
+              amount: formatMercadoPagoAmount(command.amount, command.currency),
+              payment_method: {
+                id: command.paymentMethodId,
+                type: paymentType,
+                token: command.providerToken,
+                // GoService only ever sells 1 instalment on a saved-card
+                // recharge — same simplification Rapyd's own Card on File
+                // documents; credit-only, same as `chargeCard`.
+                ...(paymentType === 'credit_card' ? { installments: 1 } : {}),
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    const { status, json } = response;
+
+    if (status >= 200 && status < 300) {
+      const snapshot = mapOrderToSnapshot(json as MercadoPagoOrder | null);
+      if (!snapshot) {
+        throw new PaymentProviderUnavailableError(
+          'success response without an order id',
+        );
+      }
+      return snapshot;
+    }
+    if (status === 402) {
+      const order = (json as { data?: MercadoPagoOrder } | null)?.data;
+      const snapshot = order ? mapOrderToSnapshot(order) : null;
+      if (snapshot) {
+        return snapshot;
+      }
+      throw new PaymentRequestRejectedError('OTHER');
+    }
+    if (status === 401 || status === 403) {
+      throw new PaymentProviderNotConfiguredError(
+        'credentials rejected by the provider',
+      );
+    }
+    if (status === 408 || status === 409 || status === 429 || status >= 500) {
+      throw new PaymentProviderUnavailableError(`HTTP ${status}`);
+    }
+    this.logger.error({
+      event: 'mercadopago_saved_card_charge_refused',
+      httpStatus: status,
+      errorCodes: this.extractErrorCodes(json),
+      environment: credentials.environment,
+    });
+    throw new PaymentRequestRejectedError(
+      status === 422
+        ? 'INVALID_CARD_DATA'
+        : status === 400
+          ? 'PROVIDER_ERROR'
+          : 'OTHER',
+    );
+  }
+
+  /**
+   * GOS-149 — a saved-card charge is just another Mercado Pago order under
+   * the hood, so re-reading it is exactly `getPayment`.
+   */
+  async readSavedCardCharge(
+    providerPaymentId: string,
+    country?: CountryCode,
+  ): Promise<ProviderPaymentSnapshot | null> {
+    return this.getPayment(providerPaymentId, this.requireCountry(country));
+  }
+
   /**
    * The non-sensitive facts of an APPROVED payment (brand, last four, the
    * provider's fee/taxes/net, dates), from Mercado Pago's PAYMENT record —
@@ -557,6 +842,24 @@ export class MercadoPagoPaymentAdapter
     };
   }
 
+  /**
+   * GOS-149 — `SavedCardCapability`'s methods take `country?: CountryCode`
+   * only so Rapyd's own implementation (which never needs one — one global
+   * credential set) can satisfy the shared interface unchanged. For Mercado
+   * Pago it is functionally required (credentials are per-country) — this
+   * turns a missing one into the same `PaymentProviderNotConfiguredError`
+   * every other missing-config case already throws, instead of a runtime
+   * crash reading `country.toLowerCase()` on `undefined`.
+   */
+  private requireCountry(country: CountryCode | undefined): CountryCode {
+    if (!country) {
+      throw new PaymentProviderNotConfiguredError(
+        'country is required for Mercado Pago (credentials are per-country)',
+      );
+    }
+    return country;
+  }
+
   private async loadCredentials(country: CountryCode): Promise<Credentials> {
     const settingKeys = mercadoPagoSettingKeys(country);
     const accessToken = await this.platformSettingPort.getValue(
@@ -627,7 +930,7 @@ export class MercadoPagoPaymentAdapter
   }
 
   private async request(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     credentials: Credentials,
     options?: { body?: unknown; idempotencyKey?: string; timeoutMs?: number },

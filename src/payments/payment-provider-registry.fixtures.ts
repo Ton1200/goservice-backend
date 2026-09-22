@@ -14,6 +14,9 @@ export function makeRegistryFixture(provider: object): PaymentProviderRegistry {
     cardToken: () => provider,
     walletRedirect: () => provider,
     embeddedCheckout: () => provider,
+    // GOS-149 — same "one fake provider for whatever's asked" pattern.
+    savedCards: () => provider,
+    saveCardOnCharge: () => provider,
     all: () => [provider],
   } as unknown as PaymentProviderRegistry;
 }
