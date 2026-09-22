@@ -24,7 +24,7 @@ export class CardPaymentResolver {
   @UseGuards(SessionGuard, AccountApprovedGuard, CardPaymentModuleEnabledGuard)
   @Mutation(() => PaymentAttemptModel, {
     description:
-      'Pays an Engagement by card, with no redirect. Only the Engagement\'s own Customer can call it, and only while it is IN_PROGRESS, PENDING_CUSTOMER_CONFIRMATION or COMPLETED. `cardToken` is the single-use token obtained by tokenizing the card CLIENT-SIDE with the payment provider — the card itself never touches GoService\'s servers; `paymentMethodId` is the card brand id that tokenization reported (e.g. "visa", "master" for credit; "debvisa", "debmaster" for DEBIT cards — the card type is derived from this id, there is no separate argument). A debit card has no instalments: `installments` must be 1, otherwise the attempt is REJECTED with INVALID_CARD_DATA and nothing is charged. The amount and currency are derived server-side from the accepted Quote — never sent by the client. Returns the attempt: APPROVED (charged), REJECTED (not charged — see rejectionReason; a declined card is a normal result, not an error) or PENDING (the provider has not given a final answer yet — it is resolved by its asynchronous notification; do not retry, a new attempt is rejected while one is PENDING). Rejects with CARD_PAYMENT_ALREADY_IN_PROGRESS if the Engagement already has a PENDING or APPROVED attempt.',
+      'Pays an Engagement by card, with no redirect. Only the Engagement\'s own Customer can call it, and only while it is IN_PROGRESS, PENDING_CUSTOMER_CONFIRMATION or COMPLETED. `cardToken` is the single-use token obtained by tokenizing the card CLIENT-SIDE with the payment provider — the card itself never touches GoService\'s servers; `paymentMethodId` is the card brand id that tokenization reported (e.g. "visa", "master" for credit; "debvisa", "debmaster" for DEBIT cards — the card type is derived from this id, there is no separate argument). A debit card has no instalments: `installments` must be 1, otherwise the attempt is REJECTED with INVALID_CARD_DATA and nothing is charged. The amount and currency are derived server-side from the accepted Quote — never sent by the client. `saveCard: true` (GOS-149) adds this card to the Customer\'s Mercado Pago vault when the charge APPROVES, so it appears in mySavedCards next time — best-effort, never affects this payment\'s own outcome. Returns the attempt: APPROVED (charged), REJECTED (not charged — see rejectionReason; a declined card is a normal result, not an error) or PENDING (the provider has not given a final answer yet — it is resolved by its asynchronous notification; do not retry, a new attempt is rejected while one is PENDING). Rejects with CARD_PAYMENT_ALREADY_IN_PROGRESS if the Engagement already has a PENDING or APPROVED attempt.',
   })
   payEngagementWithCard(
     @CurrentUser() userId: string,
@@ -33,12 +33,15 @@ export class CardPaymentResolver {
     @Args('paymentMethodId') paymentMethodId: string,
     @Args('installments', { type: () => Int, defaultValue: 1 })
     installments: number,
+    @Args('saveCard', { type: () => Boolean, nullable: true })
+    saveCard?: boolean,
   ): Promise<PaymentAttemptModel> {
     return this.payEngagementWithCardService.payEngagementWithCard(userId, {
       engagementId,
       cardToken,
       paymentMethodId,
       installments,
+      saveCard,
     });
   }
 }

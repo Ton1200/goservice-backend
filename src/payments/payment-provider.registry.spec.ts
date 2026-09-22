@@ -27,14 +27,23 @@ describe('PaymentProviderRegistry', () => {
     );
     expect(registry.embeddedCheckout(PaymentMethod.RAPYD)).toBe(rapyd);
     expect(registry.savedCards(PaymentMethod.RAPYD)).toBe(rapyd);
+    // GOS-149 — Mercado Pago now supports saved cards too (a CVV re-entry
+    // flow, unlike Rapyd's true one-tap), and it is the only provider that
+    // can ADD a card to the vault as a side effect of a normal charge.
+    expect(registry.savedCards(PaymentMethod.MERCADOPAGO)).toBe(mercadoPago);
+    expect(registry.saveCardOnCharge(PaymentMethod.MERCADOPAGO)).toBe(
+      mercadoPago,
+    );
   });
 
   it.each([
     ['cardToken', PaymentMethod.RAPYD, 'CARD_TOKEN'],
     ['walletRedirect', PaymentMethod.RAPYD, 'WALLET_REDIRECT'],
     ['embeddedCheckout', PaymentMethod.MERCADOPAGO, 'EMBEDDED_CHECKOUT'],
-    // Mercado Pago has no reusable card token (why GOS-83 was dropped).
-    ['savedCards', PaymentMethod.MERCADOPAGO, 'SAVED_CARDS'],
+    // GOS-149 — Rapyd's vault fills itself inside its own embedded checkout
+    // widget; it never gained the "associate a card on charge" capability
+    // Mercado Pago needed instead.
+    ['saveCardOnCharge', PaymentMethod.RAPYD, 'SAVE_CARD_ON_CHARGE'],
   ] as const)(
     'fails explicitly when %s is asked of %s, which lacks that capability',
     (accessor, method, capability) => {

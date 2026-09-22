@@ -38,7 +38,15 @@ import { CountryCode, PaymentMethod } from '@prisma/client';
  * name. Adding a provider = one adapter class implementing the capabilities it
  * really has + one line in the registry + one `PaymentMethod` enum value.
  * (Saved-card tokenization, GOS-83, was dropped 2026-09-18: Mercado Pago has no
- * reusable token — see domain-model.md.)
+ * reusable card token — see domain-model.md. **Reopened 2026-09-21 as GOS-149**,
+ * at explicit Product request: Mercado Pago DOES support a reusable
+ * *provider-side vault* — a `Customer` + `Card` the CVV must still be
+ * re-entered against on every charge — which is different from, and narrower
+ * than, a reusable card *token*. See `SavedCardCapability`'s own comment for
+ * how Mercado Pago's shape differs from Rapyd's one-tap vault.)
+ * - `SaveCardOnChargeCapability` (GOS-149) — a provider that can only ever add
+ *   a card to the vault as a side effect of a normal charge (Mercado Pago has
+ *   no "save card" widget the way Rapyd's embedded checkout does).
  *
  * **Scope, deliberately narrow (GOS-85, DEC-009 findings)**: a SIMPLE charge
  * into GoService's own provider account. There is NO split/`marketplace_fee`
@@ -98,6 +106,14 @@ export interface ChargeCardCommand {
    * 2026-09-18). `PaymentAttempt.id`.
    */
   idempotencyKey: string;
+  /**
+   * GOS-149 — the Customer ticked "save this card". Best-effort, ONLY on an
+   * `approved` result, and NEVER lets a failure to save affect the charge
+   * itself (see `PayEngagementWithCardService`'s own comment). Optional,
+   * defaults to not saving — zero behavior change for an existing caller
+   * that never sends it.
+   */
+  saveCard?: boolean;
 }
 
 export interface ChargeCardResult {
@@ -215,7 +231,18 @@ export class PaymentProviderNotConfiguredError extends Error {
 
 /** Which payment flows a provider supports — see this file's header. */
 export type PaymentProviderCapability =
-  'CARD_TOKEN' | 'WALLET_REDIRECT' | 'EMBEDDED_CHECKOUT' | 'SAVED_CARDS';
+  | 'CARD_TOKEN'
+  | 'WALLET_REDIRECT'
+  | 'EMBEDDED_CHECKOUT'
+  | 'SAVED_CARDS'
+  // GOS-149 — a provider that can attach the token from a JUST-COMPLETED
+  // charge to a customer's vault (Mercado Pago: `POST
+  // /v1/customers/{id}/cards`). Deliberately NOT part of `SavedCardCapability`
+  // — Rapyd's vault fills itself, inside its own widget, and would otherwise
+  // need this as a permanent dead method; keeping it separate means
+  // `PaymentProviderRegistry.saveCardOnCharge('RAPYD')` fails the same
+  // explicit way as any other capability mismatch instead.
+  | 'SAVE_CARD_ON_CHARGE';
 
 /**
  * A registry lookup asked for a method that has no adapter (e.g. `CASH` —
@@ -439,6 +466,14 @@ export interface CreateProviderCustomerCommand {
   email: string;
   /** `CustomerProfile.id` — lets the provider record be traced back. */
   externalReference: string;
+  /**
+   * GOS-149 — required IN PRACTICE for Mercado Pago (credentials are
+   * per-country, see `ChargeCardCommand.country`'s own comment); Rapyd's
+   * adapter never reads it (one global credential set for every country) —
+   * omitting it is zero behavior change for Rapyd. Optional only so every
+   * existing call site keeps compiling unchanged.
+   */
+  country?: CountryCode;
 }
 
 /**
@@ -470,9 +505,60 @@ export interface ChargeSavedCardCommand {
   externalReference: string;
   /** `PaymentAttempt.id`, sent as the provider's idempotency key where one exists. */
   idempotencyKey: string;
+  /** GOS-149 — see `CreateProviderCustomerCommand.country`'s own comment. */
+  country?: CountryCode;
+  /**
+   * GOS-149 — MERCADO PAGO ONLY. A fresh single-use token the CLIENT obtained,
+   * immediately before this call, by tokenizing `{ card_id: providerCardId,
+   * security_code: <the CVV the Customer just typed> }` with Mercado Pago's
+   * OWN client-side SDK — Mercado Pago has no CVV-less server-side charge of
+   * a stored card (confirmed no such path exists in their docs). Rapyd's
+   * adapter never reads it (a true one-tap charge, no CVV) — zero behavior
+   * change for Rapyd. `MercadoPagoPaymentAdapter.chargeSavedCard` treats this
+   * as functionally required: absent, it rejects with `INVALID_CARD_DATA`
+   * before sending anything.
+   */
+  providerToken?: string;
+  /**
+   * GOS-149 — MERCADO PAGO ONLY. The Orders API's `payment_method.id` (e.g.
+   * `visa`, `master`) — required on every order, same as
+   * `ChargeCardCommand.paymentMethodId`. The adapter has no database access
+   * to look the stored card's own brand up, so the caller (which already
+   * loaded the `SavedPaymentCard` row) passes it straight through —
+   * conveniently, `SavedPaymentCard.brand` for a Mercado Pago card already
+   * IS this same id (see `mapMercadoPagoStoredCard`). Rapyd's adapter never
+   * reads it.
+   */
+  paymentMethodId?: string;
+  /**
+   * GOS-149 — MERCADO PAGO ONLY. The Orders API requires `payer.email` on
+   * every order (verified live, GOS-85) — `chargeCard` already has this same
+   * field; a saved-card charge needs it too, for the same reason. Rapyd's
+   * adapter never reads it.
+   */
+  payerEmail?: string;
 }
 
-/** Card vault + server-side charging of a saved card (Rapyd Card on File). */
+/**
+ * Card vault + server-side charging of a saved card. Two real shapes exist
+ * behind this ONE interface:
+ * - **Rapyd (Card on File)** — a true one-tap charge: no widget, no CVV, the
+ *   Customer is only present in the app. Its vault fills itself, inside its
+ *   own embedded-checkout widget (see `SAVE_CARD_ON_CHARGE`'s own comment).
+ * - **Mercado Pago (GOS-149)** — NOT one-tap: Mercado Pago has no CVV-less
+ *   server-side charge, so the CLIENT still tokenizes `{ card_id,
+ *   security_code }` right before every charge (see
+ *   `ChargeSavedCardCommand.providerToken`'s own comment) — the saved card
+ *   only saves the Customer from re-typing the card NUMBER, never the CVV.
+ *   Its vault is only ever populated as a side effect of a normal charge
+ *   (`SaveCardOnChargeCapability`), since Mercado Pago has no "save card"
+ *   widget of its own in this codebase.
+ *
+ * `country?: CountryCode` on every method below is REQUIRED in practice for
+ * Mercado Pago (per-country credentials) and never read by Rapyd (one global
+ * credential set) — see `CreateProviderCustomerCommand.country`'s own
+ * comment for why it is optional at the type level.
+ */
 export interface SavedCardCapability {
   /**
    * The provider environment the credentials belong to (`sandbox` |
@@ -480,7 +566,7 @@ export interface SavedCardCapability {
    * environment, so they are stored together with it.
    * @throws PaymentProviderNotConfiguredError
    */
-  currentEnvironment(): Promise<string>;
+  currentEnvironment(country?: CountryCode): Promise<string>;
 
   /**
    * Creates the provider's customer record for a GoService Customer.
@@ -497,38 +583,73 @@ export interface SavedCardCapability {
    * truth). An unknown customer resolves to an empty list. Same throws as
    * `createCustomer`.
    */
-  listSavedCards(customerId: string): Promise<ProviderSavedCard[]>;
+  listSavedCards(
+    customerId: string,
+    country?: CountryCode,
+  ): Promise<ProviderSavedCard[]>;
 
   /**
-   * Charges a saved card, server-side, with the Customer present in the app (a
-   * one-tap payment) — no widget, no raw card. A declined card is NOT an
-   * exception: it resolves with `status: 'rejected'`. If the issuer demands 3D
-   * Secure the payment is cancelled and it resolves `rejected` with
-   * `AUTHENTICATION_REQUIRED` (nothing is charged). `pending` = the provider has
-   * not answered definitively; a notification resolves it.
+   * Charges a saved card, with the Customer present in the app. For Rapyd
+   * this is a true one-tap payment — no widget, no raw card, no CVV. A
+   * declined card is NOT an exception: it resolves with `status: 'rejected'`.
+   * If the issuer demands 3D Secure the payment is cancelled and it resolves
+   * `rejected` with `AUTHENTICATION_REQUIRED` (nothing is charged). `pending`
+   * = the provider has not answered definitively; a notification resolves
+   * it.
    * @throws PaymentProviderUnavailableError — outcome unknown (timeout/5xx).
    * @throws PaymentProviderNotConfiguredError — credentials missing/rejected.
-   * @throws PaymentRequestRejectedError — the provider refused the request.
+   * @throws PaymentRequestRejectedError — the provider refused the request
+   *   (for Mercado Pago, this INCLUDES a missing `providerToken`/
+   *   `paymentMethodId` — see `ChargeSavedCardCommand`'s own comments).
    */
   chargeSavedCard(
     command: ChargeSavedCardCommand,
   ): Promise<ProviderPaymentSnapshot>;
 
   /**
-   * Re-reads a charge made with `chargeSavedCard`. Unlike a payment inside an
-   * embedded checkout (which the widget lets the Customer retry, so only the
-   * CHECKOUT can end an attempt), a server-side charge has nobody to retry it: a
-   * failed/cancelled/expired one IS terminal, so it resolves `rejected` here.
-   * Resolves `null` when the provider does not know this id. Same throws as
-   * `createCustomer`.
+   * Re-reads a charge made with `chargeSavedCard`. For Rapyd, unlike a
+   * payment inside an embedded checkout (which the widget lets the Customer
+   * retry, so only the CHECKOUT can end an attempt), a server-side charge has
+   * nobody to retry it: a failed/cancelled/expired one IS terminal, so it
+   * resolves `rejected` here. Resolves `null` when the provider does not know
+   * this id. Same throws as `createCustomer`.
    */
   readSavedCardCharge(
     providerPaymentId: string,
+    country?: CountryCode,
   ): Promise<ProviderPaymentSnapshot | null>;
 
   /**
    * Erases the card from the provider's vault. Idempotent: a card the provider
    * no longer knows resolves normally. Same throws as `createCustomer`.
    */
-  deleteSavedCard(customerId: string, providerCardId: string): Promise<void>;
+  deleteSavedCard(
+    customerId: string,
+    providerCardId: string,
+    country?: CountryCode,
+  ): Promise<void>;
+}
+
+/**
+ * GOS-149 — a provider that can only ever add a card to the vault as a side
+ * effect of a normal charge (Mercado Pago: `payEngagementWithCard` with
+ * `saveCard: true`). Deliberately SEPARATE from `SavedCardCapability`: Rapyd
+ * never implements this (its vault fills itself, inside its own embedded
+ * checkout widget, never as a side effect of a server-side call this
+ * codebase makes) — keeping it its own capability means
+ * `PaymentProviderRegistry.saveCardOnCharge('RAPYD')` fails EXPLICITLY, the
+ * same way any other capability mismatch does, instead of a dead method that
+ * would sit unused on `RapydPaymentAdapter` forever.
+ */
+export interface SaveCardOnChargeCapability {
+  /**
+   * @throws PaymentProviderUnavailableError — outcome unknown (timeout/5xx).
+   * @throws PaymentProviderNotConfiguredError — credentials missing/rejected.
+   * @throws PaymentRequestRejectedError — the provider refused to attach it.
+   */
+  associateCard(
+    customerId: string,
+    cardToken: string,
+    country: CountryCode,
+  ): Promise<ProviderSavedCard>;
 }

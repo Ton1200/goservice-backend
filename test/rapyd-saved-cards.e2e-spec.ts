@@ -942,13 +942,43 @@ describe('GraphQL Rapyd saved cards (GOS-146, e2e)', () => {
       expect(await prisma.paymentProviderCustomer.count()).toBe(0);
     });
 
-    it('with saved cards OFF, mySavedCards and payEngagementWithSavedCard answer RAPYD_SAVED_CARDS_DISABLED — before touching Rapyd', async () => {
+    it('with saved cards OFF, mySavedCards silently excludes Rapyd (GOS-149: mySavedCards now serves more than one provider, so a single provider being off is no longer an error — see ListMySavedCardsService) and payEngagementWithSavedCard on a REAL, owned card still answers RAPYD_SAVED_CARDS_DISABLED before touching Rapyd', async () => {
+      const { customer, card } = await customerWithSavedCard();
+      const second = await seedInProgressEngagement({ customer });
+      await enable({ savedCardsEnabled: false });
+
+      const listed = await mySavedCards(customer.token);
+      expect(listed.errors).toBeUndefined();
+      expect(listed.data!.mySavedCards).toEqual([]);
+
+      const calls = rapydCalls.length;
+      expect(
+        errorCode(
+          await payWithSavedCard(second.engagementId, card.id, customer.token),
+        ),
+      ).toBe('RAPYD_SAVED_CARDS_DISABLED');
+      expect(rapydCalls).toHaveLength(calls); // no NEW Rapyd call from this check
+    });
+
+    it('with RAPYD itself OFF, saved cards are off too (RAPYD_MODULE_DISABLED) on a REAL, owned card, whatever the sub-switch says; mySavedCards silently excludes it too', async () => {
+      const { customer, card } = await customerWithSavedCard();
+      const second = await seedInProgressEngagement({ customer });
+      await enable({ rapydEnabled: false, savedCardsEnabled: true });
+
+      expect((await mySavedCards(customer.token)).data!.mySavedCards).toEqual(
+        [],
+      );
+      expect(
+        errorCode(
+          await payWithSavedCard(second.engagementId, card.id, customer.token),
+        ),
+      ).toBe('RAPYD_MODULE_DISABLED');
+    });
+
+    it("a nonexistent/foreign savedCardId is SAVED_CARD_NOT_FOUND regardless of the switch (GOS-149: ownership/existence is now checked BEFORE the switch, since which switch applies depends on the card's own provider)", async () => {
       await enable({ savedCardsEnabled: false });
       const seeded = await seedInProgressEngagement();
 
-      expect(errorCode(await mySavedCards(seeded.customerToken))).toBe(
-        'RAPYD_SAVED_CARDS_DISABLED',
-      );
       expect(
         errorCode(
           await payWithSavedCard(
@@ -957,26 +987,7 @@ describe('GraphQL Rapyd saved cards (GOS-146, e2e)', () => {
             seeded.customerToken,
           ),
         ),
-      ).toBe('RAPYD_SAVED_CARDS_DISABLED');
-      expect(rapydCalls).toHaveLength(0);
-    });
-
-    it('with RAPYD itself OFF, saved cards are off too (RAPYD_MODULE_DISABLED), whatever the sub-switch says', async () => {
-      await enable({ rapydEnabled: false, savedCardsEnabled: true });
-      const seeded = await seedInProgressEngagement();
-
-      expect(errorCode(await mySavedCards(seeded.customerToken))).toBe(
-        'RAPYD_MODULE_DISABLED',
-      );
-      expect(
-        errorCode(
-          await payWithSavedCard(
-            seeded.engagementId,
-            randomUUID(),
-            seeded.customerToken,
-          ),
-        ),
-      ).toBe('RAPYD_MODULE_DISABLED');
+      ).toBe('SAVED_CARD_NOT_FOUND');
     });
 
     it('availablePaymentMethods says supportsSavedCards ONLY on the Rapyd option, and only while the switch is ON', async () => {

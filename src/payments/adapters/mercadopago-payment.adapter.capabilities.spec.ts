@@ -17,12 +17,16 @@ describe('MercadoPagoPaymentAdapter — multi-provider surface (GOS-146)', () =>
     return adapter;
   }
 
-  it('is the MERCADOPAGO provider with the card-token and wallet-redirect capabilities — and NOT the embedded checkout', () => {
+  it('is the MERCADOPAGO provider with the card-token, wallet-redirect, saved-cards and save-card-on-charge capabilities — and NOT the embedded checkout', () => {
     const adapter = makeAdapter({});
 
     expect(adapter.method).toBe(PaymentMethod.MERCADOPAGO);
     expect([...adapter.capabilities].sort()).toEqual([
       'CARD_TOKEN',
+      // GOS-149 — reopens GOS-83/84 (dropped 2026-09-18): a CVV re-entry
+      // flow, unlike Rapyd's true one-tap SAVED_CARDS.
+      'SAVED_CARDS',
+      'SAVE_CARD_ON_CHARGE',
       'WALLET_REDIRECT',
     ]);
   });

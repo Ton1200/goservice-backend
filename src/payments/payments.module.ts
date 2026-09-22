@@ -17,6 +17,7 @@ import { PaymentOptionsResolver } from './payment-options.resolver';
 import { MercadoPagoWebhookController } from './controllers/mercadopago-webhook.controller';
 import { RapydWebhookController } from './controllers/rapyd-webhook.controller';
 import { CardPaymentModuleEnabledGuard } from './guards/card-payment-module-enabled.guard';
+import { MercadoPagoSavedCardsEnabledGuard } from './guards/mercadopago-saved-cards-enabled.guard';
 import { MercadoPagoWalletModuleEnabledGuard } from './guards/mercadopago-wallet-module-enabled.guard';
 import { RapydModuleEnabledGuard } from './guards/rapyd-module-enabled.guard';
 import { RapydSavedCardsEnabledGuard } from './guards/rapyd-saved-cards-enabled.guard';
@@ -24,6 +25,7 @@ import { SavedCardRepository } from './saved-card.repository';
 import { SavedCardResolver } from './saved-card.resolver';
 import { DeleteSavedCardService } from './services/delete-saved-card.service';
 import { ListMySavedCardsService } from './services/list-my-saved-cards.service';
+import { MercadoPagoSavedCardsCustomerService } from './services/mercadopago-saved-cards-customer.service';
 import { PayEngagementWithSavedCardService } from './services/pay-engagement-with-saved-card.service';
 import { RapydSavedCardsCustomerService } from './services/rapyd-saved-cards-customer.service';
 import { PaymentProviderRegistry } from './payment-provider.registry';
@@ -76,6 +78,16 @@ import { StartEngagementWalletPaymentService } from './services/start-engagement
  * services and `RapydSavedCardsEnabledGuard` (a feature switch of the Rapyd
  * method, seeded OFF) — again in THIS module.
  *
+ * **GOS-149 (Mercado Pago saved cards) additions**: `SavedCardResolver` and
+ * its three services now serve BOTH providers (dispatch by the card's own
+ * `method` — see each service's own comment), never a hardcoded one.
+ * `MercadoPagoSavedCardsCustomerService` and `MercadoPagoSavedCardsEnabledGuard`
+ * (a feature switch of the Mercado Pago card method, seeded OFF,
+ * independent of Rapyd's) mirror their Rapyd counterparts. The vault is
+ * populated exclusively through `PayEngagementWithCardService`'s
+ * `saveCard: true` best-effort hook (Mercado Pago has no "save card" widget
+ * of its own).
+ *
  * `ThrottlerModule` is registered once at `AppModule` root, so
  * `MercadoPagoWebhookController`'s `ThrottlerGuard` resolves with no import
  * here (same as `IdentityVerificationModule`'s Didit webhook).
@@ -106,6 +118,8 @@ import { StartEngagementWalletPaymentService } from './services/start-engagement
     SavedCardRepository,
     RapydSavedCardsEnabledGuard,
     RapydSavedCardsCustomerService,
+    MercadoPagoSavedCardsEnabledGuard,
+    MercadoPagoSavedCardsCustomerService,
     ListMySavedCardsService,
     PayEngagementWithSavedCardService,
     DeleteSavedCardService,

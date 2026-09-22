@@ -58,6 +58,14 @@ export class PaymentAttemptRepository {
     amount: number;
     currency: string;
     installments: number;
+    /**
+     * GOS-149 — set ONLY by the saved-card-charge creation path
+     * (`PayEngagementWithSavedCardService`), for ANY provider that supports
+     * saved cards. See `PaymentAttempt.savedCardId`'s own schema comment for
+     * why this disambiguation exists — `ReadAttemptProviderStateService`
+     * depends on it.
+     */
+    savedCardId?: string;
   }): Promise<PaymentAttempt> {
     return this.prisma.paymentAttempt.create({
       data: {

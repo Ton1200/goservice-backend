@@ -702,6 +702,8 @@ export const TEST_MERCADOPAGO_WEBHOOK_SECRET =
  */
 export const CARD_PAYMENT_TEST_SETTING_KEYS = [
   'payments.payment-methods.mercadopago.card.enabled',
+  // GOS-149 — see `enableTestCardPayments`'s own `savedCardsEnabled` override.
+  'payments.payment-methods.mercadopago.card.saved-cards-enabled',
   ...Object.values(mercadoPagoSettingKeys(CountryCode.AR)),
 ];
 
@@ -739,7 +741,11 @@ export { mercadoPagoSettingKeys };
 export async function enableTestCardPayments(
   app: INestApplication,
   prisma: PrismaService,
-  overrides?: { cardEnabled?: boolean; country?: CountryCode },
+  overrides?: {
+    cardEnabled?: boolean;
+    country?: CountryCode;
+    savedCardsEnabled?: boolean;
+  },
 ): Promise<void> {
   const country = overrides?.country ?? CountryCode.AR;
   await prisma.platformSetting.upsert({
@@ -756,6 +762,28 @@ export async function enableTestCardPayments(
       isEncrypted: false,
       isPublic: false,
       value: String(overrides?.cardEnabled ?? true),
+    },
+  });
+  await prisma.platformSetting.upsert({
+    where: {
+      key: 'payments.payment-methods.mercadopago.card.saved-cards-enabled',
+    },
+    update: {
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.savedCardsEnabled ?? false),
+    },
+    create: {
+      // GOS-149 saved cards — written EXPLICITLY (default OFF): a missing row
+      // is fail-open in `PlatformSettingPort.isEnabled`, so a suite that did
+      // not opt in must never silently get the feature. Mirrors Rapyd's own
+      // `RAPYD_PAYMENT_TEST_SETTING_KEYS.savedCardsEnabled` pattern.
+      key: 'payments.payment-methods.mercadopago.card.saved-cards-enabled',
+      description: 'Switch for the Mercado Pago saved-cards feature.',
+      valueType: 'BOOLEAN',
+      isEncrypted: false,
+      isPublic: false,
+      value: String(overrides?.savedCardsEnabled ?? false),
     },
   });
   await upsertMercadoPagoCountryCredentials(app, prisma, country);

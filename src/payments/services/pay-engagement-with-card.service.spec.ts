@@ -7,6 +7,8 @@ import {
 } from '@prisma/client';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
 import { EngagementsRepository } from '../../engagements/engagements.repository';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
+import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { UsersRepository } from '../../users/users.repository';
 import { CardPaymentAccessService } from '../card-payment-access.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
@@ -16,7 +18,9 @@ import {
   PaymentProviderUnavailableError,
   PaymentRequestRejectedError,
 } from '../ports/payment-provider.port';
+import { SavedCardRepository } from '../saved-card.repository';
 import { ApplyPaymentResultService } from './apply-payment-result.service';
+import { MercadoPagoSavedCardsCustomerService } from './mercadopago-saved-cards-customer.service';
 import { PayEngagementWithCardService } from './pay-engagement-with-card.service';
 
 const CARD_TOKEN = 'tok_super_secret_card_token';
@@ -82,6 +86,12 @@ describe('PayEngagementWithCardService', () => {
     chargeCard?: jest.Mock;
     apply?: jest.Mock;
     activeAttempt?: Record<string, unknown> | null;
+    profile?: Record<string, unknown> | null;
+    ensure?: jest.Mock;
+    associateCard?: jest.Mock;
+    listSavedCards?: jest.Mock;
+    syncCards?: jest.Mock;
+    savedCardsEnabled?: boolean;
   }) {
     const resolveCustomerEngagement = options?.accessError
       ? jest.fn().mockRejectedValue(options.accessError)
@@ -125,7 +135,12 @@ describe('PayEngagementWithCardService', () => {
       jest
         .fn()
         .mockResolvedValue({ providerPaymentId: 'ORD_1', status: 'approved' });
-    const paymentProvider = { chargeCard };
+    const listSavedCards =
+      options?.listSavedCards ?? jest.fn().mockResolvedValue([]);
+    const associateCard =
+      options?.associateCard ??
+      jest.fn().mockResolvedValue({ providerCardId: 'card_1' });
+    const paymentProvider = { chargeCard, listSavedCards, associateCard };
 
     const apply =
       options?.apply ??
@@ -136,12 +151,46 @@ describe('PayEngagementWithCardService', () => {
         );
     const applyService = { apply } as unknown as ApplyPaymentResultService;
 
+    const profilesRepository = {
+      findCustomerProfileByUserId: jest
+        .fn()
+        .mockResolvedValue(
+          options?.profile === undefined
+            ? { id: 'profile-1', firstName: 'Ada', lastName: 'Lovelace' }
+            : options.profile,
+        ),
+    } as unknown as ProfilesRepository;
+    const syncCards = options?.syncCards ?? jest.fn().mockResolvedValue([]);
+    const savedCardRepository = {
+      syncCards,
+    } as unknown as SavedCardRepository;
+    const ensure =
+      options?.ensure ??
+      jest.fn().mockResolvedValue({
+        providerCustomerId: 'cus_mp',
+        environment: 'sandbox',
+      });
+    const mercadoPagoCustomerService = {
+      ensure,
+    } as unknown as MercadoPagoSavedCardsCustomerService;
+
+    const isEnabled = jest
+      .fn()
+      .mockResolvedValue(options?.savedCardsEnabled ?? true);
+    const platformSettingPort = {
+      isEnabled,
+    } as unknown as PlatformSettingPort;
+
     const service = new PayEngagementWithCardService(
       accessService,
       engagementsRepository,
+      profilesRepository,
       usersRepository,
+      platformSettingPort,
       paymentAttemptRepository,
       makeRegistryFixture(paymentProvider),
+      savedCardRepository,
+      mercadoPagoCustomerService,
       applyService,
     );
     return {
@@ -151,6 +200,11 @@ describe('PayEngagementWithCardService', () => {
       findActiveByEngagementId,
       chargeCard,
       apply,
+      ensure,
+      associateCard,
+      listSavedCards,
+      syncCards,
+      isEnabled,
     };
   }
 
@@ -364,6 +418,97 @@ describe('PayEngagementWithCardService', () => {
       expect(JSON.stringify(errorLog.mock.calls)).toContain(
         'card_payment_provider_answered_but_not_recorded',
       );
+    });
+  });
+
+  describe('GOS-149 — saveCard: true (Mercado Pago vault, best-effort)', () => {
+    it('on an APPROVED charge, ensures the Mercado Pago customer, associates the token and re-syncs the FULL vault', async () => {
+      const m = makeService();
+
+      await m.service.payEngagementWithCard('user-1', {
+        ...INPUT,
+        saveCard: true,
+      });
+
+      expect(m.ensure).toHaveBeenCalledWith(
+        { id: 'profile-1', firstName: 'Ada', lastName: 'Lovelace' },
+        'user-1',
+        'CO',
+      );
+      expect(m.associateCard).toHaveBeenCalledWith('cus_mp', CARD_TOKEN, 'CO');
+      expect(m.listSavedCards).toHaveBeenCalledWith('cus_mp', 'CO');
+      expect(m.syncCards).toHaveBeenCalledWith(
+        'profile-1',
+        PaymentMethod.MERCADOPAGO,
+        'sandbox',
+        [],
+      );
+    });
+
+    it('does nothing when the saved-cards switch is OFF — an outdated/misbehaving client sending saveCard: true must not create a customer or associate a card while the admin has the feature off', async () => {
+      const m = makeService({ savedCardsEnabled: false });
+
+      const result = await m.service.payEngagementWithCard('user-1', {
+        ...INPUT,
+        saveCard: true,
+      });
+
+      expect(result.status).toBe(PaymentAttemptStatus.APPROVED);
+      expect(m.ensure).not.toHaveBeenCalled();
+      expect(m.associateCard).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when saveCard is not requested', async () => {
+      const m = makeService();
+
+      await m.service.payEngagementWithCard('user-1', INPUT);
+
+      expect(m.ensure).not.toHaveBeenCalled();
+      expect(m.associateCard).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the charge does not APPROVE, even if saveCard was requested', async () => {
+      const m = makeService({
+        chargeCard: jest
+          .fn()
+          .mockResolvedValue({ providerPaymentId: 'ORD_2', status: 'pending' }),
+        apply: jest
+          .fn()
+          .mockResolvedValue(makeAttempt({ providerPaymentId: 'ORD_2' })),
+      });
+
+      await m.service.payEngagementWithCard('user-1', {
+        ...INPUT,
+        saveCard: true,
+      });
+
+      expect(m.ensure).not.toHaveBeenCalled();
+      expect(m.associateCard).not.toHaveBeenCalled();
+    });
+
+    it('the payment still approves even if associating the card fails — a save failure must never affect the charge that already succeeded', async () => {
+      const m = makeService({
+        associateCard: jest.fn().mockRejectedValue(new Error('mp down')),
+      });
+
+      const result = await m.service.payEngagementWithCard('user-1', {
+        ...INPUT,
+        saveCard: true,
+      });
+
+      expect(result.status).toBe(PaymentAttemptStatus.APPROVED);
+    });
+
+    it('the payment still approves even if the Customer profile cannot be found for the save step', async () => {
+      const m = makeService({ profile: null });
+
+      const result = await m.service.payEngagementWithCard('user-1', {
+        ...INPUT,
+        saveCard: true,
+      });
+
+      expect(result.status).toBe(PaymentAttemptStatus.APPROVED);
+      expect(m.ensure).not.toHaveBeenCalled();
     });
   });
 

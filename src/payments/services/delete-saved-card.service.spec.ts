@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { PaymentMethod } from '@prisma/client';
+import { CountryCode, PaymentMethod } from '@prisma/client';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { PaymentProviderRegistry } from '../payment-provider.registry';
 import {
@@ -15,6 +15,11 @@ const CARD = {
   method: PaymentMethod.RAPYD,
   environment: 'sandbox',
   providerCardId: 'card_1',
+};
+
+const MERCADOPAGO_CARD = {
+  ...CARD,
+  method: PaymentMethod.MERCADOPAGO,
 };
 
 describe('DeleteSavedCardService', () => {
@@ -38,7 +43,7 @@ describe('DeleteSavedCardService', () => {
         .fn()
         .mockResolvedValue(
           options?.profile === undefined
-            ? { id: 'profile-1' }
+            ? { id: 'profile-1', country: CountryCode.AR }
             : options.profile,
         ),
     } as unknown as ProfilesRepository;
@@ -86,11 +91,29 @@ describe('DeleteSavedCardService', () => {
     await m.service.deleteSavedCard('user-1', 'saved-1');
 
     expect(m.findCardOfCustomer).toHaveBeenCalledWith('saved-1', 'profile-1');
-    expect(m.deleteSavedCard).toHaveBeenCalledWith('cus_1', 'card_1');
+    // Rapyd: no `country` — Rapyd's one credential set serves every country.
+    expect(m.deleteSavedCard).toHaveBeenCalledWith(
+      'cus_1',
+      'card_1',
+      undefined,
+    );
     expect(m.deleteCard).toHaveBeenCalledWith('saved-1');
     expect(m.deleteSavedCard.mock.invocationCallOrder[0]).toBeLessThan(
       m.deleteCard.mock.invocationCallOrder[0],
     );
+  });
+
+  it("GOS-149 — erases a Mercado Pago card the same way, threading the profile's country into the provider calls", async () => {
+    const m = makeService({ card: MERCADOPAGO_CARD });
+
+    await m.service.deleteSavedCard('user-1', 'saved-1');
+
+    expect(m.deleteSavedCard).toHaveBeenCalledWith(
+      'cus_1',
+      'card_1',
+      CountryCode.AR,
+    );
+    expect(m.deleteCard).toHaveBeenCalledWith('saved-1');
   });
 
   it("a card that does not exist or is not the caller's is SAVED_CARD_NOT_FOUND (indistinguishable) and nothing is touched", async () => {

@@ -1443,6 +1443,19 @@ model PaymentAttempt {
 
   providerPaymentId  String?
   providerCheckoutId String?
+  // GOS-149 — set ONLY by the saved-card-charge creation path
+  // (PayEngagementWithSavedCardService), for EVERY provider that supports
+  // saved cards (Rapyd included). Disambiguates
+  // `ReadAttemptProviderStateService`'s dispatch: an attempt with a
+  // `providerPaymentId` and no `providerCheckoutId` can be a saved-card
+  // charge OR a normal card/wallet charge for a provider (Mercado Pago,
+  // GOS-149) that has BOTH capabilities — the provider's own capability set
+  // alone is no longer enough to tell them apart (it used to be, for Rapyd,
+  // only by coincidence: Rapyd's ONLY non-checkout charging path IS the
+  // saved-card one). `onDelete: SetNull` — erasing a saved card must never
+  // delete the historical record of a payment it once made.
+  savedCardId        String?           @db.Uuid
+  savedCard          SavedPaymentCard? @relation(fields: [savedCardId], references: [id], onDelete: SetNull)
   amount             Int
   currency           String
   installments       Int     @default(1)
@@ -1463,6 +1476,7 @@ model PaymentAttempt {
   @@index([engagementId])
   @@index([providerPaymentId])
   @@index([providerCheckoutId])
+  @@index([savedCardId])
 }
 
 // GOS-146 — the payment provider's own CUSTOMER record for a GoService
@@ -1514,6 +1528,10 @@ model SavedPaymentCard {
   expirationYear    Int?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
+
+  // GOS-149 — the payments made by charging this saved card. See
+  // `PaymentAttempt.savedCardId`'s own comment.
+  paymentAttempts PaymentAttempt[]
 
   @@unique([method, environment, providerCardId])
   @@index([customerProfileId])

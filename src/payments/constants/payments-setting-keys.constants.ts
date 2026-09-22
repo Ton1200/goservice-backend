@@ -165,6 +165,13 @@ export const PAYMENT_METHOD_SETTING_KEYS = {
   mercadoPagoCard: {
     enabled: 'payments.payment-methods.mercadopago.card.enabled',
     displayName: 'payments.payment-methods.mercadopago.card.display-name',
+    // GOS-149 — the "saved cards" feature OF the Mercado Pago card method.
+    // Global, like `enabled` — the switch is global even though Mercado
+    // Pago's credentials are per-country (see this file's own header
+    // comment). Only effective while `enabled` is ON too; independent of
+    // Rapyd's own `savedCardsEnabled` below.
+    savedCardsEnabled:
+      'payments.payment-methods.mercadopago.card.saved-cards-enabled',
   },
   mercadoPagoWallet: {
     enabled: 'payments.payment-methods.mercadopago.wallet.enabled',
