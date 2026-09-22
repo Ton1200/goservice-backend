@@ -73,4 +73,9 @@ export const KNOWN_PLATFORM_CONFIG_BOOLEAN_DEFAULTS: ReadonlyArray<KnownPlatform
     // entire gate, and no per-country signal exists for `platformConfig` to
     // expose anymore.
     { key: 'identity.enabled', defaultValue: false },
+    // GOS-153 — Maps & Discovery. `maps.enabled` is ALSO seeded
+    // (`prisma/seed.ts`, `false` by default) — listed here too for the same
+    // defensive "renders correctly even before the seed has run" reason
+    // `identity.enabled` is above.
+    { key: 'maps.enabled', defaultValue: false },
   ];
