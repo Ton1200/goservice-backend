@@ -437,11 +437,11 @@ describe('GraphQL Card Payment (GOS-85, e2e)', () => {
     await cleanPlatformSettingsData(
       prisma,
       CARD_PAYMENT_TEST_SETTING_KEYS.filter(
-        (key) => key !== 'payments.payment-methods.card.enabled',
+        (key) => key !== 'payments.payment-methods.mercadopago.card.enabled',
       ),
     );
     await prisma.platformSetting.updateMany({
-      where: { key: 'payments.payment-methods.card.enabled' },
+      where: { key: 'payments.payment-methods.mercadopago.card.enabled' },
       data: { value: 'false' },
     });
     // RESTORE the commission percentage. The "misconfigured commission" test
@@ -1415,7 +1415,9 @@ describe('GraphQL Card Payment (GOS-85, e2e)', () => {
 
     it('FAILS CLOSED (401) when no webhook secret is configured, even for a "valid-looking" signature', async () => {
       await prisma.platformSetting.deleteMany({
-        where: { key: 'payments.mercadopago.ar.webhook-secret' },
+        where: {
+          key: 'payments.payment-methods.mercadopago.ar.webhook-secret',
+        },
       });
 
       await sendWebhook('ORD_E2E_1').expect(401);
@@ -1443,7 +1445,7 @@ describe('GraphQL Card Payment (GOS-85, e2e)', () => {
   });
 
   describe('guards and preconditions', () => {
-    it('with payments.payment-methods.card.enabled = false: rejected with CARD_PAYMENT_MODULE_DISABLED, nothing created, provider never called', async () => {
+    it('with payments.payment-methods.mercadopago.card.enabled = false: rejected with CARD_PAYMENT_MODULE_DISABLED, nothing created, provider never called', async () => {
       const seeded = await seedInProgressEngagement();
       await enableTestCardPayments(app, prisma, { cardEnabled: false });
 
@@ -1559,8 +1561,11 @@ describe('GraphQL Card Payment (GOS-85, e2e)', () => {
     });
 
     it.each([
-      ['no access token', 'payments.mercadopago.ar.access-token'],
-      ['no environment', 'payments.mercadopago.ar.environment'],
+      [
+        'no access token',
+        'payments.payment-methods.mercadopago.ar.access-token',
+      ],
+      ['no environment', 'payments.payment-methods.mercadopago.ar.environment'],
     ])(
       'with %s configured: fails closed with PAYMENT_PROVIDER_MISCONFIGURED, sends nothing, and does NOT leave a blocking PENDING attempt',
       async (_label, key) => {

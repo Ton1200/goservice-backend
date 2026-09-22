@@ -324,6 +324,11 @@ model CustomerProfile {
   // CustomerProfile may send Engagement Chat messages as one of the two
   // parties on an Engagement.
   sentEngagementChatMessages  EngagementChatMessage[]
+  // GOS-146 — purely additive back-references, no new column here: this
+  // Customer's payment-provider customer records and saved cards (see
+  // `PaymentProviderCustomer` / `SavedPaymentCard`).
+  paymentProviderCustomers    PaymentProviderCustomer[]
+  savedPaymentCards           SavedPaymentCard[]
   // GOS-59 — purely additive back-reference, no new column here. A
   // CustomerProfile may be the proposing party on an Appointment.
   proposedAppointments        Appointment[]
@@ -757,16 +762,18 @@ model QuotePriceProposal {
 }
 
 // Which payment METHOD (who collects the money) an Engagement is/was using —
-// GOS-87 (`CASH`) and GOS-85 (`MERCADOPAGO`). The one enum shared by
-// `Engagement.paymentMethod` and `PaymentAttempt.method`. HOW it was paid
-// inside a method (credit card, debit card, account money…) is
+// GOS-87 (`CASH`), GOS-85 (`MERCADOPAGO`) and GOS-146 (`RAPYD`). The one enum
+// shared by `Engagement.paymentMethod` and `PaymentAttempt.method`. HOW it was
+// paid inside a method (credit card, debit card, account money…) is
 // `PaymentAttemptType`. `MERCADOPAGO` replaced the reserved value `CARD`
 // (2026-09-18): a wallet payment made with Mercado Pago account money is not a
 // card, and a future second provider needs its own value, so the method names
-// the collector, not the instrument. A new provider = a new value here.
+// the collector, not the instrument. A new provider = a new value here (plus
+// one adapter registered in `PaymentProviderRegistry`).
 enum PaymentMethod {
   CASH
   MERCADOPAGO
+  RAPYD
 }
 
 // GOS-111 — the Engagement work-execution state machine (épico GOS-100
@@ -1369,7 +1376,17 @@ enum PaymentAttemptType {
 // (`PAY…`), because the asynchronous notification identifies the resource
 // by `data.id` = the order id. Null until the provider has answered at least
 // once (it stays null if the create call itself timed out with an unknown
-// outcome).
+// outcome). For Rapyd (GOS-146) it is the PAYMENT id (`payment_…`), and it is
+// only known once a payment exists inside the checkout.
+//
+// GOS-146 — `providerCheckoutId` is the provider's id for the CHECKOUT, which
+// Rapyd creates BEFORE any payment exists (the server creates the checkout,
+// the Customer completes it in the embedded widget). It is what lets an
+// attempt be re-read, resumed (the SAME checkout is returned on a restart) or
+// abandoned while it has no `providerPaymentId` yet. Null for Mercado Pago
+// and cash. A Rapyd attempt's `installments` is always 1, and its `type` is
+// CREDIT_CARD/DEBIT_CARD once the payment reports it (null when it does not —
+// same criterion as a wallet payment).
 //
 // `amount`/`currency` are a frozen copy of what was charged (major-unit
 // `Int`, same convention as `LedgerEntry.amount`) — never re-derived later,
@@ -1424,11 +1441,12 @@ model PaymentAttempt {
   customerConfirmedAt     DateTime?
   professionalConfirmedAt DateTime?
 
-  providerPaymentId String?
-  amount            Int
-  currency          String
-  installments      Int                      @default(1)
-  rejectionReason   String?
+  providerPaymentId  String?
+  providerCheckoutId String?
+  amount             Int
+  currency           String
+  installments       Int     @default(1)
+  rejectionReason    String?
 
   paymentTypeId      String?
   cardBrand          String?
@@ -1444,6 +1462,61 @@ model PaymentAttempt {
 
   @@index([engagementId])
   @@index([providerPaymentId])
+  @@index([providerCheckoutId])
+}
+
+// GOS-146 — the payment provider's own CUSTOMER record for a GoService
+// Customer (Rapyd: a `cus_…` id), needed to link a checkout to a person so a
+// card can be saved and reused. One row per (Customer, provider, environment):
+// a provider customer id only exists inside ONE environment (a sandbox
+// `cus_…` means nothing in production), so switching
+// `payments.rapyd.environment` must never reuse an id from the other one —
+// the environment is part of the key, and a lookup for the current environment
+// simply finds nothing (a fresh customer is created). Owned by `src/payments/`
+// (a table, not a column on `CustomerProfile`, so the profiles module stays
+// untouched and a future second provider adds rows, not columns).
+model PaymentProviderCustomer {
+  id                 String          @id @default(uuid()) @db.Uuid
+  customerProfileId  String          @db.Uuid
+  customerProfile    CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  method             PaymentMethod
+  // `sandbox` | `production` — the provider environment this id lives in.
+  environment        String
+  providerCustomerId String
+  createdAt          DateTime        @default(now())
+
+  @@unique([customerProfileId, method, environment])
+}
+
+// GOS-146 — a card a Customer chose to save for future payments (Rapyd Card
+// on File). ONLY non-sensitive facts are stored, exactly what a receipt or a
+// card picker shows: brand, last four, credit/debit, expiry — never the card
+// number, CVV, name on card or anything that could be used to pay; the
+// reusable secret is the provider's own token (`providerCardId`, a Rapyd
+// `card_…`), which is only usable together with the provider's credentials and
+// the Customer's provider customer id. The provider's vault is the source of
+// truth: `mySavedCards` re-syncs this table from it. `environment` — see
+// `PaymentProviderCustomer`. `onDelete: Cascade` toward the profile only
+// removes THIS row: erasing the token at the provider is `deleteSavedCard`'s
+// job and must happen first when an account is deleted.
+model SavedPaymentCard {
+  id                String              @id @default(uuid()) @db.Uuid
+  customerProfileId String              @db.Uuid
+  customerProfile   CustomerProfile     @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  method            PaymentMethod
+  environment       String
+  providerCardId    String
+  brand             String?
+  lastFour          String?
+  // CREDIT_CARD | DEBIT_CARD when the provider reports it, else null.
+  type              PaymentAttemptType?
+  expirationMonth   Int?
+  expirationYear    Int?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([method, environment, providerCardId])
+  @@index([customerProfileId])
 }
 
 // GOS-109 — the first real, append-only financial ledger row, unblocked by

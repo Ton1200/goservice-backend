@@ -11,6 +11,7 @@ import { CURRENCY_BY_COUNTRY } from '../../ledger/constants/country-currency.con
 import { UsersRepository } from '../../users/users.repository';
 import { CardPaymentAccessService } from '../card-payment-access.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
+import { PaymentProviderRegistry } from '../payment-provider.registry';
 import { engagementNotPayableByWallet } from '../errors/engagement-not-payable-by-wallet.error';
 import { paymentMethodConflict } from '../errors/payment-method-conflict.error';
 import { paymentProviderMisconfigured } from '../errors/payment-provider-misconfigured.error';
@@ -18,7 +19,6 @@ import { paymentProviderUnavailable } from '../errors/payment-provider-unavailab
 import { walletPaymentAlreadyInProgress } from '../errors/wallet-payment-already-in-progress.error';
 import {
   PaymentProviderNotConfiguredError,
-  PaymentProviderPort,
   PaymentProviderUnavailableError,
 } from '../ports/payment-provider.port';
 import { ApplyPaymentResultService } from './apply-payment-result.service';
@@ -77,7 +77,7 @@ export class StartEngagementWalletPaymentService {
     private readonly engagementsRepository: EngagementsRepository,
     private readonly usersRepository: UsersRepository,
     private readonly paymentAttemptRepository: PaymentAttemptRepository,
-    private readonly paymentProvider: PaymentProviderPort,
+    private readonly paymentProviderRegistry: PaymentProviderRegistry,
     private readonly applyPaymentResultService: ApplyPaymentResultService,
   ) {}
 
@@ -121,10 +121,17 @@ export class StartEngagementWalletPaymentService {
       throw engagementNotFound(); // the session's user vanished — same fold
     }
 
+    // Resolved BEFORE the attempt is inserted: a registry wiring error must
+    // never leave a PENDING attempt behind.
+    const provider = this.paymentProviderRegistry.walletRedirect(
+      PaymentMethod.MERCADOPAGO,
+    );
+
     let attempt: PaymentAttempt;
     try {
       attempt = await this.paymentAttemptRepository.createPending({
         engagementId: engagement.id,
+        method: PaymentMethod.MERCADOPAGO,
         amount,
         currency,
         // A wallet payment has no instalments concept of its own here — the
@@ -153,7 +160,7 @@ export class StartEngagementWalletPaymentService {
     }
 
     try {
-      const preference = await this.paymentProvider.createWalletPreference({
+      const preference = await provider.createWalletPreference({
         amount,
         currency,
         country: billingContext.customerProfile.country,

@@ -259,19 +259,22 @@ describe('ConfirmCashPaymentService', () => {
     expect(recordCommissionDebt).not.toHaveBeenCalled();
   });
 
-  it('rejects with PAYMENT_METHOD_CONFLICT when the Engagement already picked MERCADOPAGO', async () => {
-    const { service, $transaction } = makeService({
-      resolvedEngagement: {
-        ...engagement,
-        paymentMethod: PaymentMethod.MERCADOPAGO,
-      },
-    });
+  it.each([[PaymentMethod.MERCADOPAGO], [PaymentMethod.RAPYD]])(
+    'rejects with PAYMENT_METHOD_CONFLICT when the Engagement already picked %s (GOS-146: any digital provider, not just Mercado Pago)',
+    async (paymentMethod) => {
+      const { service, $transaction } = makeService({
+        resolvedEngagement: {
+          ...engagement,
+          paymentMethod,
+        },
+      });
 
-    await expect(
-      service.confirmCashPayment('user-1', 'engagement-1'),
-    ).rejects.toMatchObject({ code: 'PAYMENT_METHOD_CONFLICT' });
-    expect($transaction).not.toHaveBeenCalled();
-  });
+      await expect(
+        service.confirmCashPayment('user-1', 'engagement-1'),
+      ).rejects.toMatchObject({ code: 'PAYMENT_METHOD_CONFLICT' });
+      expect($transaction).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects with PAYMENT_METHOD_CONFLICT when a digital attempt wins the active slot mid-race (upsertCashConfirmation returns null)', async () => {
     const { service } = makeService({ attemptRow: null });

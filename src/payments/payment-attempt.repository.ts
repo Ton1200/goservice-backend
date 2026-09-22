@@ -53,6 +53,8 @@ export class PaymentAttemptRepository {
    */
   createPending(data: {
     engagementId: string;
+    /** GOS-146 — which provider collects (`MERCADOPAGO` | `RAPYD`); never `CASH` (see `upsertCashConfirmation`). */
+    method: PaymentMethod;
     amount: number;
     currency: string;
     installments: number;
@@ -60,7 +62,6 @@ export class PaymentAttemptRepository {
     return this.prisma.paymentAttempt.create({
       data: {
         ...data,
-        method: PaymentMethod.MERCADOPAGO,
         status: PaymentAttemptStatus.PENDING,
       },
     });
@@ -202,12 +203,19 @@ export class PaymentAttemptRepository {
     return this.prisma.paymentAttempt.findUnique({ where: { id } });
   }
 
-  /** The attempt a provider notification refers to, by the provider's own id. */
+  /**
+   * The attempt a provider notification refers to, by the provider's own id.
+   * GOS-146: also filtered by `method` — two providers' ids live in the same
+   * column, so an id is only meaningful together with the provider that
+   * issued it; a notification for provider A must never adopt provider B's
+   * attempt because the two happened to share an id.
+   */
   findByProviderPaymentId(
     providerPaymentId: string,
+    method: PaymentMethod,
   ): Promise<PaymentAttempt | null> {
     return this.prisma.paymentAttempt.findFirst({
-      where: { providerPaymentId },
+      where: { providerPaymentId, method },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -217,16 +225,65 @@ export class PaymentAttemptRepository {
    * lost-response case (the create call timed out with an unknown outcome, so
    * the id was never recorded). The provider echoes `external_reference` =
    * `Engagement.id`, which is how a notification finds this attempt anyway.
+   * GOS-146: `method`, when given, restricts it to that provider's attempts.
    */
   findPendingWithoutProviderIdByEngagementId(
     engagementId: string,
+    method?: PaymentMethod,
   ): Promise<PaymentAttempt | null> {
     return this.prisma.paymentAttempt.findFirst({
       where: {
         engagementId,
         status: PaymentAttemptStatus.PENDING,
         providerPaymentId: null,
+        ...(method ? { method } : {}),
       },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * GOS-146 — records the provider's CHECKOUT id on a STILL-PENDING attempt
+   * (Rapyd creates the checkout BEFORE any payment exists). No-op once
+   * resolved, and never overwrites an id that is already there.
+   */
+  attachProviderCheckoutIdIfPending(
+    id: string,
+    providerCheckoutId: string,
+  ): Promise<{ count: number }> {
+    return this.prisma.paymentAttempt.updateMany({
+      where: {
+        id,
+        status: PaymentAttemptStatus.PENDING,
+        providerCheckoutId: null,
+      },
+      data: { providerCheckoutId },
+    });
+  }
+
+  /** GOS-146 — the attempt a checkout-level notification refers to. */
+  findByProviderCheckoutId(
+    providerCheckoutId: string,
+    method: PaymentMethod,
+  ): Promise<PaymentAttempt | null> {
+    return this.prisma.paymentAttempt.findFirst({
+      where: { providerCheckoutId, method },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * GOS-146 — the Engagement's still-PENDING attempt of ONE provider —
+   * `null` if none. The fallback correlation for a notification whose payment
+   * id/checkout id matched nothing: the provider echoes the merchant
+   * reference (`Engagement.id`).
+   */
+  findPendingByEngagementIdAndMethod(
+    engagementId: string,
+    method: PaymentMethod,
+  ): Promise<PaymentAttempt | null> {
+    return this.prisma.paymentAttempt.findFirst({
+      where: { engagementId, method, status: PaymentAttemptStatus.PENDING },
       orderBy: { createdAt: 'desc' },
     });
   }

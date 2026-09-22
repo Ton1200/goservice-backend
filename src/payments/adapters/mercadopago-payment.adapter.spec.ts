@@ -13,12 +13,13 @@ import { MercadoPagoPaymentAdapter } from './mercadopago-payment.adapter';
 // GOS-142 — global (not per-country) wallet checkout config keys, see
 // `mercadoPagoWalletCheckoutSettingKeys`'s own comment.
 const WALLET_CHECKOUT_SETTINGS = {
-  'payments.mercadopago.public-base-url': 'https://api.goservice.example',
-  'payments.mercadopago.wallet.back-url-success':
+  'payments.general-settings.callbacks.public-base-url':
+    'https://api.goservice.example',
+  'payments.payment-methods.mercadopago.wallet.back-url-success':
     'https://app.goservice.example/payments/success',
-  'payments.mercadopago.wallet.back-url-pending':
+  'payments.payment-methods.mercadopago.wallet.back-url-pending':
     'https://app.goservice.example/payments/pending',
-  'payments.mercadopago.wallet.back-url-failure':
+  'payments.payment-methods.mercadopago.wallet.back-url-failure':
     'https://app.goservice.example/payments/failure',
 };
 
@@ -104,8 +105,8 @@ describe('MercadoPagoPaymentAdapter', () => {
 
   function makeAdapter(settings?: Record<string, string | null>) {
     const values: Record<string, string | null> = {
-      'payments.mercadopago.co.access-token': FAKE_ACCESS_TOKEN,
-      'payments.mercadopago.co.environment': 'sandbox',
+      'payments.payment-methods.mercadopago.co.access-token': FAKE_ACCESS_TOKEN,
+      'payments.payment-methods.mercadopago.co.environment': 'sandbox',
       ...settings,
     };
     const getValue = jest.fn((key: string) =>
@@ -440,13 +441,19 @@ describe('MercadoPagoPaymentAdapter', () => {
     it.each([
       [
         'access token missing',
-        { 'payments.mercadopago.co.access-token': null },
+        { 'payments.payment-methods.mercadopago.co.access-token': null },
       ],
-      ['access token blank', { 'payments.mercadopago.co.access-token': '   ' }],
-      ['environment missing', { 'payments.mercadopago.co.environment': null }],
+      [
+        'access token blank',
+        { 'payments.payment-methods.mercadopago.co.access-token': '   ' },
+      ],
+      [
+        'environment missing',
+        { 'payments.payment-methods.mercadopago.co.environment': null },
+      ],
       [
         'environment invalid',
-        { 'payments.mercadopago.co.environment': 'staging' },
+        { 'payments.payment-methods.mercadopago.co.environment': 'staging' },
       ],
     ])(
       'fails closed BEFORE any HTTP call when configuration is bad: %s',
@@ -470,7 +477,8 @@ describe('MercadoPagoPaymentAdapter', () => {
       await adapter.chargeCard(COMMAND);
 
       const tokenReads = getValue.mock.calls.filter(
-        ([key]) => key === 'payments.mercadopago.co.access-token',
+        ([key]) =>
+          key === 'payments.payment-methods.mercadopago.co.access-token',
       );
       expect(tokenReads).toHaveLength(2);
     });
@@ -1094,7 +1102,7 @@ describe('MercadoPagoPaymentAdapter', () => {
       );
       const { adapter } = makeAdapter({
         ...WALLET_CHECKOUT_SETTINGS,
-        'payments.mercadopago.co.environment': 'production',
+        'payments.payment-methods.mercadopago.co.environment': 'production',
       });
 
       await expect(
@@ -1111,7 +1119,7 @@ describe('MercadoPagoPaymentAdapter', () => {
       );
       const { adapter } = makeAdapter({
         ...WALLET_CHECKOUT_SETTINGS,
-        'payments.mercadopago.public-base-url':
+        'payments.general-settings.callbacks.public-base-url':
           'https://api.goservice.example/', // trailing slash tolerated
       });
 
@@ -1128,19 +1136,25 @@ describe('MercadoPagoPaymentAdapter', () => {
     it.each([
       [
         'public base URL missing',
-        { 'payments.mercadopago.public-base-url': null },
+        { 'payments.general-settings.callbacks.public-base-url': null },
       ],
       [
         'success back URL missing',
-        { 'payments.mercadopago.wallet.back-url-success': null },
+        {
+          'payments.payment-methods.mercadopago.wallet.back-url-success': null,
+        },
       ],
       [
         'pending back URL blank',
-        { 'payments.mercadopago.wallet.back-url-pending': '   ' },
+        {
+          'payments.payment-methods.mercadopago.wallet.back-url-pending': '   ',
+        },
       ],
       [
         'failure back URL missing',
-        { 'payments.mercadopago.wallet.back-url-failure': null },
+        {
+          'payments.payment-methods.mercadopago.wallet.back-url-failure': null,
+        },
       ],
     ])(
       'fails closed BEFORE any HTTP call when wallet checkout config is incomplete: %s',
@@ -1205,7 +1219,7 @@ describe('MercadoPagoPaymentAdapter — empty/garbled 2xx bodies', () => {
     return new MercadoPagoPaymentAdapter({
       getValue: (key: string) =>
         Promise.resolve(
-          key === 'payments.mercadopago.co.environment'
+          key === 'payments.payment-methods.mercadopago.co.environment'
             ? 'sandbox'
             : 'APP_USR-x',
         ),

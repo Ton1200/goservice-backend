@@ -10,9 +10,9 @@ import { EngagementsRepository } from '../../engagements/engagements.repository'
 import { UsersRepository } from '../../users/users.repository';
 import { CardPaymentAccessService } from '../card-payment-access.service';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
+import { makeRegistryFixture } from '../payment-provider-registry.fixtures';
 import {
   PaymentProviderNotConfiguredError,
-  PaymentProviderPort,
   PaymentProviderUnavailableError,
 } from '../ports/payment-provider.port';
 import { ApplyPaymentResultService } from './apply-payment-result.service';
@@ -119,7 +119,7 @@ describe('StartEngagementWalletPaymentService', () => {
       });
     const paymentProvider = {
       createWalletPreference,
-    } as unknown as PaymentProviderPort;
+    };
 
     const apply =
       options?.apply ??
@@ -135,7 +135,7 @@ describe('StartEngagementWalletPaymentService', () => {
       engagementsRepository,
       usersRepository,
       paymentAttemptRepository,
-      paymentProvider,
+      makeRegistryFixture(paymentProvider),
       applyService,
     );
     return {
@@ -159,6 +159,7 @@ describe('StartEngagementWalletPaymentService', () => {
 
       expect(m.createPending).toHaveBeenCalledWith({
         engagementId: 'engagement-1',
+        method: PaymentMethod.MERCADOPAGO,
         amount: 50000,
         currency: 'COP',
         installments: 1,

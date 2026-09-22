@@ -448,7 +448,7 @@ const PLATFORM_SETTINGS: {
   // (`CashPaymentModuleEnabledGuard`) regardless of what the client shows.
   //
   // Nested under a `payment-methods` group (2026-09-14 follow-up,
-  // human-requested) — a sibling slot for a future `payments.payment-methods.card.*`
+  // human-requested) — a sibling slot for a future `payments.payment-methods.mercadopago.card.*`
   // (GOS-79) to join without piling up flat next to Commission. RENAMED
   // from the flatter `payments.cash.enabled` — the existing row was renamed
   // in place (same id/value), never re-seeded as a duplicate.
@@ -498,7 +498,7 @@ const PLATFORM_SETTINGS: {
   // configured it could not work anyway. `isPublic: false` — a
   // backend/admin-only gate, same as every other capability flag.
   {
-    key: 'payments.payment-methods.card.enabled',
+    key: 'payments.payment-methods.mercadopago.card.enabled',
     description:
       'Global kill switch for the Card Payment capability (payEngagementWithCard). Off until the real card flow is certified.',
     value: 'false',
@@ -506,17 +506,17 @@ const PLATFORM_SETTINGS: {
   },
   // GOS-142 — the GLOBAL kill switch for wallet (redirect-to-Mercado-Pago-
   // account) payments (`startEngagementWalletPayment` only). `value: 'false'`
-  // (default OFF), same reasoning as `payments.payment-methods.card.enabled`
+  // (default OFF), same reasoning as `payments.payment-methods.mercadopago.card.enabled`
   // above: `PlatformSettingPort.isEnabled` is FAIL-OPEN for a missing row, so
   // "off until certified" only holds because this row is seeded explicitly.
   // Off by default because the wallet flow's redirect/webhook circle has
   // never been completed live (no public HTTPS URL exists in any environment
-  // yet — see `payments.mercadopago.public-base-url` and the
-  // `payments.mercadopago.wallet.back-url-*` keys, deliberately NOT seeded
+  // yet — see `payments.general-settings.callbacks.public-base-url` and the
+  // `payments.payment-methods.mercadopago.wallet.back-url-*` keys, deliberately NOT seeded
   // with a real value, same precedent as the credential rows below).
   // `isPublic: false` — a backend/admin-only gate, same as Card's.
   {
-    key: 'payments.payment-methods.mercadopago-wallet.enabled',
+    key: 'payments.payment-methods.mercadopago.wallet.enabled',
     description:
       'Global kill switch for the Mercado Pago Wallet Payment capability (startEngagementWalletPayment). Off until a public HTTPS URL exists to receive the redirect/webhook.',
     value: 'false',
@@ -532,24 +532,115 @@ const PLATFORM_SETTINGS: {
   // tells sandbox from production by the CREDENTIAL used, not by the host —
   // so this value is a deliberate, admin-visible statement of intent (and is
   // logged on every charge), not something that switches an endpoint. The
-  // other 3 `payments.mercadopago.<country>.*` keys per country
+  // other 3 `payments.payment-methods.mercadopago.<country>.*` keys per country
   // (`access-token`, `webhook-secret` — encrypted; `public-key` — plain,
   // meant to be `isPublic` so the mobile card form can read the RIGHT
   // country's key via `platformConfig`) are real credentials and are NOT
   // seeded, same precedent as the `identity.didit.*` credentials — they are
   // set from the admin panel (`KNOWN_SETTING_SLOTS`).
   {
-    key: 'payments.mercadopago.co.environment',
+    key: 'payments.payment-methods.mercadopago.co.environment',
     description:
       'Which Mercado Pago credential set is in use for Colombia: sandbox or production.',
     value: 'sandbox',
     isPublic: false,
   },
   {
-    key: 'payments.mercadopago.ar.environment',
+    key: 'payments.payment-methods.mercadopago.ar.environment',
     description:
       'Which Mercado Pago credential set is in use for Argentina: sandbox or production.',
     value: 'sandbox',
+    isPublic: false,
+  },
+  // GOS-146 — Rapyd, the SECOND card provider (embedded Checkout Toolkit, no
+  // redirect). Selectable independently of Mercado Pago: each provider has its
+  // own kill switch and its own per-country credentials, so GoService can
+  // operate with one, the other, or both.
+  //
+  // The GLOBAL kill switch for Rapyd (`startEngagementRapydCheckout` only).
+  // `value: 'false'` (default OFF), same reasoning as
+  // `payments.payment-methods.mercadopago.card.enabled`: `PlatformSettingPort.isEnabled` is
+  // FAIL-OPEN for a missing row, so "off until configured/certified" only holds
+  // because this row is seeded explicitly. Deliberately NOT a reinterpretation
+  // of `payments.payment-methods.mercadopago.card.enabled` — that key keeps governing ONLY
+  // Mercado Pago's card flow. `isPublic: false` — a backend/admin-only gate.
+  {
+    key: 'payments.payment-methods.rapyd.enabled',
+    description:
+      'Global kill switch for the Rapyd card payment capability (startEngagementRapydCheckout). Independent of the Mercado Pago switches. Off until Rapyd credentials are configured and the flow is certified.',
+    value: 'false',
+    isPublic: false,
+  },
+  // The SAVED-CARDS feature of the Rapyd method (GOS-146): a Rapyd customer per
+  // GoService Customer, the "save card" box in the widget, `mySavedCards`,
+  // `payEngagementWithSavedCard`. A feature OF Rapyd, not a second method: it
+  // only takes effect while `payments.payment-methods.rapyd.enabled` is ON too.
+  // `value: 'false'` for the same fail-open reason as the flags above.
+  {
+    key: 'payments.payment-methods.rapyd.saved-cards-enabled',
+    description:
+      'Switch for the saved-cards feature of the Rapyd payment method (save a card in the widget, list saved cards, pay with a saved card in one tap). Only effective while payments.payment-methods.rapyd.enabled is ON. Independent of the Mercado Pago switches. Off until certified with real cards.',
+    value: 'false',
+    isPublic: false,
+  },
+  // Customer-facing label for the Rapyd option in `availablePaymentMethods`,
+  // same idea/style as `payments.payment-methods.cash.display-name`. It is read
+  // by the backend and returned by that query, so it need not be `isPublic`.
+  {
+    key: 'payments.payment-methods.rapyd.display-name',
+    description:
+      'Customer-facing display name for the Rapyd payment option, returned by availablePaymentMethods (e.g. "Tarjeta").',
+    value: 'Tarjeta',
+    isPublic: false,
+  },
+  // Labels for Mercado Pago's two options in the same catalog (GOS-146 asked
+  // for a `displayName` per option and "nothing hardcoded"): the card flow
+  // (governed by `card.enabled`) and the wallet flow.
+  {
+    key: 'payments.payment-methods.mercadopago.card.display-name',
+    description:
+      'Customer-facing display name for the Mercado Pago card payment option, returned by availablePaymentMethods.',
+    value: 'Tarjeta de crédito o débito',
+    isPublic: false,
+  },
+  {
+    key: 'payments.payment-methods.mercadopago.wallet.display-name',
+    description:
+      'Customer-facing display name for the Mercado Pago wallet payment option, returned by availablePaymentMethods.',
+    value: 'Mercado Pago',
+    isPublic: false,
+  },
+  // Which Rapyd environment the (single) credential set belongs to. ONE Rapyd
+  // credential set serves EVERY country — verified live 2026-09-21: the same
+  // access/secret key created and completed a Colombia/COP AND an Argentina/ARS
+  // payment (a Rapyd account is multi-country, unlike a Mercado Pago one) — so
+  // there is one `environment`, not one per country (a key pair belongs to
+  // exactly one environment). Seeded `sandbox` (the safe default). UNLIKE
+  // Mercado Pago, Rapyd has a different API host and a different Checkout
+  // Toolkit script host per environment, so this value really does switch
+  // endpoints. `payments.payment-methods.rapyd.access-key` and `payments.payment-methods.rapyd.secret-key`
+  // (both ENCRYPTED) are real credentials and are NOT seeded — same precedent
+  // as `payments.payment-methods.mercadopago.*` and `identity.didit.*`; the human loads them
+  // from the admin panel (`KNOWN_SETTING_SLOTS`). The Rapyd webhook URL reuses
+  // the global `payments.general-settings.callbacks.public-base-url` (no second base URL).
+  {
+    key: 'payments.payment-methods.rapyd.environment',
+    description:
+      'Which Rapyd environment the credentials belong to (all countries): sandbox or production.',
+    value: 'sandbox',
+    isPublic: false,
+  },
+  // How long (minutes) a created Rapyd checkout stays payable. Rapyd cannot
+  // cancel a checkout, so a SHORT lifetime is what bounds the window in which a
+  // widget the Customer walked away from could still be paid after they
+  // abandoned the attempt. Rapyd's own default is 14 days. Invalid/missing →
+  // the parameter is omitted and Rapyd's default applies.
+  {
+    key: 'payments.payment-methods.rapyd.checkout-expiration-minutes',
+    description:
+      'Minutes a Rapyd checkout stays payable before it expires (1-20160). Short values limit how long an abandoned checkout can still be paid.',
+    value: '60',
+    valueType: 'NUMBER',
     isPublic: false,
   },
 ];

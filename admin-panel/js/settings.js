@@ -321,10 +321,12 @@ const KNOWN_SETTING_SLOTS = [
     valueType: 'STRING',
     isEncrypted: true,
   },
-  // GOS-85 — Mercado Pago (card payments). `payments.mercadopago.<country>.*`
-  // is a new group under the existing `payments` root, next to
-  // `payment-methods` and `general-settings`. `payments.payment-methods.card.enabled`
-  // and `payments.mercadopago.<country>.environment` are SEEDED by
+  // GOS-85 — Mercado Pago (card payments). `payments.payment-methods.mercadopago.<country>.*`
+  // lives inside the `payment-methods` group of the `payments` root (regrouped
+  // by method 2026-09-21: everything a method needs — switch, label, credentials,
+  // callbacks — sits under its own `payments.payment-methods.<method>` node; only
+  // platform-wide values stay in `general-settings`). `payments.payment-methods.mercadopago.card.enabled`
+  // and `payments.payment-methods.mercadopago.<country>.environment` are SEEDED by
   // `prisma/seed.ts`; the 3 credential rows per country below are real
   // credentials and are deliberately NOT seeded (same precedent as the
   // `identity.didit.*` credentials above) — they exist here so the fields
@@ -340,37 +342,37 @@ const KNOWN_SETTING_SLOTS = [
   // country gets its OWN 3-row credential set instead of one flat global
   // one. A future country is 3 more rows here, no other change to this file.
   {
-    key: 'payments.mercadopago.co.access-token',
+    key: 'payments.payment-methods.mercadopago.co.access-token',
     description: 'Mercado Pago access token for Colombia (server-side; the one credential that can move money).',
     valueType: 'STRING',
     isEncrypted: true,
   },
   {
-    key: 'payments.mercadopago.co.public-key',
+    key: 'payments.payment-methods.mercadopago.co.public-key',
     description: 'Mercado Pago public key for Colombia (used by the app to tokenize the card; not a secret).',
     valueType: 'STRING',
     isEncrypted: false,
   },
   {
-    key: 'payments.mercadopago.co.webhook-secret',
+    key: 'payments.payment-methods.mercadopago.co.webhook-secret',
     description: "Mercado Pago webhook secret for Colombia (verifies the x-signature of 'order' notifications sent to .../webhooks/mercadopago/orders/co).",
     valueType: 'STRING',
     isEncrypted: true,
   },
   {
-    key: 'payments.mercadopago.ar.access-token',
+    key: 'payments.payment-methods.mercadopago.ar.access-token',
     description: 'Mercado Pago access token for Argentina (server-side; the one credential that can move money).',
     valueType: 'STRING',
     isEncrypted: true,
   },
   {
-    key: 'payments.mercadopago.ar.public-key',
+    key: 'payments.payment-methods.mercadopago.ar.public-key',
     description: 'Mercado Pago public key for Argentina (used by the app to tokenize the card; not a secret).',
     valueType: 'STRING',
     isEncrypted: false,
   },
   {
-    key: 'payments.mercadopago.ar.webhook-secret',
+    key: 'payments.payment-methods.mercadopago.ar.webhook-secret',
     description: "Mercado Pago webhook secret for Argentina (verifies the x-signature of 'order' notifications sent to .../webhooks/mercadopago/orders/ar).",
     valueType: 'STRING',
     isEncrypted: true,
@@ -383,33 +385,60 @@ const KNOWN_SETTING_SLOTS = [
   // NOT seeded (no safe default — no public HTTPS URL exists until an admin
   // sets one up, e.g. via a local dev tunnel), so, same as the credential
   // rows above, this manifest is load-bearing for these fields to render at
-  // all pre-configuration. `payments.payment-methods.mercadopago-wallet.enabled`
+  // all pre-configuration. `payments.payment-methods.mercadopago.wallet.enabled`
   // itself is NOT listed here — it IS seeded (`'false'`, by `prisma/seed.ts`),
-  // same reasoning `payments.payment-methods.card.enabled` already
+  // same reasoning `payments.payment-methods.mercadopago.card.enabled` already
   // established for not needing a slot.
   {
-    key: 'payments.mercadopago.public-base-url',
+    key: 'payments.general-settings.callbacks.public-base-url',
     description: "This backend's own public HTTPS origin — e.g. a local dev tunnel URL. `notification_url` sent to Mercado Pago is derived from it as `<this>/webhooks/mercadopago/payments/<country>`.",
     valueType: 'STRING',
     isEncrypted: false,
   },
   {
-    key: 'payments.mercadopago.wallet.back-url-success',
+    key: 'payments.payment-methods.mercadopago.wallet.back-url-success',
     description: "Where Mercado Pago redirects the Customer's browser/app after a SUCCESSFUL wallet checkout.",
     valueType: 'STRING',
     isEncrypted: false,
   },
   {
-    key: 'payments.mercadopago.wallet.back-url-pending',
+    key: 'payments.payment-methods.mercadopago.wallet.back-url-pending',
     description: 'Where Mercado Pago redirects after a PENDING wallet checkout outcome.',
     valueType: 'STRING',
     isEncrypted: false,
   },
   {
-    key: 'payments.mercadopago.wallet.back-url-failure',
+    key: 'payments.payment-methods.mercadopago.wallet.back-url-failure',
     description: 'Where Mercado Pago redirects after a FAILED wallet checkout.',
     valueType: 'STRING',
     isEncrypted: false,
+  },
+  // GOS-146 — Rapyd (embedded Checkout Toolkit card payments), the second card
+  // provider. `payments.payment-methods.rapyd.enabled` / `.display-name` and
+  // `payments.payment-methods.rapyd.environment` (+ the checkout expiration) are SEEDED by
+  // `prisma/seed.ts`; the two credential rows below are real credentials and are
+  // deliberately NOT seeded (same precedent as the Mercado Pago and
+  // `identity.didit.*` credentials) — they exist here so the fields render, with
+  // the write-only encrypted treatment, on an environment where nothing has been
+  // configured yet. Both are ENCRYPTED: the access key and the secret key (which
+  // also verifies the webhook — Rapyd has no separate webhook secret).
+  // **ONE credential pair for EVERY country** (verified live 2026-09-21: the same
+  // keys completed a Colombia/COP and an Argentina/ARS payment — a Rapyd account
+  // is multi-country, unlike Mercado Pago's per-country ones). The Rapyd webhook
+  // URL to enter in Rapyd's Client Portal (one, for the whole account) is
+  // `<payments.general-settings.callbacks.public-base-url>/webhooks/rapyd` — the same global
+  // public base URL, no second one.
+  {
+    key: 'payments.payment-methods.rapyd.access-key',
+    description: 'Rapyd access key (server-side, all countries; sent as the access_key header of every request).',
+    valueType: 'STRING',
+    isEncrypted: true,
+  },
+  {
+    key: 'payments.payment-methods.rapyd.secret-key',
+    description: 'Rapyd secret key (server-side, all countries; signs every request and verifies the webhook — the credential that can move money).',
+    valueType: 'STRING',
+    isEncrypted: true,
   },
 ];
 
@@ -435,6 +464,13 @@ const LEAF_BLOCK_DESCRIPTIONS = {
   // ignored server-side whenever NODE_ENV=production.
   Email: 'Selects which channel actually delivers outgoing email.',
   Resend: 'Resend transactional email provider configuration.',
+  Callbacks: "This backend's own public HTTPS origin. Mercado Pago's wallet and Rapyd's webhook derive their callback URLs from it.",
+  Cash: 'Pay the Professional directly in cash (no provider).',
+  Rapyd: 'Rapyd embedded card checkout: switches, label, credentials (one set for every country) and saved cards.',
+  Card: 'Mercado Pago card payment (the card token is created in the app).',
+  Wallet: "Mercado Pago wallet payment, and where Mercado Pago sends the Customer back afterwards.",
+  'Argentina credentials': "Mercado Pago account used for Customers in Argentina; the card and wallet methods above both use it.",
+  'Colombia credentials': "Mercado Pago account used for Customers in Colombia; the card and wallet methods above both use it.",
   Didit: 'Didit identity-verification provider configuration — credentials shown/edited below always match whichever Mode is currently selected.',
 };
 
@@ -484,6 +520,27 @@ function humanizeSegment(segment) {
     .join(' ');
 }
 
+// Presentation hints for specific groups, keyed by FULL dot-path (never by a
+// bare segment, so a segment name reused elsewhere is unaffected). Purely
+// cosmetic: the load-bearing identifier is always the full setting key.
+// - GROUP_LABEL_OVERRIDES: a clearer label than the humanized segment
+//   (`ar`/`co` are Mercado Pago's per-country CREDENTIAL sets, and the
+//   provider is spelled "Mercado Pago").
+// - GROUP_ORDER: display order among siblings; a group not listed here sorts
+//   after the listed ones, alphabetically. Under Mercado Pago the two METHODS
+//   (card, wallet) come before the per-country credentials they both use.
+const GROUP_LABEL_OVERRIDES = {
+  'payments.payment-methods.mercadopago': 'Mercado Pago',
+  'payments.payment-methods.mercadopago.ar': 'Argentina credentials',
+  'payments.payment-methods.mercadopago.co': 'Colombia credentials',
+};
+const GROUP_ORDER = [
+  'payments.payment-methods.mercadopago.card',
+  'payments.payment-methods.mercadopago.wallet',
+  'payments.payment-methods.mercadopago.ar',
+  'payments.payment-methods.mercadopago.co',
+];
+
 /**
  * Builds a generic path tree from every setting's dot-namespaced key. A
  * key's LAST segment (e.g. `enabled`, `client-id`) names a FIELD within a
@@ -507,10 +564,13 @@ function buildSettingsTree(settings) {
     const groupSegments = segments.slice(0, -1);
 
     let node = root;
+    let path = '';
     for (const segment of groupSegments) {
+      path = path === '' ? segment : `${path}.${segment}`;
       if (!node.children[segment]) {
         node.children[segment] = {
-          label: humanizeSegment(segment),
+          label: GROUP_LABEL_OVERRIDES[path] ?? humanizeSegment(segment),
+          path,
           children: {},
           fields: {},
         };
@@ -609,7 +669,14 @@ function mergeActiveModeCredentials(node) {
 }
 
 function sortedEntries(obj) {
-  return Object.entries(obj).sort(([a], [b]) => a.localeCompare(b));
+  const rank = (child) => {
+    const index = child && child.path ? GROUP_ORDER.indexOf(child.path) : -1;
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  return Object.entries(obj).sort(([a, childA], [b, childB]) => {
+    const byRank = rank(childA) - rank(childB);
+    return byRank !== 0 ? byRank : a.localeCompare(b);
+  });
 }
 
 /**
@@ -690,7 +757,7 @@ function renderFlagField(setting) {
   const isPublic = setting.isPublic === true;
 
   const row = document.createElement('div');
-  row.className = 'd-flex align-items-center justify-content-between mb-2';
+  row.className = 'd-flex align-items-center justify-content-between';
 
   const label = document.createElement('span');
   label.className = 'text-secondary';
@@ -703,7 +770,14 @@ function renderFlagField(setting) {
   // without repeating it. `setting.description` is still preserved
   // unchanged in `toggle.dataset.description` below, round-tripped back on
   // save — only this VISIBLE label changed, not the stored value.
-  label.textContent = 'Enable';
+  // A block's MAIN switch (`enabled`) stays "Enable"; any other boolean in the
+  // same block names what it enables (`saved-cards-enabled` -> "Enable saved
+  // cards") so two switches are never both just "Enable".
+  const flagName = setting.key.split('.').pop() ?? 'enabled';
+  label.textContent =
+    flagName === 'enabled'
+      ? 'Enable'
+      : `Enable ${humanizeSegment(flagName.replace(/-?enabled$/, '')).toLowerCase()}`;
 
   const controls = document.createElement('div');
   controls.className = 'd-flex align-items-center gap-3';
@@ -756,7 +830,19 @@ function renderFlagField(setting) {
   switchWrapper.appendChild(toggle);
   controls.append(publicWrapper, switchWrapper);
   row.append(label, controls);
-  return row;
+
+  const helpText = FLAG_FIELD_DESCRIPTIONS[setting.key];
+  if (!helpText) {
+    row.classList.add('mb-2');
+    return row;
+  }
+  const wrapper = document.createElement('div');
+  wrapper.className = 'mb-2';
+  const helpEl = document.createElement('p');
+  helpEl.className = 'text-secondary small mb-1 mt-1';
+  helpEl.textContent = helpText;
+  wrapper.append(row, helpEl);
+  return wrapper;
 }
 
 /**
@@ -981,8 +1067,32 @@ async function handleSaveCredential(setting, inputEl, previewEl) {
 // as SANDBOX — now that this same value also decides which credential
 // block is even VISIBLE (see `resolveModeGatedChild`), that ambiguity is
 // worse than before, not just cosmetic.
+// A short explanation shown UNDER a specific flag's own row — unlike
+// `setting.description` (internal DB documentation, never shown as-is) or
+// `LEAF_BLOCK_DESCRIPTIONS` (one description for the WHOLE block). Used only
+// when a flag's humanized label ("Enable saved cards") doesn't by itself make
+// clear what the feature actually is — came up for Rapyd's saved-cards switch
+// (human-reported 2026-09-22: read as unrelated to the card vault/tokenization
+// feature it actually is). Keyed by the setting's full `key`, same flat-lookup
+// convention as `SELECT_FIELD_OPTIONS`/`LEAF_BLOCK_DESCRIPTIONS` — a flag with
+// no entry here renders exactly as it always has, no extra markup at all.
+const FLAG_FIELD_DESCRIPTIONS = {
+  'payments.payment-methods.rapyd.saved-cards-enabled':
+    "The card vault / tokenization: lets a Customer save a card while paying in Rapyd's embedded widget and pay a later Engagement with it in one tap. GoService only ever stores the provider's token (brand, last four, expiry) — never the card itself. Takes effect only while Enable (above) is also ON.",
+};
+
 const SELECT_FIELD_OPTIONS = {
   'identity.didit.mode': ['SANDBOX', 'PRODUCTION'],
+  // Same "avoid a silent typo behaving like a different value" reasoning —
+  // a free-text `environment` invited `"Sandbox"`, `"prod"`, a trailing
+  // space, all of which the adapters (`RAPYD_ENVIRONMENTS` /
+  // `MERCADOPAGO_ENVIRONMENTS`, both exactly `['sandbox', 'production']`)
+  // then reject as `PaymentProviderNotConfiguredError` — a real dropdown
+  // makes that typo impossible instead of a confusing runtime failure.
+  // Lowercase, unlike Didit's mode above: these two providers' own values.
+  'payments.payment-methods.rapyd.environment': ['sandbox', 'production'],
+  'payments.payment-methods.mercadopago.ar.environment': ['sandbox', 'production'],
+  'payments.payment-methods.mercadopago.co.environment': ['sandbox', 'production'],
   // Mailpit (local-dev-only email catcher, ADR 0004's dated update) — same
   // "avoid a silent typo behaving like a different value" reasoning as
   // `identity.didit.mode` above. Unlike that field, a typo here is already
@@ -1239,19 +1349,22 @@ function renderSettingField(fieldName, setting) {
  * entries renders no sub-heading at all (e.g. a future leaf with only
  * general settings, no credentials).
  */
-function renderLeafBlock(node, headingLevel) {
+function renderLeafBlock(node, headingLevel, options) {
+  const includeTitle = options?.includeTitle ?? true;
   const block = document.createElement('div');
   block.className = 'row gs-settings-block';
 
   const left = document.createElement('div');
   left.className = 'col-12 col-md-3 gs-settings-block-left';
 
-  const title = document.createElement(
-    headingLevel <= 6 ? `h${headingLevel}` : 'h6',
-  );
-  title.className = 'gs-settings-block-title';
-  title.textContent = node.label;
-  left.appendChild(title);
+  if (includeTitle) {
+    const title = document.createElement(
+      headingLevel <= 6 ? `h${headingLevel}` : 'h6',
+    );
+    title.className = 'gs-settings-block-title';
+    title.textContent = node.label;
+    left.appendChild(title);
+  }
 
   const description = describeLeafBlock(node.label);
   if (description !== '') {
@@ -1343,23 +1456,51 @@ function renderGroupChildren(node, headingLevel) {
   // (a node can legitimately appear in BOTH), not an either/or branch — a
   // "mixed" node renders its own leaf block AND a nested collapsible group
   // (same label) for its children, so nothing is ever silently dropped.
-  // Every PRE-EXISTING key shape in this panel has fields only at
-  // TERMINAL segments (no mixed nodes), so this is backward-compatible:
-  // every current leaf/group still renders exactly as before.
   const groupChildren = childEntries.filter(
     ([, child]) => Object.keys(child.children).length > 0,
   );
 
-  if (leafChildren.length > 0) {
+  // GOS-146 follow-up (2026-09-21, human-requested): a group whose children
+  // mix PLAIN leaves (fields only, e.g. "Cash"/"Rapyd") with a TRUE
+  // sub-group (children only, e.g. "Mercado Pago") makes every plain leaf
+  // collapsible too, via `renderCollapsibleLeafBlock` — a large leaf sitting
+  // permanently expanded right next to a collapsible sibling reads as
+  // broken, not as a deliberate choice. Deliberately keyed off PLAIN
+  // leaves/groups only (never a "mixed" child that is in BOTH arrays, e.g.
+  // `notifications.email` — that established split rendering, leaf block
+  // plus a separately nested group, is untouched). A group whose children
+  // are ALL leaves (e.g. "General Settings") or ALL sub-groups keeps its
+  // existing, unaffected rendering — nothing to be inconsistent with.
+  const plainLeaves = leafChildren.filter(
+    ([, child]) => Object.keys(child.children).length === 0,
+  );
+  const plainGroups = groupChildren.filter(
+    ([, child]) => Object.keys(child.fields).length === 0,
+  );
+  const leavesAreCollapsible = plainLeaves.length > 0 && plainGroups.length > 0;
+  const flatLeafChildren = leavesAreCollapsible
+    ? leafChildren.filter(([, child]) => Object.keys(child.children).length > 0) // mixed only
+    : leafChildren;
+
+  if (flatLeafChildren.length > 0) {
     const blocksContainer = document.createElement('div');
     blocksContainer.className = 'gs-settings-blocks mb-3';
-    leafChildren.forEach(([, child], index) => {
+    flatLeafChildren.forEach(([, child], index) => {
       if (index > 0) {
         blocksContainer.appendChild(document.createElement('hr'));
       }
       blocksContainer.appendChild(renderLeafBlock(child, headingLevel + 1));
     });
     contentFragment.appendChild(blocksContainer);
+  }
+
+  if (leavesAreCollapsible) {
+    for (const [, child] of plainLeaves) {
+      const section = document.createElement('div');
+      section.className = 'gs-settings-group mb-3';
+      section.appendChild(renderCollapsibleLeafBlock(child, headingLevel + 1));
+      contentFragment.appendChild(section);
+    }
   }
 
   for (const [, child] of groupChildren) {
@@ -1405,15 +1546,14 @@ function renderGroupChildren(node, headingLevel) {
  * see `renderRootTabs`, which renders them as tabs instead, since tabs are
  * not heading elements per the ARIA APG tabs pattern.
  */
-function renderGroupNode(node, headingLevel) {
+function renderDisclosureSection(label, headingLevel, contentFragment) {
   const fragment = document.createDocumentFragment();
-  const contentFragment = renderGroupChildren(node, headingLevel);
 
   const contentId = `gs-settings-group-content-${groupContentIdCounter++}`;
   const groupContentEl = document.createElement('div');
   groupContentEl.id = contentId;
   groupContentEl.className = 'gs-settings-group-content';
-  groupContentEl.hidden = false; // Expanded by default — see function comment.
+  groupContentEl.hidden = false; // Expanded by default — see renderGroupNode's own comment.
   groupContentEl.appendChild(contentFragment);
 
   const heading = document.createElement(
@@ -1428,7 +1568,7 @@ function renderGroupNode(node, headingLevel) {
   toggleButton.setAttribute('aria-controls', contentId);
 
   const labelText = document.createElement('span');
-  labelText.textContent = node.label;
+  labelText.textContent = label;
 
   toggleButton.append(createChevronIcon(), labelText);
   toggleButton.addEventListener('click', () => {
@@ -1441,6 +1581,33 @@ function renderGroupNode(node, headingLevel) {
   heading.appendChild(toggleButton);
   fragment.append(heading, groupContentEl);
   return fragment;
+}
+
+function renderGroupNode(node, headingLevel) {
+  return renderDisclosureSection(
+    node.label,
+    headingLevel,
+    renderGroupChildren(node, headingLevel),
+  );
+}
+
+/**
+ * A LEAF node (one with fields, no children of its own — e.g. "Rapyd", "Cash")
+ * wrapped in the SAME collapsible disclosure a true group gets. Used by
+ * `renderGroupChildren` only when a leaf sits next to a true sub-group sibling
+ * (e.g. "Payment Methods": "Cash"/"Rapyd" next to "Mercado Pago") — otherwise
+ * that leaf would be the only permanently-expanded item among collapsible
+ * siblings, which reads as broken rather than deliberate. `includeTitle:
+ * false` on the inner leaf block: the toggle button already shows this same
+ * label, so the block itself would otherwise repeat it right below.
+ */
+function renderCollapsibleLeafBlock(node, headingLevel) {
+  const blocksContainer = document.createElement('div');
+  blocksContainer.className = 'gs-settings-blocks mb-3';
+  blocksContainer.appendChild(
+    renderLeafBlock(node, headingLevel + 1, { includeTitle: false }),
+  );
+  return renderDisclosureSection(node.label, headingLevel, blocksContainer);
 }
 
 /**

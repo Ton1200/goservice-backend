@@ -31,27 +31,31 @@ describe('PaymentAttemptRepository', () => {
     };
   }
 
-  it('createPending inserts a PENDING, MERCADOPAGO row — the only method it writes', async () => {
-    const { repository, create } = make();
+  it.each([[PaymentMethod.MERCADOPAGO], [PaymentMethod.RAPYD]])(
+    'createPending inserts a PENDING row for the method it is given (%s)',
+    async (method) => {
+      const { repository, create } = make();
 
-    await repository.createPending({
-      engagementId: 'e1',
-      amount: 50000,
-      currency: 'COP',
-      installments: 3,
-    });
-
-    expect(create).toHaveBeenCalledWith({
-      data: {
+      await repository.createPending({
         engagementId: 'e1',
+        method,
         amount: 50000,
         currency: 'COP',
         installments: 3,
-        method: PaymentMethod.MERCADOPAGO,
-        status: PaymentAttemptStatus.PENDING,
-      },
-    });
-  });
+      });
+
+      expect(create).toHaveBeenCalledWith({
+        data: {
+          engagementId: 'e1',
+          amount: 50000,
+          currency: 'COP',
+          installments: 3,
+          method,
+          status: PaymentAttemptStatus.PENDING,
+        },
+      });
+    },
+  );
 
   describe('upsertCashConfirmation — the raw INSERT ... ON CONFLICT that makes cash idempotent', () => {
     it('returns the resulting row when the statement inserts or updates', async () => {
@@ -223,13 +227,76 @@ describe('PaymentAttemptRepository', () => {
     });
   });
 
-  it('findByProviderPaymentId looks up by the provider id', async () => {
+  it('findByProviderPaymentId looks up by the provider id AND the method that issued it', async () => {
     const { repository, findFirst } = make();
 
-    await repository.findByProviderPaymentId('ORD_1');
+    await repository.findByProviderPaymentId(
+      'ORD_1',
+      PaymentMethod.MERCADOPAGO,
+    );
 
     expect(findFirst).toHaveBeenCalledWith({
-      where: { providerPaymentId: 'ORD_1' },
+      where: { providerPaymentId: 'ORD_1', method: PaymentMethod.MERCADOPAGO },
+      orderBy: { createdAt: 'desc' },
+    });
+  });
+
+  it('findPendingWithoutProviderIdByEngagementId narrows to one method only when given one', async () => {
+    const { repository, findFirst } = make();
+
+    await repository.findPendingWithoutProviderIdByEngagementId(
+      'e1',
+      PaymentMethod.MERCADOPAGO,
+    );
+
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        engagementId: 'e1',
+        status: PaymentAttemptStatus.PENDING,
+        providerPaymentId: null,
+        method: PaymentMethod.MERCADOPAGO,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  });
+
+  it('attachProviderCheckoutIdIfPending only writes a still-PENDING attempt with no checkout id yet', async () => {
+    const { repository, updateMany } = make();
+
+    await repository.attachProviderCheckoutIdIfPending('a1', 'checkout_1');
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'a1',
+        status: PaymentAttemptStatus.PENDING,
+        providerCheckoutId: null,
+      },
+      data: { providerCheckoutId: 'checkout_1' },
+    });
+  });
+
+  it('findByProviderCheckoutId and findPendingByEngagementIdAndMethod are scoped by method', async () => {
+    const { repository, findFirst } = make();
+
+    await repository.findByProviderCheckoutId(
+      'checkout_1',
+      PaymentMethod.RAPYD,
+    );
+    await repository.findPendingByEngagementIdAndMethod(
+      'e1',
+      PaymentMethod.RAPYD,
+    );
+
+    expect(findFirst).toHaveBeenNthCalledWith(1, {
+      where: { providerCheckoutId: 'checkout_1', method: PaymentMethod.RAPYD },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(findFirst).toHaveBeenNthCalledWith(2, {
+      where: {
+        engagementId: 'e1',
+        method: PaymentMethod.RAPYD,
+        status: PaymentAttemptStatus.PENDING,
+      },
       orderBy: { createdAt: 'desc' },
     });
   });

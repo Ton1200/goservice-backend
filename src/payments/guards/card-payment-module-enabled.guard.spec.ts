@@ -9,12 +9,12 @@ describe('CardPaymentModuleEnabledGuard', () => {
     return { guard, isEnabled };
   }
 
-  it('allows the request through when payments.payment-methods.card.enabled is true', async () => {
+  it('allows the request through when payments.payment-methods.mercadopago.card.enabled is true', async () => {
     const { guard, isEnabled } = makeGuard(true);
 
     await expect(guard.canActivate()).resolves.toBe(true);
     expect(isEnabled).toHaveBeenCalledWith(
-      'payments.payment-methods.card.enabled',
+      'payments.payment-methods.mercadopago.card.enabled',
     );
   });
 

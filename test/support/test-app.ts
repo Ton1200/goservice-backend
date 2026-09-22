@@ -15,6 +15,8 @@ import { RESEND_PLATFORM_SETTING_KEYS } from '../../src/email/constants/resend-s
 import {
   mercadoPagoSettingKeys,
   mercadoPagoWalletCheckoutSettingKeys,
+  PAYMENT_METHOD_SETTING_KEYS,
+  rapydSettingKeys,
 } from '../../src/payments/constants/payments-setting-keys.constants';
 import { CredentialEncryptionPort } from '../../src/platform-admin/platform-settings/ports/credential-encryption.port';
 
@@ -699,7 +701,7 @@ export const TEST_MERCADOPAGO_WEBHOOK_SECRET =
  * `CustomerProfile`, see `mercadoPagoTestSettingKeys`'s own comment).
  */
 export const CARD_PAYMENT_TEST_SETTING_KEYS = [
-  'payments.payment-methods.card.enabled',
+  'payments.payment-methods.mercadopago.card.enabled',
   ...Object.values(mercadoPagoSettingKeys(CountryCode.AR)),
 ];
 
@@ -741,14 +743,14 @@ export async function enableTestCardPayments(
 ): Promise<void> {
   const country = overrides?.country ?? CountryCode.AR;
   await prisma.platformSetting.upsert({
-    where: { key: 'payments.payment-methods.card.enabled' },
+    where: { key: 'payments.payment-methods.mercadopago.card.enabled' },
     update: {
       isEncrypted: false,
       isPublic: false,
       value: String(overrides?.cardEnabled ?? true),
     },
     create: {
-      key: 'payments.payment-methods.card.enabled',
+      key: 'payments.payment-methods.mercadopago.card.enabled',
       description: 'Global kill switch for the Card Payment capability.',
       valueType: 'BOOLEAN',
       isEncrypted: false,
@@ -881,7 +883,7 @@ export const TEST_MERCADOPAGO_WALLET_BACK_URL_FAILURE =
  * `mercadoPagoWalletCheckoutSettingKeys`'s own header comment.
  */
 export const WALLET_PAYMENT_TEST_SETTING_KEYS = [
-  'payments.payment-methods.mercadopago-wallet.enabled',
+  'payments.payment-methods.mercadopago.wallet.enabled',
   ...Object.values(mercadoPagoWalletCheckoutSettingKeys()),
   ...Object.values(mercadoPagoSettingKeys(CountryCode.AR)),
 ];
@@ -902,14 +904,14 @@ export async function enableTestWalletPayments(
 ): Promise<void> {
   const country = overrides?.country ?? CountryCode.AR;
   await prisma.platformSetting.upsert({
-    where: { key: 'payments.payment-methods.mercadopago-wallet.enabled' },
+    where: { key: 'payments.payment-methods.mercadopago.wallet.enabled' },
     update: {
       isEncrypted: false,
       isPublic: false,
       value: String(overrides?.walletEnabled ?? true),
     },
     create: {
-      key: 'payments.payment-methods.mercadopago-wallet.enabled',
+      key: 'payments.payment-methods.mercadopago.wallet.enabled',
       description:
         'Global kill switch for the Mercado Pago Wallet Payment capability.',
       valueType: 'BOOLEAN',
@@ -954,6 +956,136 @@ export async function enableTestWalletPayments(
         isEncrypted: false,
         isPublic: false,
         value: row.value,
+      },
+    });
+  }
+}
+
+/**
+ * GOS-146 — CLEARLY SYNTHETIC Rapyd credentials, never real values. Exported
+ * so a Rapyd e2e spec can (a) assert the adapter sends exactly this access key
+ * and (b) compute a matching webhook HMAC over its own fixtures, using the same
+ * keys `HandleRapydNotificationService` reads back out of `PlatformSettingPort`.
+ */
+export const TEST_RAPYD_ACCESS_KEY = 'e2e-test-rapyd-access-key';
+export const TEST_RAPYD_SECRET_KEY = 'e2e-test-rapyd-secret-key';
+
+/**
+ * Every `payments.*` key `enableTestRapydPayments` writes — Rapyd's ONE
+ * credential set (all countries) PLUS the global public base URL the Rapyd
+ * webhook URL is derived from (shared with Mercado Pago's wallet — one
+ * deployment, one host).
+ */
+export const RAPYD_PAYMENT_TEST_SETTING_KEYS = [
+  PAYMENT_METHOD_SETTING_KEYS.rapyd.enabled,
+  mercadoPagoWalletCheckoutSettingKeys().publicBaseUrl,
+  ...Object.values(rapydSettingKeys()),
+];
+
+/**
+ * Upserts the Rapyd `PlatformSetting` rows to a known-good, ENABLED and
+ * fully-configured SANDBOX baseline — the Rapyd kill switch is seeded OFF, so
+ * every e2e suite exercising `startEngagementRapydCheckout` must opt in. Same
+ * idempotent-upsert pattern (and the same reason it takes the running `app`:
+ * the two ENCRYPTED rows must be encrypted with the SAME
+ * `CredentialEncryptionPort` instance/key the app decrypts with) as
+ * `enableTestCardPayments`. Rapyd has ONE credential set for every country.
+ *
+ * No e2e test ever calls the real Rapyd: `global.fetch` is always mocked by the
+ * spec, so these suites prove the wiring, NOT the real sandbox.
+ */
+export async function enableTestRapydPayments(
+  app: INestApplication,
+  prisma: PrismaService,
+  overrides?: { rapydEnabled?: boolean; savedCardsEnabled?: boolean },
+): Promise<void> {
+  const keys = rapydSettingKeys();
+  const credentialEncryptionPort = app.get(CredentialEncryptionPort);
+
+  const plainRows = [
+    {
+      key: PAYMENT_METHOD_SETTING_KEYS.rapyd.enabled,
+      description: 'Global kill switch for the Rapyd card payment capability.',
+      valueType: 'BOOLEAN' as const,
+      value: String(overrides?.rapydEnabled ?? true),
+    },
+    {
+      // GOS-146 saved cards — written EXPLICITLY (default OFF): a missing row is
+      // fail-open in `PlatformSettingPort.isEnabled`, so a suite that did not
+      // opt in must never silently get the feature.
+      key: PAYMENT_METHOD_SETTING_KEYS.rapyd.savedCardsEnabled,
+      description: 'Switch for the Rapyd saved-cards feature.',
+      valueType: 'BOOLEAN' as const,
+      value: String(overrides?.savedCardsEnabled ?? false),
+    },
+    {
+      key: keys.environment,
+      description: 'Which Rapyd environment the credentials belong to.',
+      valueType: 'STRING' as const,
+      value: 'sandbox',
+    },
+    {
+      key: mercadoPagoWalletCheckoutSettingKeys().publicBaseUrl,
+      description: "This backend's own public HTTPS origin.",
+      valueType: 'STRING' as const,
+      value: TEST_MERCADOPAGO_WALLET_PUBLIC_BASE_URL,
+    },
+  ];
+  for (const row of plainRows) {
+    await prisma.platformSetting.upsert({
+      where: { key: row.key },
+      update: {
+        isEncrypted: false,
+        isPublic: false,
+        value: row.value,
+        ciphertext: null,
+        iv: null,
+        authTag: null,
+        maskedPreview: null,
+        provider: null,
+      },
+      create: {
+        key: row.key,
+        description: row.description,
+        valueType: row.valueType,
+        isEncrypted: false,
+        isPublic: false,
+        value: row.value,
+      },
+    });
+  }
+
+  const encryptedRows = [
+    {
+      key: keys.accessKey,
+      description: 'Rapyd access key.',
+      plaintext: TEST_RAPYD_ACCESS_KEY,
+    },
+    {
+      key: keys.secretKey,
+      description: 'Rapyd secret key.',
+      plaintext: TEST_RAPYD_SECRET_KEY,
+    },
+  ];
+  for (const row of encryptedRows) {
+    const encrypted = credentialEncryptionPort.encrypt(row.plaintext);
+    const encryptedColumns = {
+      isEncrypted: true,
+      isPublic: false,
+      value: null,
+      ciphertext: encrypted.ciphertext as Uint8Array<ArrayBuffer>,
+      iv: encrypted.iv as Uint8Array<ArrayBuffer>,
+      authTag: encrypted.authTag as Uint8Array<ArrayBuffer>,
+      maskedPreview: credentialEncryptionPort.maskedPreview(row.plaintext),
+    } as const;
+    await prisma.platformSetting.upsert({
+      where: { key: row.key },
+      update: { ...encryptedColumns, provider: null },
+      create: {
+        key: row.key,
+        description: row.description,
+        valueType: 'STRING',
+        ...encryptedColumns,
       },
     });
   }

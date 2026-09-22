@@ -341,11 +341,11 @@ describe('GraphQL Wallet Payment (GOS-142, e2e)', () => {
     await cleanPlatformSettingsData(
       prisma,
       WALLET_PAYMENT_TEST_SETTING_KEYS.filter(
-        (key) => key !== 'payments.payment-methods.mercadopago-wallet.enabled',
+        (key) => key !== 'payments.payment-methods.mercadopago.wallet.enabled',
       ),
     );
     await prisma.platformSetting.updateMany({
-      where: { key: 'payments.payment-methods.mercadopago-wallet.enabled' },
+      where: { key: 'payments.payment-methods.mercadopago.wallet.enabled' },
       data: { value: 'false' },
     });
     await prisma.platformSetting.upsert({
@@ -1132,8 +1132,14 @@ describe('GraphQL Wallet Payment (GOS-142, e2e)', () => {
 
   describe('misconfiguration', () => {
     it.each([
-      ['no public base URL', 'payments.mercadopago.public-base-url'],
-      ['no success back URL', 'payments.mercadopago.wallet.back-url-success'],
+      [
+        'no public base URL',
+        'payments.general-settings.callbacks.public-base-url',
+      ],
+      [
+        'no success back URL',
+        'payments.payment-methods.mercadopago.wallet.back-url-success',
+      ],
     ] as const)(
       'with %s configured: fails closed with PAYMENT_PROVIDER_MISCONFIGURED, sends nothing, and REJECTS the attempt (never left blocking PENDING)',
       async (_label, key) => {

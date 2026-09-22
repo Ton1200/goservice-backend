@@ -448,6 +448,48 @@ describe('GraphQL /admin/graphql — adminPaymentAttempts (e2e)', () => {
     expect(pendingOnlyBody.data.adminPaymentAttempts.items).toHaveLength(1);
   });
 
+  it('GOS-146: lists a RAPYD attempt (the new PaymentMethod value) alongside the cash one, including a REJECTED one under onlyPending', async () => {
+    const { engagementId } = await seedHalfConfirmedCashPayment();
+    // A closed (REJECTED) Rapyd attempt does not occupy the partial unique
+    // index's active slot, so it can sit next to the active cash attempt —
+    // exactly what an abandoned embedded checkout leaves behind.
+    await prisma.paymentAttempt.create({
+      data: {
+        engagementId,
+        method: 'RAPYD',
+        status: 'REJECTED',
+        amount: 5000,
+        currency: 'ARS',
+        providerCheckoutId: 'checkout_e2eadmin',
+        rejectionReason: 'ABANDONED',
+      },
+    });
+    const admin = await seedAdminWithRole('payment-attempts-rapyd', [
+      Permission.CASH_PAYMENTS_READ,
+    ]);
+    const token = await loginAdminAndGetToken(admin.email);
+
+    const response = await adminGraphqlRequest(
+      token,
+      ADMIN_PAYMENT_ATTEMPTS_QUERY,
+      { filter: { engagementId, onlyPending: true } },
+    ).expect(200);
+    const body = response.body as {
+      errors?: unknown;
+      data: { adminPaymentAttempts: { items: AdminPaymentAttemptPayload[] } };
+    };
+
+    expect(body.errors).toBeUndefined();
+    expect(
+      body.data.adminPaymentAttempts.items
+        .map((i) => [i.method, i.status])
+        .sort(),
+    ).toEqual([
+      ['CASH', 'PENDING'],
+      ['RAPYD', 'REJECTED'],
+    ]);
+  });
+
   it('rejects an admin without CASH_PAYMENTS_READ with ADMIN_FORBIDDEN', async () => {
     const admin = await seedAdminWithRole('payment-attempts-none', []);
     const token = await loginAdminAndGetToken(admin.email);

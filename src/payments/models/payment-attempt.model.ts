@@ -22,7 +22,8 @@ import { PaymentAttemptStatus } from './payment-attempt-status.enum';
  * it is null until the payment is APPROVED and the provider reports it.
  *
  * `rejectionReason` is a small, stable domain code — `CARD_DECLINED`,
- * `INSUFFICIENT_FUNDS`, `INVALID_CARD_DATA`, `PROVIDER_ERROR` or `OTHER` —
+ * `INSUFFICIENT_FUNDS`, `INVALID_CARD_DATA`, `PROVIDER_ERROR`, `ABANDONED` (GOS-146,
+ * the Customer dropped an unpaid embedded checkout) or `OTHER` —
  * never the processor's raw detail.
  */
 @ObjectType('PaymentAttempt')
@@ -75,7 +76,7 @@ export class PaymentAttemptModel {
   @Field(() => String, {
     nullable: true,
     description:
-      'Why a REJECTED attempt was not charged: CARD_DECLINED, INSUFFICIENT_FUNDS, INVALID_CARD_DATA, PROVIDER_ERROR or OTHER. Null unless REJECTED.',
+      'Why a REJECTED attempt was not charged: CARD_DECLINED, INSUFFICIENT_FUNDS, INVALID_CARD_DATA, PROVIDER_ERROR, ABANDONED (the Customer dropped an unpaid embedded checkout via abandonEngagementPaymentAttempt), AUTHENTICATION_REQUIRED (a saved card was charged but the issuer demands 3D Secure — nothing was charged; fall back to startEngagementRapydCheckout) or OTHER. Null unless REJECTED.',
   })
   rejectionReason!: string | null;
 

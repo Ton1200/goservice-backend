@@ -11,7 +11,7 @@ import { CountryCode } from '@prisma/client';
  * same owner still resolve to the same single collector/country — there is no
  * such thing as "one account, many countries"). So each `Engagement`'s
  * `CustomerProfile.country` selects which credential set to use, and every key
- * below is scoped under `payments.mercadopago.<lowercased CountryCode>.*`
+ * below is scoped under `payments.payment-methods.mercadopago.<lowercased CountryCode>.*`
  * instead of one flat global set. A future country is one more `CountryCode`
  * value plus 4 more admin-configured rows — no code change to this function.
  *
@@ -23,7 +23,7 @@ import { CountryCode } from '@prisma/client';
  *   country's key to tokenize the card client-side — it is meant to be
  *   `isPublic` (readable through `platformConfig`, same as
  *   `customer.social-login.*.client-id`), which naturally nests it under
- *   `payments.mercadopago.<country>.publicKey` for the mobile client to pick
+ *   `payments.payment-methods.mercadopago.<country>.publicKey` for the mobile client to pick
  *   by the Customer's own known country. The backend itself never needs it to
  *   charge.
  * - `environment` — `sandbox` | `production`, independent PER COUNTRY (a
@@ -43,7 +43,7 @@ import { CountryCode } from '@prisma/client';
  *   notification body is trusted.
  */
 export function mercadoPagoSettingKeys(country: CountryCode) {
-  const prefix = `payments.mercadopago.${country.toLowerCase()}`;
+  const prefix = `payments.payment-methods.mercadopago.${country.toLowerCase()}`;
   return {
     accessToken: `${prefix}.access-token`,
     publicKey: `${prefix}.public-key`,
@@ -81,11 +81,100 @@ export type MercadoPagoEnvironment = (typeof MERCADOPAGO_ENVIRONMENTS)[number];
  *   missing access token.
  */
 export function mercadoPagoWalletCheckoutSettingKeys() {
-  const prefix = 'payments.mercadopago';
+  const prefix = 'payments.payment-methods.mercadopago';
   return {
-    publicBaseUrl: `${prefix}.public-base-url`,
+    // NOT Mercado Pago's: the backend's own public origin, shared by every
+    // provider's callbacks (Mercado Pago's wallet AND Rapyd's webhook), so it
+    // lives in the platform's general settings, not under a provider.
+    publicBaseUrl: 'payments.general-settings.callbacks.public-base-url',
     backUrlSuccess: `${prefix}.wallet.back-url-success`,
     backUrlPending: `${prefix}.wallet.back-url-pending`,
     backUrlFailure: `${prefix}.wallet.back-url-failure`,
   } as const;
 }
+
+/**
+ * GOS-146 — the `PlatformSetting` keys the Rapyd adapter reads. Same rules as
+ * `mercadoPagoSettingKeys` above: NEVER hardcoded values, NEVER `.env`,
+ * documented by name and purpose only.
+ *
+ * **ONE credential set for the whole platform (unlike Mercado Pago's per-
+ * country ones)**: verified live on 2026-09-21 that the SAME access/secret key
+ * created and completed a Colombia/COP payment AND an Argentina/ARS payment — a
+ * Rapyd account is multi-country. So the keys and the environment are global
+ * (`payments.payment-methods.rapyd.*`), with no `<country>` segment.
+ *
+ * - `accessKey` — ENCRYPTED. The Rapyd access key (sent as the `access_key`
+ *   header, and part of every request's and webhook's signature).
+ * - `secretKey` — ENCRYPTED. The Rapyd secret key: the HMAC key that signs
+ *   every request AND the secret a webhook's signature is verified with (Rapyd
+ *   has no separate webhook secret). The one credential that can move money.
+ * - `environment` — `sandbox` | `production`, ONE for the platform (a key pair
+ *   belongs to exactly one environment, so with one credential set there is
+ *   one environment). Unlike Mercado Pago (which tells the two apart by the
+ *   credential), Rapyd uses a DIFFERENT host per environment (API and Checkout
+ *   Toolkit script), so this value really does switch the endpoints. Validated
+ *   fail-closed.
+ *
+ * The Rapyd webhook URL is derived from the GLOBAL public base URL that
+ * already exists for Mercado Pago (`mercadoPagoWalletCheckoutSettingKeys().publicBaseUrl`
+ * — one deployment has one public host); no second base-URL setting is created.
+ */
+export function rapydSettingKeys() {
+  const prefix = 'payments.payment-methods.rapyd';
+  return {
+    accessKey: `${prefix}.access-key`,
+    secretKey: `${prefix}.secret-key`,
+    environment: `${prefix}.environment`,
+  } as const;
+}
+
+export const RAPYD_ENVIRONMENTS = ['sandbox', 'production'] as const;
+export type RapydEnvironment = (typeof RAPYD_ENVIRONMENTS)[number];
+
+/**
+ * GOS-146 — Rapyd tunables that are not credentials. Global (no `<country>`).
+ * `checkoutExpirationMinutes` — how long a created checkout stays payable
+ * before Rapyd expires it (sent as the checkout's `page_expiration` — verified
+ * live that the docs' `expiration` field is ignored). Rapyd has NO
+ * way to cancel a checkout, so a SHORT lifetime is what bounds the window in
+ * which a widget the Customer walked away from can still be paid after
+ * `abandonEngagementPaymentAttempt`. Missing/invalid → the parameter is
+ * omitted and Rapyd's own default (14 days) applies.
+ */
+export function rapydCheckoutSettingKeys() {
+  return {
+    checkoutExpirationMinutes:
+      'payments.payment-methods.rapyd.checkout-expiration-minutes',
+  } as const;
+}
+
+/**
+ * GOS-146 — the per-method kill switches and customer-facing labels the
+ * `availablePaymentMethods` catalog reads. All live under
+ * `payments.payment-methods.<method>.*`, which is how the admin panel's
+ * settings tree groups them with zero frontend changes. `card.enabled`
+ * GOVERNS THE MERCADO PAGO CARD FLOW ONLY — it is deliberately NOT reused as
+ * Rapyd's flag.
+ */
+export const PAYMENT_METHOD_SETTING_KEYS = {
+  cash: {
+    enabled: 'payments.payment-methods.cash.enabled',
+    displayName: 'payments.payment-methods.cash.display-name',
+  },
+  mercadoPagoCard: {
+    enabled: 'payments.payment-methods.mercadopago.card.enabled',
+    displayName: 'payments.payment-methods.mercadopago.card.display-name',
+  },
+  mercadoPagoWallet: {
+    enabled: 'payments.payment-methods.mercadopago.wallet.enabled',
+    displayName: 'payments.payment-methods.mercadopago.wallet.display-name',
+  },
+  rapyd: {
+    enabled: 'payments.payment-methods.rapyd.enabled',
+    displayName: 'payments.payment-methods.rapyd.display-name',
+    // GOS-146 — the "saved cards" feature OF the Rapyd method. Only effective
+    // while `enabled` is ON too (a feature of the method, not a second method).
+    savedCardsEnabled: 'payments.payment-methods.rapyd.saved-cards-enabled',
+  },
+} as const;

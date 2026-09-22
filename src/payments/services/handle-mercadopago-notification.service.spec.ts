@@ -1,9 +1,9 @@
 import { Logger } from '@nestjs/common';
-import { CountryCode } from '@prisma/client';
+import { CountryCode, PaymentMethod } from '@prisma/client';
 import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
+import { MercadoPagoPaymentAdapter } from '../adapters/mercadopago-payment.adapter';
 import { PaymentAttemptRepository } from '../payment-attempt.repository';
 import {
-  PaymentProviderPort,
   PaymentProviderUnavailableError,
   ProviderPaymentSnapshot,
 } from '../ports/payment-provider.port';
@@ -83,7 +83,7 @@ describe('HandleMercadoPagoNotificationService', () => {
     const paymentProvider = {
       getPayment,
       getPaymentByPaymentId,
-    } as unknown as PaymentProviderPort;
+    } as unknown as MercadoPagoPaymentAdapter;
 
     const findByProviderPaymentId = jest
       .fn()
@@ -182,7 +182,10 @@ describe('HandleMercadoPagoNotificationService', () => {
       });
 
       expect(m.getPayment).toHaveBeenCalledWith('ORD_1', CountryCode.CO);
-      expect(m.findByProviderPaymentId).toHaveBeenCalledWith('ORD_1');
+      expect(m.findByProviderPaymentId).toHaveBeenCalledWith(
+        'ORD_1',
+        PaymentMethod.MERCADOPAGO,
+      );
       expect(m.apply).toHaveBeenCalledWith('attempt-1', {
         status: 'approved',
         providerPaymentId: 'ORD_1',
@@ -237,6 +240,7 @@ describe('HandleMercadoPagoNotificationService', () => {
 
       expect(m.findPendingWithoutProviderIdByEngagementId).toHaveBeenCalledWith(
         ENGAGEMENT_ID,
+        PaymentMethod.MERCADOPAGO,
       );
       expect(m.apply).toHaveBeenCalledWith(
         'attempt-1',
@@ -324,7 +328,10 @@ describe('HandleMercadoPagoNotificationService', () => {
           CountryCode.CO,
         );
         expect(m.getPayment).not.toHaveBeenCalled();
-        expect(m.findByProviderPaymentId).toHaveBeenCalledWith('178687128941');
+        expect(m.findByProviderPaymentId).toHaveBeenCalledWith(
+          '178687128941',
+          PaymentMethod.MERCADOPAGO,
+        );
         expect(m.apply).toHaveBeenCalledWith('attempt-1', {
           status: 'approved',
           providerPaymentId: '178687128941',
@@ -343,7 +350,7 @@ describe('HandleMercadoPagoNotificationService', () => {
 
         expect(
           m.findPendingWithoutProviderIdByEngagementId,
-        ).toHaveBeenCalledWith(ENGAGEMENT_ID);
+        ).toHaveBeenCalledWith(ENGAGEMENT_ID, PaymentMethod.MERCADOPAGO);
         expect(m.apply).toHaveBeenCalledWith(
           'attempt-1',
           expect.objectContaining({ providerPaymentId: '178687128941' }),
