@@ -43,4 +43,18 @@ export class UpsertProfessionalSpecializationInput {
   @Min(0)
   @Max(75)
   yearsOfExperience?: number;
+
+  /**
+   * GOS-152/GOS-157: optional max travel distance, in km, for THIS
+   * specialization only. Omitted or `null` = no limit. Like every other
+   * field on this entry, it is not merged with the stored value: the
+   * specialization set is fully replaced on each upsert, so a client must
+   * resend it on every save to keep it.
+   */
+  @Field(() => Int, { nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  operatingRadiusKm?: number | null;
 }

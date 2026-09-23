@@ -23,6 +23,7 @@ interface SpecializationWithCategory {
   role: SpecializationRole;
   description: string;
   yearsOfExperience: number | null;
+  operatingRadiusKm: number | null;
   order: number;
 }
 
@@ -688,7 +689,9 @@ export class ProfilesRepository {
    * carries its own `description`/`yearsOfExperience`/`order`, which can
    * change on an edit even when the same `categoryId` is resubmitted, so a
    * partial diff could leave stale field values in place. `order` is the
-   * submitted array's index — never client-supplied.
+   * submitted array's index — never client-supplied. The same applies to
+   * `operatingRadiusKm` (GOS-157): an entry that omits it is recreated
+   * with no radius (= no limit), so clients must resend it on every save.
    *
    * On the row's first-ever creation (and only then), atomically
    * transitions `User.accountStatus` from `EMAIL_VERIFIED` to
@@ -723,6 +726,7 @@ export class ProfilesRepository {
         role: SpecializationRole;
         description: string;
         yearsOfExperience?: number;
+        operatingRadiusKm?: number | null;
       }[];
     },
   ): Promise<{
@@ -766,6 +770,7 @@ export class ProfilesRepository {
           role: specialization.role,
           description: specialization.description,
           yearsOfExperience: specialization.yearsOfExperience,
+          operatingRadiusKm: specialization.operatingRadiusKm,
           order: index,
         })),
       });
@@ -792,6 +797,7 @@ export class ProfilesRepository {
             role: row.role,
             description: row.description,
             yearsOfExperience: row.yearsOfExperience,
+            operatingRadiusKm: row.operatingRadiusKm,
             order: row.order,
           })),
         },
@@ -808,6 +814,7 @@ export class ProfilesRepository {
         role: SpecializationRole;
         description: string;
         yearsOfExperience: number | null;
+        operatingRadiusKm: number | null;
         order: number;
       }[];
     },
@@ -820,6 +827,7 @@ export class ProfilesRepository {
         role: row.role,
         description: row.description,
         yearsOfExperience: row.yearsOfExperience,
+        operatingRadiusKm: row.operatingRadiusKm,
         order: row.order,
       })),
     };

@@ -25,6 +25,10 @@ export class ProfessionalSpecialization {
   @Field(() => Int, { nullable: true })
   yearsOfExperience?: number | null;
 
+  /** GOS-152/GOS-157: max travel distance in km; `null` = no limit. */
+  @Field(() => Int, { nullable: true })
+  operatingRadiusKm?: number | null;
+
   @Field(() => Int)
   order!: number;
 }
