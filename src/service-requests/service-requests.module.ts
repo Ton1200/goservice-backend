@@ -1,12 +1,18 @@
 import { Module } from '@nestjs/common';
+import { AddressesRepository } from '../addresses/addresses.repository';
+import { MapsModuleEnabledGuard } from '../addresses/guards/maps-module-enabled.guard';
 import { AuthModule } from '../auth/auth.module';
 import { EngagementsRepository } from '../engagements/engagements.repository';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
+import { PlatformSettingsModule } from '../platform-admin/platform-settings/platform-settings.module';
+import { NearbyProfessionalsResolver } from '../profiles/nearby-professionals.resolver';
 import { ProfilesModule } from '../profiles/profiles.module';
+import { FindNearbyProfessionalsService } from '../profiles/services/find-nearby-professionals.service';
 import { QuotesRepository } from '../quotes/quotes.repository';
 import { UsersModule } from '../users/users.module';
 import { ServiceRequestFieldResolver } from './service-request-field.resolver';
 import { CancelServiceRequestService } from './services/cancel-service-request.service';
+import { FindNearbyServiceRequestsService } from './services/find-nearby-service-requests.service';
 import { ListCompatibleServiceRequestsService } from './services/list-compatible-service-requests.service';
 import { ListMyServiceRequestsService } from './services/list-my-service-requests.service';
 import { PublishServiceRequestService } from './services/publish-service-request.service';
@@ -60,11 +66,32 @@ import { ServiceRequestsResolver } from './service-requests.resolver';
  * `ProfilesRepository`. This also keeps the module graph acyclic:
  * `quotes/`/`engagements/` never import `ServiceRequestsModule` back (see
  * `quotes.module.ts`'s own comment).
+ *
+ * GOS-155 — `AddressesRepository`/`MapsModuleEnabledGuard` are ALSO reused
+ * here as CONCRETE provider classes, same "never import the resolver-
+ * bearing Module" pattern as `QuotesRepository`/`EngagementsRepository`
+ * above: `PublishServiceRequestService` needs `AddressesRepository` to
+ * resolve/validate `addressId`, and `nearbyServiceRequests`
+ * (`ServiceRequestsResolver`) needs `MapsModuleEnabledGuard` — importing
+ * `AddressesModule` itself would pull in its own resolver and create a
+ * needless coupling. `PlatformSettingsModule` provides `PlatformSettingPort`,
+ * needed by both `MapsModuleEnabledGuard` and
+ * `FindNearbyServiceRequestsService`'s own `resolveEffectiveSearchRadiusKm`
+ * call.
+ *
+ * `NearbyProfessionalsResolver`/`FindNearbyProfessionalsService`
+ * (`src/profiles/`) are ALSO wired here, not in `ProfilesModule` — see that
+ * module's own header comment for the module-cycle reason
+ * (`AccountApprovedGuard` needs `IdentityVerificationModule`, which itself
+ * imports `ProfilesModule`). This module already imports both
+ * `IdentityVerificationModule` and `ProfilesModule` cleanly, so it is the
+ * natural home for this cross-cutting "professional discovery" query too.
  */
 @Module({
   imports: [
     AuthModule,
     IdentityVerificationModule,
+    PlatformSettingsModule,
     ProfilesModule,
     UsersModule,
   ],
@@ -74,11 +101,16 @@ import { ServiceRequestsResolver } from './service-requests.resolver';
     ServiceRequestFieldResolver,
     QuotesRepository,
     EngagementsRepository,
+    AddressesRepository,
+    MapsModuleEnabledGuard,
     PublishServiceRequestService,
     CancelServiceRequestService,
     ListMyServiceRequestsService,
     ListCompatibleServiceRequestsService,
+    FindNearbyServiceRequestsService,
     RequestServiceRequestAttachmentUploadUrlService,
+    NearbyProfessionalsResolver,
+    FindNearbyProfessionalsService,
   ],
 })
 export class ServiceRequestsModule {}

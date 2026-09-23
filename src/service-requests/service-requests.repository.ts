@@ -183,6 +183,13 @@ export class ServiceRequestsRepository {
     urgency: ServiceRequestUrgency;
     indicativeBudgetMin: number | null;
     indicativeBudgetMax: number | null;
+    // GOS-155 — always a resolved, non-null Address id by the time this
+    // reaches the repository: `PublishServiceRequestService` has already
+    // either validated the caller's own explicit `addressId` or fallen back
+    // to the Customer's own default Address, rejecting with
+    // `serviceRequestAddressRequired()` if neither is available. This
+    // repository never resolves ownership/defaults itself.
+    addressId: string;
     attachmentRefs: ServiceRequestAttachmentUploadRef[];
   }): Promise<ServiceRequestWithRelations> {
     return this.prisma.$transaction(async (tx) => {
@@ -194,6 +201,7 @@ export class ServiceRequestsRepository {
           urgency: params.urgency,
           indicativeBudgetMin: params.indicativeBudgetMin,
           indicativeBudgetMax: params.indicativeBudgetMax,
+          addressId: params.addressId,
           attachments: {
             create: params.attachmentRefs.map((ref, index) => ({
               url: ref.fileUrl,
@@ -338,6 +346,113 @@ export class ServiceRequestsRepository {
       },
       include: SERVICE_REQUEST_INCLUDE,
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * GOS-155 — the proximity-search half of `nearbyServiceRequests`
+   * (`FindNearbyServiceRequestsService`): raw SQL, NOT a Prisma query
+   * builder call, because ranking by great-circle distance (Haversine)
+   * cannot be expressed in Prisma's query language. Follows this codebase's
+   * one existing raw-SQL precedent
+   * (`PaymentAttemptRepository.upsertCashConfirmation`) exactly: a
+   * parametrized tagged template, `Prisma.join()` for the `categoryId IN
+   * (...)` list — NEVER string interpolation of caller-controlled input.
+   *
+   * Deliberately crosses this class's own "only place that queries
+   * ServiceRequest" boundary to also read `Address`/`CustomerProfile`
+   * columns in the SAME query — unavoidable for a single-query bounding-box
+   * + Haversine filter/sort (see `computeSearchBoundingBox`'s own header
+   * comment), the same kind of cross-table read
+   * `ADMIN_SERVICE_REQUEST_SELECT`'s nested `customerProfile.user` select
+   * already does via Prisma's own query builder. Returns ONLY candidate
+   * ids + distance, sorted nearest-first — `FindNearbyServiceRequestsService`
+   * re-fetches the full, typed rows via `findManyByIds`/
+   * `AddressesRepository.findManyByIds` afterward (this method's caller
+   * owns re-hydration, not this one).
+   *
+   * Filters: `status = OPEN` (never a CANCELLED/ENGAGED ServiceRequest —
+   * same rule `findManyCompatible` already enforces), `categoryId IN
+   * categoryIds` (hierarchical matching — the caller has already resolved
+   * descendants), `addressId IS NOT NULL` (a ServiceRequest published
+   * before this column existed, or created without a resolvable Address in
+   * some other future path, is simply never proximity-matchable — no error,
+   * just excluded), and `CustomerProfile.locationSharingEnabled = true`
+   * (GOS-155's own confirmed gate: a ServiceRequest whose owning Customer
+   * has not opted into location sharing never appears here, regardless of
+   * whether it has an `addressId`).
+   */
+  async findNearbyCompatible(params: {
+    categoryIds: string[];
+    latitude: number;
+    longitude: number;
+    radiusKm: number;
+    boundingBox: {
+      latMin: number;
+      latMax: number;
+      lngMin: number;
+      lngMax: number;
+    };
+  }): Promise<
+    { serviceRequestId: string; addressId: string; distanceKm: number }[]
+  > {
+    if (params.categoryIds.length === 0) {
+      return [];
+    }
+    const { latitude, longitude, radiusKm, boundingBox } = params;
+    // Each id explicitly cast to `::uuid` — `categoryId`/`id` are UUID
+    // columns, and Postgres has no implicit `uuid = text` operator (a bare
+    // `Prisma.join(params.categoryIds)` binds each value as `text`,
+    // confirmed failing live against this exact query with `operator does
+    // not exist: uuid = text` before this cast was added).
+    const categoryIds = Prisma.join(
+      params.categoryIds.map((id) => Prisma.sql`${id}::uuid`),
+    );
+
+    return this.prisma.$queryRaw<
+      { serviceRequestId: string; addressId: string; distanceKm: number }[]
+    >`
+      SELECT * FROM (
+        SELECT DISTINCT sr."id" AS "serviceRequestId", a."id" AS "addressId",
+          (
+            6371 * acos(
+              LEAST(1, GREATEST(-1,
+                cos(radians(${latitude})) * cos(radians(a."latitude")) *
+                  cos(radians(a."longitude") - radians(${longitude})) +
+                sin(radians(${latitude})) * sin(radians(a."latitude"))
+              ))
+            )
+          ) AS "distanceKm"
+        FROM "ServiceRequest" sr
+        JOIN "Address" a ON a."id" = sr."addressId"
+        JOIN "CustomerProfile" cp ON cp."id" = sr."customerProfileId"
+        WHERE sr."status" = 'OPEN'::"ServiceRequestStatus"
+          AND sr."addressId" IS NOT NULL
+          AND sr."categoryId" IN (${categoryIds})
+          AND cp."locationSharingEnabled" = true
+          AND a."latitude" BETWEEN ${boundingBox.latMin} AND ${boundingBox.latMax}
+          AND a."longitude" BETWEEN ${boundingBox.lngMin} AND ${boundingBox.lngMax}
+      ) matches
+      WHERE "distanceKm" <= ${radiusKm}
+      ORDER BY "distanceKm" ASC;
+    `;
+  }
+
+  /**
+   * GOS-155 — plain, unscoped hydration read for a known set of
+   * `ServiceRequest` ids, used by `FindNearbyServiceRequestsService` to
+   * re-fetch the full, typed rows (with `category`/`attachments`) for
+   * whatever candidate ids `findNearbyCompatible`'s raw-SQL query already
+   * narrowed down and ranked. Not ordered — the caller re-applies its own
+   * raw-SQL-derived distance order after zipping these rows back in.
+   */
+  findManyByIds(ids: string[]): Promise<ServiceRequestWithRelations[]> {
+    if (ids.length === 0) {
+      return Promise.resolve([]);
+    }
+    return this.prisma.serviceRequest.findMany({
+      where: { id: { in: ids } },
+      include: SERVICE_REQUEST_INCLUDE,
     });
   }
 

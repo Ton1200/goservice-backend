@@ -687,6 +687,31 @@ const PLATFORM_SETTINGS: {
     value: 'false',
     isPublic: true,
   },
+  // GOS-155 — proximity search radius configuration for `nearbyProfessionals`/
+  // `nearbyServiceRequests` (see
+  // `src/addresses/constants/maps-setting-keys.constants.ts`'s own header
+  // comment for the full design). Both `NUMBER`-typed, `isPublic: false` —
+  // backend-only tuning, not something `goservice-mobile` needs to branch
+  // on (unlike `maps.enabled` above). Read fresh on every proximity query,
+  // never cached (`resolveEffectiveSearchRadiusKm`), same
+  // "no cached PlatformSetting reads" precedent as
+  // `payments.general-settings.commission.percent`.
+  {
+    key: 'maps.search.default-radius-km',
+    description:
+      'Default proximity search radius (km) applied to nearbyProfessionals/nearbyServiceRequests when the caller does not pass radiusKm.',
+    value: '15',
+    isPublic: false,
+    valueType: 'NUMBER',
+  },
+  {
+    key: 'maps.search.max-radius-km',
+    description:
+      'Absolute ceiling (km) applied to any nearbyProfessionals/nearbyServiceRequests search, whether or not the caller passes an explicit radiusKm.',
+    value: '50',
+    isPublic: false,
+    valueType: 'NUMBER',
+  },
 ];
 
 // Editable transactional-email templates follow-up (2026-08-24) — seeds the

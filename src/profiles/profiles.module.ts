@@ -57,6 +57,20 @@ import { UpsertProfessionalProfileService } from './services/upsert-professional
   // CustomerProfile, Quote belongs to ProfessionalProfile) that will need
   // to resolve a profile by userId — same pattern as `UsersModule`
   // exporting `UsersRepository`. No consumer exists yet.
+  //
+  // GOS-155 — `Query.nearbyProfessionals` (`FindNearbyProfessionalsService`,
+  // `src/profiles/services/find-nearby-professionals.service.ts`) is
+  // DELIBERATELY NOT wired here, even though it reads/returns
+  // `ProfessionalProfile` data: it requires `AccountApprovedGuard`
+  // (`IdentityVerificationModule`), and `IdentityVerificationModule` itself
+  // imports `ProfilesModule` — importing it back here would create the
+  // exact cycle `ReviewsRepository`'s own comment above already documents
+  // avoiding for `ReviewsModule`. Its resolver method instead lives on
+  // `ServiceRequestsResolver`/is wired in `ServiceRequestsModule` (which
+  // already imports both `IdentityVerificationModule` and `ProfilesModule`
+  // cleanly), reusing `ProfilesRepository` as the exported concrete class
+  // below — same cross-module reuse convention this codebase uses
+  // throughout.
   exports: [ProfilesRepository],
 })
 export class ProfilesModule {}

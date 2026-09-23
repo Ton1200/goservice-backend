@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  AddressOwnerRole,
   AuthProvider,
   CountryCode,
   ProfessionalVerificationStatus,
@@ -16,6 +17,7 @@ import type { AppConfig } from '../src/config/configuration';
 import { waitForUpload } from './support/wait-for-upload';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
+  cleanAddressesData,
   cleanProfilesData,
   cleanQuotesAndEngagementsData,
   cleanServiceRequestsData,
@@ -30,7 +32,7 @@ const LOGIN_MUTATION = `
 `;
 
 const SERVICE_REQUEST_FIELDS = `
-  id customerProfileId description urgency indicativeBudgetMin
+  id customerProfileId addressId description urgency indicativeBudgetMin
   indicativeBudgetMax status createdAt updatedAt
   category { id name }
   attachments { id url createdAt }
@@ -95,6 +97,7 @@ interface LoginResponseBody {
 interface ServiceRequestPayload {
   id: string;
   customerProfileId: string;
+  addressId: string | null;
   description: string;
   urgency: string;
   indicativeBudgetMin: number | null;
@@ -188,6 +191,7 @@ describe('GraphQL ServiceRequest (GOS-38, e2e)', () => {
   afterAll(async () => {
     await cleanQuotesAndEngagementsData(prisma);
     await cleanServiceRequestsData(prisma);
+    await cleanAddressesData(prisma);
     await cleanProfilesData(prisma);
     await prisma.category.deleteMany({
       where: { id: { in: createdCategoryIds } },
@@ -216,10 +220,21 @@ describe('GraphQL ServiceRequest (GOS-38, e2e)', () => {
     return { email, userId: user.id };
   }
 
-  async function seedApprovedCustomer(): Promise<{
+  // GOS-155 — `withAddress` defaults to `true` (a default, `isDefault`
+  // Address is seeded alongside the profile) because `publishServiceRequest`
+  // now REQUIRES a resolvable `addressId` (explicit or the caller's own
+  // default) — see `PublishServiceRequestService`'s own header comment.
+  // Almost every existing test in this file publishes a ServiceRequest, so
+  // this is the realistic default; the one test that specifically exercises
+  // `SERVICE_REQUEST_ADDRESS_REQUIRED` (a Customer with NO saved Address)
+  // passes `{ withAddress: false }` explicitly.
+  async function seedApprovedCustomer(options?: {
+    withAddress?: boolean;
+  }): Promise<{
     email: string;
     userId: string;
     customerProfileId: string;
+    addressId: string | null;
   }> {
     const { email, userId } = await seedUser(UserAccountStatus.APPROVED);
     const customerProfile = await prisma.customerProfile.create({
@@ -230,7 +245,16 @@ describe('GraphQL ServiceRequest (GOS-38, e2e)', () => {
         country: CountryCode.AR,
       },
     });
-    return { email, userId, customerProfileId: customerProfile.id };
+    const addressId =
+      options?.withAddress === false
+        ? null
+        : await seedCustomerAddress(customerProfile.id);
+    return {
+      email,
+      userId,
+      customerProfileId: customerProfile.id,
+      addressId,
+    };
   }
 
   async function seedApprovedProfessional(
@@ -260,6 +284,27 @@ describe('GraphQL ServiceRequest (GOS-38, e2e)', () => {
       })),
     });
     return { email, userId, professionalProfileId: professionalProfile.id };
+  }
+
+  // GOS-155 — a saved, isDefault Address for a CustomerProfile, seeded
+  // directly via Prisma (no `addresses.e2e-spec.ts`/`addAddress` round trip
+  // exists yet for this repo — see this file's own module-level comment
+  // for the "ad hoc seedX() helper" convention).
+  async function seedCustomerAddress(
+    customerProfileId: string,
+  ): Promise<string> {
+    const address = await prisma.address.create({
+      data: {
+        ownerRole: AddressOwnerRole.CUSTOMER,
+        customerProfileId,
+        formattedAddress: 'Av. Corrientes 1234, CABA',
+        placeId: `place-${Date.now()}-${Math.random()}`,
+        latitude: -34.6037,
+        longitude: -58.3816,
+        isDefault: true,
+      },
+    });
+    return address.id;
   }
 
   async function seedCategories(count: number): Promise<string[]> {
@@ -1033,5 +1078,103 @@ describe('GraphQL ServiceRequest (GOS-38, e2e)', () => {
         'SERVICE_REQUEST_HAS_ENGAGEMENT',
       );
     }
+  });
+
+  // GOS-155 — addressId resolution on publish.
+  describe('addressId resolution (GOS-155)', () => {
+    it("falls back to the caller's own default Address when addressId is omitted", async () => {
+      // `seedApprovedCustomer()` already seeds a default Address (GOS-155's
+      // own updated default — see that helper's own comment).
+      const { email, addressId } = await seedApprovedCustomer();
+      const sessionToken = await loginSessionToken(email);
+      const [categoryId] = await seedCategories(1);
+
+      const response = await gqlRequest(
+        PUBLISH_SERVICE_REQUEST_MUTATION,
+        { input: publishInput(categoryId) },
+        sessionToken,
+      ).expect(200);
+      const body =
+        response.body as ServiceRequestResponseBody<'publishServiceRequest'>;
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.publishServiceRequest.addressId).toBe(addressId);
+    });
+
+    it('rejects with SERVICE_REQUEST_ADDRESS_REQUIRED when addressId is omitted and the caller has no saved Address', async () => {
+      const { email } = await seedApprovedCustomer({ withAddress: false });
+      const sessionToken = await loginSessionToken(email);
+      const [categoryId] = await seedCategories(1);
+
+      const response = await gqlRequest(
+        PUBLISH_SERVICE_REQUEST_MUTATION,
+        { input: publishInput(categoryId) },
+        sessionToken,
+      ).expect(200);
+      const body =
+        response.body as ServiceRequestResponseBody<'publishServiceRequest'>;
+
+      expect(body.data).toBeNull();
+      expect(body.errors?.[0]?.extensions?.code).toBe(
+        'SERVICE_REQUEST_ADDRESS_REQUIRED',
+      );
+    });
+
+    it('publishes against an explicit addressId owned by the caller', async () => {
+      const { email, addressId } = await seedApprovedCustomer();
+      const sessionToken = await loginSessionToken(email);
+      const [categoryId] = await seedCategories(1);
+
+      const response = await gqlRequest(
+        PUBLISH_SERVICE_REQUEST_MUTATION,
+        { input: publishInput(categoryId, { addressId }) },
+        sessionToken,
+      ).expect(200);
+      const body =
+        response.body as ServiceRequestResponseBody<'publishServiceRequest'>;
+
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.publishServiceRequest.addressId).toBe(addressId);
+    });
+
+    it('rejects with ADDRESS_NOT_FOUND when the explicit addressId belongs to a DIFFERENT Customer', async () => {
+      const owner = await seedApprovedCustomer();
+      const attacker = await seedApprovedCustomer();
+      const attackerToken = await loginSessionToken(attacker.email);
+      const [categoryId] = await seedCategories(1);
+
+      const response = await gqlRequest(
+        PUBLISH_SERVICE_REQUEST_MUTATION,
+        { input: publishInput(categoryId, { addressId: owner.addressId! }) },
+        attackerToken,
+      ).expect(200);
+      const body =
+        response.body as ServiceRequestResponseBody<'publishServiceRequest'>;
+
+      expect(body.data).toBeNull();
+      expect(body.errors?.[0]?.extensions?.code).toBe('ADDRESS_NOT_FOUND');
+    });
+
+    it('rejects with ADDRESS_NOT_FOUND when the explicit addressId does not exist at all', async () => {
+      const { email } = await seedApprovedCustomer();
+      const sessionToken = await loginSessionToken(email);
+      const [categoryId] = await seedCategories(1);
+      const nonexistentAddressId = '00000000-0000-4000-8000-000000000002';
+
+      const response = await gqlRequest(
+        PUBLISH_SERVICE_REQUEST_MUTATION,
+        {
+          input: publishInput(categoryId, {
+            addressId: nonexistentAddressId,
+          }),
+        },
+        sessionToken,
+      ).expect(200);
+      const body =
+        response.body as ServiceRequestResponseBody<'publishServiceRequest'>;
+
+      expect(body.data).toBeNull();
+      expect(body.errors?.[0]?.extensions?.code).toBe('ADDRESS_NOT_FOUND');
+    });
   });
 });

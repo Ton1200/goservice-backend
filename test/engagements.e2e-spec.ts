@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  AddressOwnerRole,
   AuthProvider,
   CountryCode,
   ProfessionalVerificationStatus,
@@ -235,6 +236,19 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
         firstName: 'Cliente',
         lastName: 'de Prueba',
         country: CountryCode.AR,
+      },
+    });
+    // GOS-155 — publishServiceRequest now requires a resolvable addressId;
+    // this seeds the caller's own default Address so it can fall back to it.
+    await prisma.address.create({
+      data: {
+        ownerRole: AddressOwnerRole.CUSTOMER,
+        customerProfileId: customerProfile.id,
+        formattedAddress: 'Av. Corrientes 1234, CABA',
+        placeId: `place-${Date.now()}-${Math.random()}`,
+        latitude: -34.6037,
+        longitude: -58.3816,
+        isDefault: true,
       },
     });
     return { email, customerProfileId: customerProfile.id };
@@ -1733,6 +1747,19 @@ describe('GraphQL Engagement financial ledger (GOS-109, e2e)', () => {
         firstName: 'Cliente',
         lastName: 'de Prueba',
         country: CountryCode.AR,
+      },
+    });
+    // GOS-155 — publishServiceRequest now requires a resolvable addressId;
+    // this seeds the caller's own default Address so it can fall back to it.
+    await prisma.address.create({
+      data: {
+        ownerRole: AddressOwnerRole.CUSTOMER,
+        customerProfileId: customerProfile.id,
+        formattedAddress: 'Av. Corrientes 1234, CABA',
+        placeId: `place-${Date.now()}-${Math.random()}`,
+        latitude: -34.6037,
+        longitude: -58.3816,
+        isDefault: true,
       },
     });
     return { email, customerProfileId: customerProfile.id };

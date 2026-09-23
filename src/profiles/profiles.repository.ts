@@ -269,6 +269,167 @@ export class ProfilesRepository {
     return [...visited];
   }
 
+  /**
+   * GOS-155 — `categoryId` itself UNION every one of its ANCESTORS, up to
+   * the root — the OPPOSITE traversal direction from
+   * `findDescendantCategoryIds` above, needed because `nearbyProfessionals`
+   * inverts who "owns" the search category compared to
+   * `ListCompatibleServiceRequestsService`'s own hierarchical rule: there,
+   * the PROFESSIONAL's specialization is the broader (ancestor) side and a
+   * ServiceRequest's exact/descendant category is what gets matched against
+   * it. Here, the CALLER supplies the (possibly narrow/descendant) search
+   * `categoryId` and it is the PROFESSIONAL's specialization that may be
+   * the broader ancestor — e.g. a Professional specialized in the parent
+   * "Electricidad" must still surface when a Customer searches the child
+   * "Instalaciones" — so this method walks UP the tree from `categoryId`
+   * instead of down. Same one-directional confirmed rule as
+   * `ListCompatibleServiceRequestsService`'s own header comment: the
+   * REVERSE does not hold — a Professional specialized ONLY in a CHILD
+   * category is never surfaced by a search for its PARENT.
+   */
+  async findAncestorCategoryIds(categoryId: string): Promise<string[]> {
+    const rows = await this.prisma.category.findMany({
+      select: { id: true, parentId: true },
+    });
+    const parentIdById = new Map(rows.map((row) => [row.id, row.parentId]));
+
+    const ancestorIds: string[] = [];
+    let currentId: string | null = categoryId;
+    const visited = new Set<string>();
+    while (currentId !== null && !visited.has(currentId)) {
+      visited.add(currentId);
+      ancestorIds.push(currentId);
+      currentId = parentIdById.get(currentId) ?? null;
+    }
+    return ancestorIds;
+  }
+
+  /**
+   * GOS-155 — the proximity-search half of `nearbyProfessionals`
+   * (`FindNearbyProfessionalsService`): raw SQL, NOT a Prisma query builder
+   * call, because ranking by great-circle distance (Haversine) cannot be
+   * expressed in Prisma's query language. Follows this codebase's one
+   * existing raw-SQL precedent (`PaymentAttemptRepository.
+   * upsertCashConfirmation`) exactly: a parametrized tagged template,
+   * `Prisma.join()` for the `categoryId IN (...)` list — NEVER string
+   * interpolation of caller-controlled input.
+   *
+   * Deliberately crosses this class's own "only place that queries
+   * ...ProfessionalSpecialization" boundary to also read `Address`
+   * columns in the SAME query — unavoidable for a single-query bounding-box
+   * + Haversine filter/sort (see `computeSearchBoundingBox`'s own header
+   * comment). Returns ONLY candidate ids + distance, sorted nearest-first —
+   * `FindNearbyProfessionalsService` re-fetches the full, typed rows via
+   * `findManyProfessionalProfilesByIds`/`AddressesRepository.findManyByIds`
+   * afterward (this method's caller owns re-hydration, not this one).
+   *
+   * Filters: `ProfessionalProfile.locationSharingEnabled = true` (GOS-155's
+   * own confirmed gate — a Professional who never opted into location
+   * sharing never appears here, regardless of whether they have a saved
+   * Address), joins the Professional's own `isDefault` `PROFESSIONAL`-owned
+   * Address (a Professional with zero saved Addresses simply never appears
+   * here — no error, just excluded, per this ticket's own confirmed
+   * decision), and — when the caller passed a non-null `categoryIds` —
+   * `ProfessionalSpecialization.categoryId IN categoryIds` (hierarchical
+   * matching — the caller has already resolved ancestors). `categoryIds:
+   * null` means "no category filter" (the confirmed "ver todos" mode added
+   * after GOS-155's initial delivery): every Professional with at least one
+   * specialization is a candidate, regardless of which one. The `JOIN` to
+   * `ProfessionalSpecialization` stays unconditional either way — a
+   * Professional with zero specializations isn't offering any service and
+   * must never appear here even in unfiltered mode. `SELECT DISTINCT`
+   * collapses the duplicate rows a Professional with MULTIPLE matching
+   * specializations would otherwise produce (every duplicate carries the
+   * identical `professionalProfileId`/`addressId`/`distanceKm` triple, so
+   * `DISTINCT` is a safe, exact dedup here, not an approximation).
+   */
+  async findNearbyProfessionals(params: {
+    categoryIds: string[] | null;
+    latitude: number;
+    longitude: number;
+    radiusKm: number;
+    boundingBox: {
+      latMin: number;
+      latMax: number;
+      lngMin: number;
+      lngMax: number;
+    };
+  }): Promise<
+    { professionalProfileId: string; addressId: string; distanceKm: number }[]
+  > {
+    if (params.categoryIds !== null && params.categoryIds.length === 0) {
+      return [];
+    }
+    const { latitude, longitude, radiusKm, boundingBox } = params;
+    // Each id explicitly cast to `::uuid` — see
+    // `ServiceRequestsRepository.findNearbyCompatible`'s own comment on this
+    // exact `Prisma.join` idiom (confirmed failing live with `operator does
+    // not exist: uuid = text` without it). `Prisma.empty` when `categoryIds`
+    // is `null` (unfiltered "ver todos" mode) — no AND clause at all.
+    const categoryFilterSql =
+      params.categoryIds === null
+        ? Prisma.empty
+        : Prisma.sql`AND ps."categoryId" IN (${Prisma.join(
+            params.categoryIds.map((id) => Prisma.sql`${id}::uuid`),
+          )})`;
+
+    return this.prisma.$queryRaw<
+      { professionalProfileId: string; addressId: string; distanceKm: number }[]
+    >`
+      SELECT * FROM (
+        SELECT DISTINCT pp."id" AS "professionalProfileId", a."id" AS "addressId",
+          (
+            6371 * acos(
+              LEAST(1, GREATEST(-1,
+                cos(radians(${latitude})) * cos(radians(a."latitude")) *
+                  cos(radians(a."longitude") - radians(${longitude})) +
+                sin(radians(${latitude})) * sin(radians(a."latitude"))
+              ))
+            )
+          ) AS "distanceKm"
+        FROM "ProfessionalProfile" pp
+        JOIN "Address" a
+          ON a."professionalProfileId" = pp."id"
+         AND a."ownerRole" = 'PROFESSIONAL'::"AddressOwnerRole"
+         AND a."isDefault" = true
+        JOIN "ProfessionalSpecialization" ps ON ps."professionalProfileId" = pp."id"
+        WHERE pp."locationSharingEnabled" = true
+          ${categoryFilterSql}
+          AND a."latitude" BETWEEN ${boundingBox.latMin} AND ${boundingBox.latMax}
+          AND a."longitude" BETWEEN ${boundingBox.lngMin} AND ${boundingBox.lngMax}
+      ) matches
+      WHERE "distanceKm" <= ${radiusKm}
+      ORDER BY "distanceKm" ASC;
+    `;
+  }
+
+  /**
+   * GOS-155 — plain, unscoped hydration read for a known set of
+   * `ProfessionalProfile` ids, used by `FindNearbyProfessionalsService` to
+   * re-fetch the full, typed profiles (with `specializations`) for whatever
+   * candidate ids `findNearbyProfessionals`'s raw-SQL query already
+   * narrowed down and ranked. Not ordered — the caller re-applies its own
+   * raw-SQL-derived distance order after zipping these rows back in. Same
+   * `flattenSpecializations` shape as `findProfessionalProfileByUserId`.
+   */
+  async findManyProfessionalProfilesByIds(
+    ids: string[],
+  ): Promise<ProfessionalProfileWithSpecializations[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const profiles = await this.prisma.professionalProfile.findMany({
+      where: { id: { in: ids } },
+      include: {
+        specializations: {
+          include: { category: true },
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+    return profiles.map((profile) => this.flattenSpecializations(profile));
+  }
+
   // ---- platform-admin Category management (category-tree follow-up,
   // 2026-08-18) — the catalog is no longer purely seed-only; an admin can
   // create/rename/reorder/re-parent/delete entries from the panel. Writes

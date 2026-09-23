@@ -1,13 +1,16 @@
 import { UseGuards } from '@nestjs/common';
-import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Float, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { MapsModuleEnabledGuard } from '../addresses/guards/maps-module-enabled.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { AccountApprovedGuard } from '../identity-verification/guards/account-approved.guard';
 import { DocumentUploadUrlModel } from './models/document-upload-url.model';
+import { NearbyServiceRequest } from './models/nearby-service-request.model';
 import { PublishServiceRequestInput } from './models/publish-service-request-input.model';
 import { RequestServiceRequestAttachmentUploadUrlInput } from './models/request-service-request-attachment-upload-url-input.model';
 import { ServiceRequestModel } from './models/service-request.model';
 import { CancelServiceRequestService } from './services/cancel-service-request.service';
+import { FindNearbyServiceRequestsService } from './services/find-nearby-service-requests.service';
 import { ListCompatibleServiceRequestsService } from './services/list-compatible-service-requests.service';
 import { ListMyServiceRequestsService } from './services/list-my-service-requests.service';
 import { PublishServiceRequestService } from './services/publish-service-request.service';
@@ -35,6 +38,7 @@ export class ServiceRequestsResolver {
     private readonly listMyServiceRequestsService: ListMyServiceRequestsService,
     private readonly listCompatibleServiceRequestsService: ListCompatibleServiceRequestsService,
     private readonly requestServiceRequestAttachmentUploadUrlService: RequestServiceRequestAttachmentUploadUrlService,
+    private readonly findNearbyServiceRequestsService: FindNearbyServiceRequestsService,
   ) {}
 
   @UseGuards(SessionGuard, AccountApprovedGuard)
@@ -103,6 +107,29 @@ export class ServiceRequestsResolver {
     return this.requestServiceRequestAttachmentUploadUrlService.requestUploadUrl(
       userId,
       input,
+    );
+  }
+
+  // GOS-155 — `MapsModuleEnabledGuard` added on top of this file's own
+  // `SessionGuard` + `AccountApprovedGuard` convention: this is the one
+  // query on this resolver gated behind the `maps.enabled` global kill
+  // switch, same as every other Maps capability
+  // (`AddressesResolver`/`nearbyProfessionals`).
+  @UseGuards(SessionGuard, AccountApprovedGuard, MapsModuleEnabledGuard)
+  @Query(() => [NearbyServiceRequest], {
+    description:
+      "OPEN ServiceRequests that match one of the authenticated Professional's own specializations (hierarchical, same rule as compatibleServiceRequests), were published with a resolved Address, belong to a Customer who has opted into location sharing, and currently fall within radiusKm of (latitude, longitude) — nearest first. radiusKm is optional (defaults to the platform's own configured default, always capped at the platform's own configured max).",
+  })
+  nearbyServiceRequests(
+    @CurrentUser() userId: string,
+    @Args('latitude', { type: () => Float }) latitude: number,
+    @Args('longitude', { type: () => Float }) longitude: number,
+    @Args('radiusKm', { type: () => Float, nullable: true })
+    radiusKm?: number,
+  ): Promise<NearbyServiceRequest[]> {
+    return this.findNearbyServiceRequestsService.findNearbyServiceRequests(
+      userId,
+      { latitude, longitude, radiusKm },
     );
   }
 }
