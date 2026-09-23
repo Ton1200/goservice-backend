@@ -166,6 +166,7 @@ const USER_ACCOUNT_DETAIL_QUERY = `
           role
           description
           yearsOfExperience
+          operatingRadiusKm
           order
           category {
             name
@@ -1233,6 +1234,14 @@ function buildProfessionalProfileTabContent(
           specialization.yearsOfExperience != null
             ? String(specialization.yearsOfExperience)
             : null,
+        ),
+        // GOS-157: null means "no distance limit", not missing data — say
+        // so explicitly instead of buildField's generic '—'.
+        buildField(
+          'Operating radius',
+          specialization.operatingRadiusKm != null
+            ? `${specialization.operatingRadiusKm} km`
+            : 'No limit',
         ),
         buildField('Order', String(specialization.order)),
       );

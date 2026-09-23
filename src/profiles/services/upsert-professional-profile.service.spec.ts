@@ -278,12 +278,14 @@ describe('UpsertProfessionalProfileService', () => {
         role: SpecializationRole.PRIMARY,
         description: 'Electricista matriculado.',
         yearsOfExperience: 12,
+        operatingRadiusKm: 5,
       },
       {
         categoryId: 'cat-2',
         role: SpecializationRole.SECONDARY,
         description: 'Plomero ocasional.',
         yearsOfExperience: 2,
+        operatingRadiusKm: null,
       },
     ];
 

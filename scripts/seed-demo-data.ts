@@ -178,6 +178,8 @@ async function createProfessionalProfile(
       role: SpecializationRole;
       description: string;
       yearsOfExperience: number;
+      // GOS-157: omitted = no distance limit.
+      operatingRadiusKm?: number;
     }[];
   },
 ) {
@@ -204,6 +206,7 @@ async function createProfessionalProfile(
         role: spec.role,
         description: spec.description,
         yearsOfExperience: spec.yearsOfExperience,
+        operatingRadiusKm: spec.operatingRadiusKm ?? null,
         order: order++,
       },
     });
@@ -532,6 +535,7 @@ async function main(): Promise<void> {
         role: SpecializationRole.PRIMARY,
         description: 'Reparación e instalación de cañerías, grifería y calefones.',
         yearsOfExperience: 8,
+        operatingRadiusKm: 10,
       },
     ],
   });
@@ -564,6 +568,7 @@ async function main(): Promise<void> {
         role: SpecializationRole.SECONDARY,
         description: 'Mantenimiento preventivo de instalaciones.',
         yearsOfExperience: 5,
+        operatingRadiusKm: 20,
       },
     ],
   });
@@ -590,12 +595,14 @@ async function main(): Promise<void> {
         role: SpecializationRole.PRIMARY,
         description: 'Muebles a medida, placares y reparación de puertas.',
         yearsOfExperience: 12,
+        operatingRadiusKm: 15,
       },
       {
         categoryName: 'Plomería',
         role: SpecializationRole.SECONDARY,
         description: 'Reparaciones básicas de plomería.',
         yearsOfExperience: 3,
+        operatingRadiusKm: 5,
       },
     ],
   });
@@ -662,6 +669,7 @@ async function main(): Promise<void> {
         role: SpecializationRole.PRIMARY,
         description: 'Limpieza profunda de hogares y oficinas.',
         yearsOfExperience: 5,
+        operatingRadiusKm: 25,
       },
       {
         categoryName: 'Electricidad',
