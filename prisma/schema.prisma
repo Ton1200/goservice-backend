@@ -484,6 +484,11 @@ model ProfessionalSpecialization {
   // product decision).
   description           String
   yearsOfExperience     Int?
+  // GOS-152/GOS-157: optional max travel distance (km) for THIS
+  // specialization only — per row (Professional + Category), not global to
+  // the profile or the category. NULL = no limit (default). Stored only;
+  // consumed by proximity search in GOS-36.
+  operatingRadiusKm     Int?
   // Server-derived from the submitted array's position at upsert time —
   // never client-managed as an arbitrary integer — so future
   // filtering/ranking has a stable display order without duplicate/gap

@@ -24,7 +24,7 @@ const MY_PROFESSIONAL_PROFILE_QUERY = `
     myProfessionalProfile {
       id firstName lastName displayName country bio
       verificationStatus photoUrl languages locationSharingEnabled
-      specializations { role description yearsOfExperience order category { id name } }
+      specializations { role description yearsOfExperience operatingRadiusKm order category { id name } }
     }
   }
 `;
@@ -34,7 +34,7 @@ const UPSERT_PROFESSIONAL_PROFILE_MUTATION = `
     upsertProfessionalProfile(input: $input) {
       id firstName lastName displayName country bio
       verificationStatus photoUrl languages locationSharingEnabled
-      specializations { role description yearsOfExperience order category { id name } }
+      specializations { role description yearsOfExperience operatingRadiusKm order category { id name } }
     }
   }
 `;
@@ -52,6 +52,7 @@ interface SpecializationPayload {
   role: string;
   description: string;
   yearsOfExperience: number | null;
+  operatingRadiusKm: number | null;
   order: number;
   category: { id: string; name: string };
 }
@@ -140,12 +141,11 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
     prisma = ctx.prisma;
   });
 
-  afterAll(async () => {
-    await cleanProfilesData(prisma);
-    await prisma.category.deleteMany({
-      where: { id: { in: createdCategoryIds } },
-    });
-    await cleanUsersData(prisma);
+  // This file's `login` calls exceed the 10/60s throttle budget in one run —
+  // same "flush the Redis-backed throttle counter before every test"
+  // convention as admin-categories.e2e-spec.ts. Sessions live in Postgres,
+  // so this never invalidates `sharedValidationSessionToken`.
+  async function flushRedis(): Promise<void> {
     const redisConfig = app.get(ConfigService<AppConfig, true>).get('redis', {
       infer: true,
     });
@@ -156,6 +156,19 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
     });
     await redis.flushdb();
     await redis.quit();
+  }
+
+  beforeEach(async () => {
+    await flushRedis();
+  });
+
+  afterAll(async () => {
+    await cleanProfilesData(prisma);
+    await prisma.category.deleteMany({
+      where: { id: { in: createdCategoryIds } },
+    });
+    await cleanUsersData(prisma);
+    await flushRedis();
     await app.close();
   });
 
@@ -470,6 +483,73 @@ describe('GraphQL myProfessionalProfile / upsertProfessionalProfile (e2e)', () =
 
     expect(response.body).toHaveProperty('errors');
   });
+
+  it(
+    'stores operatingRadiusKm per specialization (GOS-157): independent ' +
+      'values, null = no limit, and editing/clearing one leaves the others intact',
+    async () => {
+      const { email } = await seedEmailVerifiedUser();
+      const sessionToken = await loginSessionToken(email);
+      const [electricidad, plomeria, pintura] = await seedCategories(3);
+
+      const createResponse = await upsertProfessionalProfileRequest(
+        baseInput([
+          primarySpecialization(electricidad, { operatingRadiusKm: 5 }),
+          secondarySpecialization(plomeria, { operatingRadiusKm: 30 }),
+          secondarySpecialization(pintura),
+        ]),
+        sessionToken,
+      ).expect(200);
+      const createBody =
+        createResponse.body as UpsertProfessionalProfileResponseBody;
+
+      expect(createBody.errors).toBeUndefined();
+      expect(
+        createBody.data?.upsertProfessionalProfile.specializations.map(
+          (s) => s.operatingRadiusKm,
+        ),
+      ).toEqual([5, 30, null]);
+
+      await upsertProfessionalProfileRequest(
+        baseInput([
+          primarySpecialization(electricidad, { operatingRadiusKm: 5 }),
+          secondarySpecialization(plomeria, { operatingRadiusKm: null }),
+          secondarySpecialization(pintura, { operatingRadiusKm: 200 }),
+        ]),
+        sessionToken,
+      ).expect(200);
+
+      const readResponse = await myProfessionalProfileRequest(sessionToken);
+      const readBody = readResponse.body as MyProfessionalProfileResponseBody;
+
+      expect(readBody.errors).toBeUndefined();
+      expect(
+        readBody.data?.myProfessionalProfile?.specializations.map((s) => [
+          s.category.id,
+          s.operatingRadiusKm,
+        ]),
+      ).toEqual([
+        [electricidad, 5],
+        [plomeria, null],
+        [pintura, 200],
+      ]);
+    },
+  );
+
+  it.each([0, -1, 201, 2.5])(
+    'rejects operatingRadiusKm %p within a specialization at the DTO validation layer (nested)',
+    async (operatingRadiusKm) => {
+      const sessionToken = await getSharedValidationSessionToken();
+      const [categoryId] = await seedCategories(1);
+
+      const response = await upsertProfessionalProfileRequest(
+        baseInput([primarySpecialization(categoryId, { operatingRadiusKm })]),
+        sessionToken,
+      );
+
+      expect(response.body).toHaveProperty('errors');
+    },
+  );
 
   it(
     'rejects zero PRIMARY specializations with PRIMARY_SPECIALIZATION_REQUIRED, ' +
