@@ -359,6 +359,21 @@ const KNOWN_SETTING_SLOTS = [
     valueType: 'STRING',
     isEncrypted: true,
   },
+  // Slot added 2026-09-23 (discovered missing during GOS-86 runtime QA):
+  // `loadCredentials()` in `mercadopago-payment.adapter.ts` requires this row
+  // to exist and hold exactly 'sandbox'/'production' — without a slot here,
+  // an environment where `prisma/seed.ts`'s own default row was never
+  // applied has NO way to configure it through Admin at all (same
+  // "manifest is load-bearing for these fields to render at all
+  // pre-configuration" reasoning as the credential rows above). Rendered as
+  // a `<select>`, not free text — see `SELECT_FIELD_OPTIONS` below, which
+  // already listed this exact key before this slot existed.
+  {
+    key: 'payments.payment-methods.mercadopago.co.environment',
+    description: 'Which Mercado Pago credential set is in use for Colombia: sandbox or production.',
+    valueType: 'STRING',
+    isEncrypted: false,
+  },
   {
     key: 'payments.payment-methods.mercadopago.ar.access-token',
     description: 'Mercado Pago access token for Argentina (server-side; the one credential that can move money).',
@@ -376,6 +391,13 @@ const KNOWN_SETTING_SLOTS = [
     description: "Mercado Pago webhook secret for Argentina (verifies the x-signature of 'order' notifications sent to .../webhooks/mercadopago/orders/ar).",
     valueType: 'STRING',
     isEncrypted: true,
+  },
+  // See the co.environment slot's own comment above — same gap, same fix.
+  {
+    key: 'payments.payment-methods.mercadopago.ar.environment',
+    description: 'Which Mercado Pago credential set is in use for Argentina: sandbox or production.',
+    valueType: 'STRING',
+    isEncrypted: false,
   },
   // GOS-142 — wallet (redirect-to-Mercado-Pago-account) payment checkout
   // config. Deliberately GLOBAL — no `<country>` segment, unlike the
