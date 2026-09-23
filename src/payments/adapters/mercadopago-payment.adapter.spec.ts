@@ -161,7 +161,10 @@ describe('MercadoPagoPaymentAdapter', () => {
         external_reference: 'engagement-1',
         description: 'Engagement payment',
         total_amount: '50000',
-        payer: { email: 'buyer@example.com' },
+        // `makeAdapter()`'s default environment is 'sandbox' — see the
+        // dedicated 'payer.email' describe block below for why this is
+        // 'test@testuser.com', never the real Customer email, in sandbox.
+        payer: { email: 'test@testuser.com' },
         transactions: {
           payments: [
             {
@@ -200,6 +203,61 @@ describe('MercadoPagoPaymentAdapter', () => {
         (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string,
       ) as { total_amount: string };
       expect(body.total_amount).toBe('200.00');
+    });
+
+    // GOS-86 runtime QA finding (2026-09-23): Mercado Pago's Orders API
+    // sandbox accepts, per its own integration-test docs, ONLY
+    // 'test@testuser.com' as `payer.email` — the real Customer's email gets
+    // the whole order refused with a 400. Verified live: every Argentina
+    // sandbox attempt sending the real email came back REJECTED /
+    // PROVIDER_ERROR.
+    describe('payer.email (sandbox vs. production, GOS-86)', () => {
+      async function bodyOf(
+        command = COMMAND,
+        settings?: Record<string, string | null>,
+      ) {
+        fetchMock.mockImplementation(() =>
+          Promise.resolve(jsonResponse(201, APPROVED_BODY)),
+        );
+        const { adapter } = makeAdapter(settings);
+        await adapter.chargeCard(command);
+        const lastCall = fetchMock.mock.calls.at(-1) as [string, RequestInit];
+        return JSON.parse(lastCall[1].body as string) as {
+          payer: { email: string };
+        };
+      }
+
+      it('sandbox: always sends test@testuser.com, regardless of the real Customer email', async () => {
+        const body = await bodyOf({
+          ...COMMAND,
+          payerEmail: 'maria.customer1@goservice.dev',
+        });
+        expect(body.payer).toEqual({ email: 'test@testuser.com' });
+      });
+
+      it('production: sends the real Customer email exactly as before this fix', async () => {
+        const body = await bodyOf(
+          { ...COMMAND, payerEmail: 'maria.customer1@goservice.dev' },
+          {
+            'payments.payment-methods.mercadopago.co.environment': 'production',
+          },
+        );
+        expect(body.payer).toEqual({
+          email: 'maria.customer1@goservice.dev',
+        });
+      });
+
+      it('sandbox vs. production differ ONLY in payer.email — every other order field is identical', async () => {
+        const sandboxBody = await bodyOf();
+        const productionBody = await bodyOf(COMMAND, {
+          'payments.payment-methods.mercadopago.co.environment': 'production',
+        });
+        expect({ ...sandboxBody, payer: undefined }).toEqual({
+          ...productionBody,
+          payer: undefined,
+        });
+        expect(sandboxBody.payer).not.toEqual(productionBody.payer);
+      });
     });
 
     it('sends the requested installments', async () => {

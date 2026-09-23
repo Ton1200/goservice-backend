@@ -246,7 +246,12 @@ export class MercadoPagoPaymentAdapter
         external_reference: command.externalReference,
         description: command.description,
         total_amount: formatMercadoPagoAmount(command.amount, command.currency),
-        payer: { email: command.payerEmail },
+        payer: {
+          email: this.resolvePayerEmail(
+            command.payerEmail,
+            credentials.environment,
+          ),
+        },
         transactions: {
           payments: [
             {
@@ -648,7 +653,12 @@ export class MercadoPagoPaymentAdapter
         external_reference: command.externalReference,
         description: command.description,
         total_amount: formatMercadoPagoAmount(command.amount, command.currency),
-        payer: { email: command.payerEmail },
+        payer: {
+          email: this.resolvePayerEmail(
+            command.payerEmail,
+            credentials.environment,
+          ),
+        },
         transactions: {
           payments: [
             {
@@ -885,6 +895,22 @@ export class MercadoPagoPaymentAdapter
       accessToken: accessToken.trim(),
       environment: environment as MercadoPagoEnvironment,
     };
+  }
+
+  /**
+   * GOS-86 runtime QA finding (2026-09-23): Mercado Pago's Orders API sandbox
+   * accepts, per its own integration-test docs, ONLY `test@testuser.com` as
+   * `payer.email` — sending the real Customer's email there gets the whole
+   * order refused with a 400 ("OUR request was malformed", per this file's
+   * own `request()` comment), which is exactly the `PROVIDER_ERROR` seen live
+   * for every Argentina attempt. Production is unaffected: real Customer
+   * emails keep flowing there exactly as before this fix.
+   */
+  private resolvePayerEmail(
+    realEmail: string | undefined,
+    environment: MercadoPagoEnvironment,
+  ): string | undefined {
+    return environment === 'sandbox' ? 'test@testuser.com' : realEmail;
   }
 
   /**

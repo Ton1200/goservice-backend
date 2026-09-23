@@ -368,7 +368,9 @@ describe('MercadoPagoPaymentAdapter — saved cards (GOS-149)', () => {
         type: 'online',
         processing_mode: 'automatic',
         external_reference: 'e-1',
-        payer: { email: 'buyer@example.com' },
+        // `makeAdapter()`'s default environment is 'sandbox' — see the
+        // dedicated payer.email test below (GOS-86).
+        payer: { email: 'test@testuser.com' },
         transactions: {
           payments: [
             {
@@ -381,6 +383,21 @@ describe('MercadoPagoPaymentAdapter — saved cards (GOS-149)', () => {
             },
           ],
         },
+      });
+    });
+
+    it('production: sends the real Customer email (GOS-86 — same fix as chargeCard)', async () => {
+      respond(201, APPROVED_ORDER_BODY);
+
+      await makeAdapter({
+        'payments.payment-methods.mercadopago.co.environment': 'production',
+      }).chargeSavedCard({
+        ...CHARGE,
+        payerEmail: 'real.customer@example.com',
+      });
+
+      expect(callAt(0).body).toMatchObject({
+        payer: { email: 'real.customer@example.com' },
       });
     });
 
