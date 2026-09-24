@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { EngagementStatus } from '@prisma/client';
 import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
 import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
+import { PaymentAttemptRepository } from '../../payments/payment-attempt.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
@@ -36,6 +37,7 @@ describe('ConfirmEngagementCompletionService', () => {
     customerProfile?: typeof customerProfile | null;
     engagement?: ReturnType<typeof makeEngagement> | null;
     casCount?: number;
+    approvedPayment?: { id: string } | null;
   }) {
     const fakeTx = { __fakeTransactionClient: true };
     const $transaction = jest.fn(
@@ -78,11 +80,23 @@ describe('ConfirmEngagementCompletionService', () => {
       emit,
     } as unknown as EmitEngagementLifecycleSystemMessageService;
 
+    const findApprovedByEngagementId = jest
+      .fn()
+      .mockResolvedValue(
+        overrides?.approvedPayment === undefined
+          ? { id: 'payment-attempt-1' }
+          : overrides.approvedPayment,
+      );
+    const paymentAttemptRepository = {
+      findApprovedByEngagementId,
+    } as unknown as PaymentAttemptRepository;
+
     const service = new ConfirmEngagementCompletionService(
       prisma,
       profilesRepository,
       engagementsRepository,
       emitEngagementLifecycleSystemMessageService,
+      paymentAttemptRepository,
     );
 
     return {
@@ -92,6 +106,7 @@ describe('ConfirmEngagementCompletionService', () => {
       findById,
       completeIfPendingCustomerConfirmation,
       emit,
+      findApprovedByEngagementId,
     };
   }
 
@@ -180,6 +195,33 @@ describe('ConfirmEngagementCompletionService', () => {
       expect($transaction).not.toHaveBeenCalled();
     },
   );
+
+  // GOS-123
+  it('throws ENGAGEMENT_PAYMENT_REQUIRED when the Engagement has no APPROVED PaymentAttempt, and never opens a transaction nor emits the system message', async () => {
+    const { service, $transaction, emit, findApprovedByEngagementId } =
+      makeService({ approvedPayment: null });
+
+    await expect(
+      service.confirmEngagementCompletion('user-1', 'engagement-1'),
+    ).rejects.toMatchObject({ code: 'ENGAGEMENT_PAYMENT_REQUIRED' });
+    expect(findApprovedByEngagementId).toHaveBeenCalledWith('engagement-1');
+    expect($transaction).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('checks the state BEFORE the payment — a wrong-state Engagement gets ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION even without a payment', async () => {
+    const { service, findApprovedByEngagementId } = makeService({
+      engagement: makeEngagement({ status: EngagementStatus.IN_PROGRESS }),
+      approvedPayment: null,
+    });
+
+    await expect(
+      service.confirmEngagementCompletion('user-1', 'engagement-1'),
+    ).rejects.toMatchObject({
+      code: 'ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION',
+    });
+    expect(findApprovedByEngagementId).not.toHaveBeenCalled();
+  });
 
   it('throws ENGAGEMENT_COMPLETION_CONFLICT when the guarded CAS loses the race (count 0), and never emits the system message', async () => {
     const { service, completeIfPendingCustomerConfirmation, emit } =

@@ -2,11 +2,17 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MediaUploadRefIntendedUse } from '@prisma/client';
 import { invalidMediaUploadRef } from '../../media-uploads/errors/invalid-media-upload-ref.error';
 import { MediaUploadsRepository } from '../../media-uploads/media-uploads.repository';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EngagementChatAccessService } from '../engagement-chat-access.service';
 import { EngagementChatRepository } from '../engagement-chat.repository';
+import { engagementChatClosed } from '../errors/engagement-chat-closed.error';
 import { EngagementMessageModel } from '../models/engagement-message.model';
 import { SendEngagementMessageInput } from '../models/send-engagement-message-input.model';
+import {
+  readPostCompletionWindowHours,
+  resolveEngagementChatClosure,
+} from './resolve-engagement-chat-closure.util';
 
 /**
  * Orchestrates `Mutation.sendEngagementMessage`. Idempotent Conversation
@@ -20,14 +26,18 @@ import { SendEngagementMessageInput } from '../models/send-engagement-message-in
  * spans two tables `EngagementChatRepository` owns, and the upsert+create
  * must commit atomically or not at all.
  *
- * Deliberately does NOT check `Engagement.status` — unlike Quote
- * Negotiation's `QUOTE_NOT_NEGOTIABLE` gate (Quote can move through several
- * non-negotiable terminal states), `EngagementStatus` today has exactly one
- * value (`ACCEPTED`, see that enum's own schema comment) — every Engagement
- * that exists is already in the one state this capability's business goal
- * requires ("Engagement ya aceptado"), so there is nothing to gate on yet.
- * If a future terminal `EngagementStatus` is ever added, whether it should
- * also close this chat is a new product question, not decided here.
+ * GOS-123 — the chat becomes read-only once the Engagement is closed: a
+ * `CANCELLED` Engagement rejects new messages immediately, a `COMPLETED`
+ * one only after `completedAt + customer.chat.post-completion-window-hours`
+ * (read fresh here on every send, never cached). Any other status is
+ * writable. The decision itself lives in `resolveEngagementChatClosure`,
+ * shared with `Engagement.chatReadOnly`/`chatClosesAt`, and is checked
+ * BEFORE the optional image ref is resolved, so a rejected send never
+ * touches it. Only this user-facing send path is gated: reading
+ * (`ListEngagementMessagesService`), lifecycle system messages
+ * (`EmitEngagementLifecycleSystemMessageService` — e.g. the cancellation
+ * one is written the very moment the chat closes) and the admin thread are
+ * unaffected.
  */
 @Injectable()
 export class SendEngagementMessageService {
@@ -38,6 +48,7 @@ export class SendEngagementMessageService {
     private readonly accessService: EngagementChatAccessService,
     private readonly engagementChatRepository: EngagementChatRepository,
     private readonly mediaUploadsRepository: MediaUploadsRepository,
+    private readonly platformSettingPort: PlatformSettingPort,
   ) {}
 
   async sendMessage(
@@ -46,6 +57,18 @@ export class SendEngagementMessageService {
     input: SendEngagementMessageInput,
   ): Promise<EngagementMessageModel> {
     const party = await this.accessService.resolveParty(userId, engagementId);
+
+    const windowHours = await readPostCompletionWindowHours(
+      this.platformSettingPort,
+    );
+    const { chatReadOnly } = resolveEngagementChatClosure(
+      party.engagement,
+      windowHours,
+      new Date(),
+    );
+    if (chatReadOnly) {
+      throw engagementChatClosed();
+    }
 
     // GOS-72 — resolve the optional coordination image ref BEFORE the
     // transaction (same read-then-consume ordering as GOS-38). `imageUrl` is

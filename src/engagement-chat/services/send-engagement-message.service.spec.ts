@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { EngagementChatParty, MediaUploadRefIntendedUse } from '@prisma/client';
+import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import { MediaUploadsRepository } from '../../media-uploads/media-uploads.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -27,6 +28,7 @@ describe('SendEngagementMessageService', () => {
     resolvePartyRejects?: Error;
     usableRefs?: { id: string; fileUrl: string }[];
     consumedCount?: number;
+    windowHoursSetting?: string | null;
   }) {
     const fakeTx = { __fakeTransactionClient: true };
     const $transaction = jest.fn(
@@ -69,11 +71,23 @@ describe('SendEngagementMessageService', () => {
       createMessage,
     } as unknown as EngagementChatRepository;
 
+    const getValue = jest
+      .fn()
+      .mockResolvedValue(
+        overrides?.windowHoursSetting === undefined
+          ? '48'
+          : overrides.windowHoursSetting,
+      );
+    const platformSettingPort = {
+      getValue,
+    } as unknown as PlatformSettingPort;
+
     const service = new SendEngagementMessageService(
       prisma,
       accessService,
       engagementChatRepository,
       mediaUploadsRepository,
+      platformSettingPort,
     );
 
     return {
@@ -83,6 +97,7 @@ describe('SendEngagementMessageService', () => {
       createMessage,
       findUsablePendingRefs,
       markConsumed,
+      getValue,
     };
   }
 
@@ -154,6 +169,64 @@ describe('SendEngagementMessageService', () => {
       }),
     ).rejects.toMatchObject({ code: 'ENGAGEMENT_NOT_FOUND' });
     expect(upsertConversation).not.toHaveBeenCalled();
+  });
+
+  // GOS-123 — read-only chat once the Engagement is closed.
+
+  const HOUR_MS = 60 * 60 * 1000;
+
+  it('rejects with ENGAGEMENT_CHAT_CLOSED on a CANCELLED Engagement, before touching the image ref or opening a transaction', async () => {
+    const { service, upsertConversation, findUsablePendingRefs } = makeService({
+      party: makeParty({
+        engagement: { id: 'engagement-1', status: 'CANCELLED' } as never,
+      }),
+    });
+
+    await expect(
+      service.sendMessage('user-1', 'engagement-1', {
+        content: 'Hola',
+        mediaUploadRefId: 'ref-1',
+      }),
+    ).rejects.toMatchObject({ code: 'ENGAGEMENT_CHAT_CLOSED' });
+    expect(findUsablePendingRefs).not.toHaveBeenCalled();
+    expect(upsertConversation).not.toHaveBeenCalled();
+  });
+
+  it('still accepts messages on a COMPLETED Engagement within the configured window', async () => {
+    const { service, createMessage, getValue } = makeService({
+      party: makeParty({
+        engagement: {
+          id: 'engagement-1',
+          status: 'COMPLETED',
+          completedAt: new Date(Date.now() - 47 * HOUR_MS),
+        } as never,
+      }),
+    });
+
+    await service.sendMessage('user-1', 'engagement-1', { content: 'Gracias' });
+
+    expect(getValue).toHaveBeenCalledWith(
+      'customer.chat.post-completion-window-hours',
+    );
+    expect(createMessage).toHaveBeenCalled();
+  });
+
+  it('rejects with ENGAGEMENT_CHAT_CLOSED on a COMPLETED Engagement once the configured window has passed', async () => {
+    const { service, createMessage } = makeService({
+      windowHoursSetting: '2',
+      party: makeParty({
+        engagement: {
+          id: 'engagement-1',
+          status: 'COMPLETED',
+          completedAt: new Date(Date.now() - 3 * HOUR_MS),
+        } as never,
+      }),
+    });
+
+    await expect(
+      service.sendMessage('user-1', 'engagement-1', { content: 'Hola' }),
+    ).rejects.toMatchObject({ code: 'ENGAGEMENT_CHAT_CLOSED' });
+    expect(createMessage).not.toHaveBeenCalled();
   });
 
   // GOS-72 — optional coordination image via a consumed MediaUploadRef.

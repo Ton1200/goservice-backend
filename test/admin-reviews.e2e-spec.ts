@@ -25,6 +25,7 @@ import {
   cleanServiceRequestsData,
   cleanUsersData,
   createTestApp,
+  seedApprovedCashPayment,
 } from './support/test-app';
 
 const PASSWORD = 'super-secret-1';
@@ -426,6 +427,8 @@ describe('GraphQL /admin/graphql — adminReviews/moderateEngagementReviewCommen
       { engagementId },
       professionalToken,
     ).expect(200);
+    // GOS-123 — completion requires an APPROVED payment.
+    await seedApprovedCashPayment(prisma, engagementId);
     await consumerRequest(
       CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
       { engagementId },

@@ -508,6 +508,16 @@ const KNOWN_SETTING_SLOTS = [
     valueType: 'STRING',
     isEncrypted: false,
   },
+  // GOS-123 — seeded by `prisma/seed.ts` too; listed here so the field
+  // still renders (with the backend's own 48 h fallback as placeholder) on
+  // an environment where the seed hasn't run yet.
+  {
+    key: 'customer.chat.post-completion-window-hours',
+    description: 'Hours a completed job chat stays writable after completion.',
+    valueType: 'NUMBER',
+    isEncrypted: false,
+    defaultValue: '48',
+  },
 ];
 
 // Short, static, one-line descriptions shown under a leaf block's title

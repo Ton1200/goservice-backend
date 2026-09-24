@@ -305,6 +305,22 @@ const PLATFORM_SETTINGS: {
     value: 'false',
     isPublic: false,
   },
+  // GOS-123 — how many hours a COMPLETED Engagement's chat stays writable,
+  // counted from `completedAt`; read-only for good afterwards (a CANCELLED
+  // one is read-only immediately, no window). Read fresh on every
+  // `sendEngagementMessage` by `resolve-engagement-chat-closure.util.ts` —
+  // no cache, so an admin change applies without a deploy; a missing or
+  // invalid value falls back to 48 there. `isPublic: false`: the mobile app
+  // gets the already-computed `Engagement.chatReadOnly`/`chatClosesAt`
+  // instead, never the raw window.
+  {
+    key: 'customer.chat.post-completion-window-hours',
+    description:
+      'Hours a COMPLETED Engagement chat stays writable after completedAt; read-only afterwards. CANCELLED engagements are read-only immediately.',
+    value: '48',
+    isPublic: false,
+    valueType: 'NUMBER',
+  },
   // GOS-59 follow-up — Appointment ("Coordinación de Visita") admin
   // enable/disable toggle. Placed under the same `customer.*` group AS A
   // SIBLING of `customer.chat.enabled` above — NOT nested under it (`chat`
