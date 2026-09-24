@@ -408,9 +408,19 @@ const KNOWN_SETTING_SLOTS = [
   // sets one up, e.g. via a local dev tunnel), so, same as the credential
   // rows above, this manifest is load-bearing for these fields to render at
   // all pre-configuration. `payments.payment-methods.mercadopago.wallet.enabled`
-  // itself is NOT listed here — it IS seeded (`'false'`, by `prisma/seed.ts`),
-  // same reasoning `payments.payment-methods.mercadopago.card.enabled` already
-  // established for not needing a slot.
+  // IS seeded (`'false'`, by `prisma/seed.ts`), but a database seeded BEFORE
+  // GOS-142 has no such row, and then this panel rendered no switch for it at
+  // all (found during GOS-143 runtime QA) — so it gets a slot here too. The
+  // slot only makes the switch render; it does not change the value or the
+  // backend's own behavior (a missing row is still read fail-open by
+  // `PlatformSettingPort.isEnabled` until the row exists — re-run the seed or
+  // save this switch once).
+  {
+    key: 'payments.payment-methods.mercadopago.wallet.enabled',
+    description: 'Global kill switch for the Mercado Pago Wallet Payment capability (startEngagementWalletPayment).',
+    valueType: 'BOOLEAN',
+    isEncrypted: false,
+  },
   {
     key: 'payments.general-settings.callbacks.public-base-url',
     description: "This backend's own public HTTPS origin — e.g. a local dev tunnel URL. `notification_url` sent to Mercado Pago is derived from it as `<this>/webhooks/mercadopago/payments/<country>`.",
