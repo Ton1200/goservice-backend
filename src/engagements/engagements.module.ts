@@ -5,6 +5,7 @@ import { EngagementChatRepository } from '../engagement-chat/engagement-chat.rep
 import { EmitEngagementLifecycleSystemMessageService } from '../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
 import { IdentityVerificationModule } from '../identity-verification/identity-verification.module';
 import { LedgerModule } from '../ledger/ledger.module';
+import { PaymentAttemptRepository } from '../payments/payment-attempt.repository';
 import { ProfilesModule } from '../profiles/profiles.module';
 import { UsersModule } from '../users/users.module';
 import { EngagementsRepository } from './engagements.repository';
@@ -59,6 +60,13 @@ import { StartEngagementWorkService } from './services/start-engagement-work.ser
  * former always-`null` stubs (`computeCustomerCancellationCharge`/
  * `recordProfessionalCancellationRefund`).
  *
+ * **GOS-123**: `PaymentAttemptRepository` is ALSO listed directly here, as
+ * a concrete provider class — same pattern `CashPaymentModule` already uses
+ * for it — so `ConfirmEngagementCompletionService` can require an
+ * `APPROVED` `PaymentAttempt` before closing an Engagement, without
+ * importing the resolver-bearing `PaymentsModule`. It depends only on the
+ * `@Global()` `PrismaService`, so this introduces no import cycle.
+ *
  * Deliberately does NOT import `ServiceRequestsModule` or `QuotesModule` —
  * this module is a lean, leaf "repository + GraphQL type + read queries"
  * module, reused by BOTH `quotes/` (`AcceptQuoteService`, via
@@ -94,6 +102,8 @@ import { StartEngagementWorkService } from './services/start-engagement-work.ser
     // GOS-125
     EngagementChatRepository,
     EmitEngagementLifecycleSystemMessageService,
+    // GOS-123
+    PaymentAttemptRepository,
   ],
   exports: [EngagementsRepository],
 })

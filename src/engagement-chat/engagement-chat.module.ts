@@ -7,6 +7,7 @@ import { ProfilesModule } from '../profiles/profiles.module';
 import { UsersModule } from '../users/users.module';
 import { EngagementsRepository } from '../engagements/engagements.repository';
 import { EngagementChatAccessService } from './engagement-chat-access.service';
+import { EngagementChatClosureFieldResolver } from './engagement-chat-closure-field.resolver';
 import { EngagementChatModuleEnabledGuard } from './guards/engagement-chat-module-enabled.guard';
 import { EngagementChatRepository } from './engagement-chat.repository';
 import { EngagementChatResolver } from './engagement-chat.resolver';
@@ -76,6 +77,8 @@ import { SendEngagementMessageService } from './services/send-engagement-message
     // GOS-125
     EngagementMessageFieldResolver,
     EmitEngagementLifecycleSystemMessageService,
+    // GOS-123
+    EngagementChatClosureFieldResolver,
   ],
   exports: [EngagementChatRepository],
 })

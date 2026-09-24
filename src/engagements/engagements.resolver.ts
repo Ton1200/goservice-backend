@@ -96,7 +96,7 @@ export class EngagementsResolver {
   @UseGuards(SessionGuard, AccountApprovedGuard)
   @Mutation(() => EngagementModel, {
     description:
-      'The Customer owner of an Engagement confirms the work is done: PENDING_CUSTOMER_CONFIRMATION → COMPLETED. A caller who is not this Engagement’s Customer — the Professional or a third party — gets ENGAGEMENT_NOT_FOUND (anti-enumeration). Wrong current state → ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION; lost concurrent race → ENGAGEMENT_COMPLETION_CONFLICT.',
+      'The Customer owner of an Engagement confirms the work is done: PENDING_CUSTOMER_CONFIRMATION → COMPLETED. A caller who is not this Engagement’s Customer — the Professional or a third party — gets ENGAGEMENT_NOT_FOUND (anti-enumeration). Wrong current state → ENGAGEMENT_NOT_PENDING_CUSTOMER_CONFIRMATION; no APPROVED payment (approved digital payment, or cash confirmed by both parties) → ENGAGEMENT_PAYMENT_REQUIRED; lost concurrent race → ENGAGEMENT_COMPLETION_CONFLICT.',
   })
   confirmEngagementCompletion(
     @CurrentUser() userId: string,

@@ -3,11 +3,13 @@ import { Engagement, EngagementStatus } from '@prisma/client';
 import { engagementNotFound } from '../../engagement-chat/errors/engagement-not-found.error';
 import { ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES } from '../../engagement-chat/constants/engagement-lifecycle-system-messages.constants';
 import { EmitEngagementLifecycleSystemMessageService } from '../../engagement-chat/services/emit-engagement-lifecycle-system-message.service';
+import { PaymentAttemptRepository } from '../../payments/payment-attempt.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { EngagementsRepository } from '../engagements.repository';
 import { engagementCompletionConflict } from '../errors/engagement-completion-conflict.error';
 import { engagementNotPendingCustomerConfirmation } from '../errors/engagement-not-pending-customer-confirmation.error';
+import { engagementPaymentRequired } from '../errors/engagement-payment-required.error';
 
 /**
  * Orchestrates `Mutation.confirmEngagementCompletion` (GOS-113) — the
@@ -31,6 +33,15 @@ import { engagementNotPendingCustomerConfirmation } from '../errors/engagement-n
  * No logic change here: the repository does the stamping, this service is
  * unchanged. GOS-121 (mutual Reviews) is the first real consumer of "an
  * Engagement just became COMPLETED" this comment anticipated below.
+ *
+ * GOS-123 — one more pre-transaction gate, AFTER the state check: the
+ * Engagement must have an `APPROVED` `PaymentAttempt` (approved digital
+ * payment, or cash confirmed by both parties), `engagementPaymentRequired()`
+ * otherwise. The commission is recorded when the payment is approved, so
+ * this is what guarantees every COMPLETED Engagement carries it exactly
+ * once. An APPROVED attempt never reverts, so this read needs no re-check
+ * inside the transaction. Must ship together with the mobile change
+ * (GOS-124) that makes the Customer pay before confirming.
  */
 @Injectable()
 export class ConfirmEngagementCompletionService {
@@ -41,6 +52,7 @@ export class ConfirmEngagementCompletionService {
     private readonly profilesRepository: ProfilesRepository,
     private readonly engagementsRepository: EngagementsRepository,
     private readonly emitEngagementLifecycleSystemMessageService: EmitEngagementLifecycleSystemMessageService,
+    private readonly paymentAttemptRepository: PaymentAttemptRepository,
   ) {}
 
   async confirmEngagementCompletion(
@@ -62,6 +74,15 @@ export class ConfirmEngagementCompletionService {
 
     if (engagement.status !== EngagementStatus.PENDING_CUSTOMER_CONFIRMATION) {
       throw engagementNotPendingCustomerConfirmation();
+    }
+
+    // GOS-123 — no approved payment, no completion.
+    const approvedPayment =
+      await this.paymentAttemptRepository.findApprovedByEngagementId(
+        engagementId,
+      );
+    if (!approvedPayment) {
+      throw engagementPaymentRequired();
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -97,8 +118,9 @@ export class ConfirmEngagementCompletionService {
     // `SubmitEngagementReviewService` reading `Engagement.status`/
     // `completedAt` directly at call time (`src/reviews/`). GOS-125 now
     // separately emits the Engagement Chat system message inline, above.
-    // GOS-107 (Engagement Chat close orchestration) and GOS-109 (making the
-    // commission firm) remain future consumers of this same transition.
+    // GOS-123 closes the Engagement Chat off this transition too — again
+    // without an event: `SendEngagementMessageService` reads `status`/
+    // `completedAt` at send time and applies the post-completion window.
     // `@nestjs/event-emitter` is still deliberately NOT introduced — out of
     // scope.
 

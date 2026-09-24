@@ -23,6 +23,7 @@ import {
   cleanServiceRequestsData,
   cleanUsersData,
   createTestApp,
+  seedApprovedCashPayment,
 } from './support/test-app';
 
 const PASSWORD = 'super-secret-1';
@@ -426,6 +427,8 @@ describe('GraphQL Reviews (GOS-121, e2e)', () => {
       { engagementId: seeded.engagementId },
       seeded.professionalToken,
     ).expect(200);
+    // GOS-123 — completion requires an APPROVED payment.
+    await seedApprovedCashPayment(prisma, seeded.engagementId);
     await gqlRequest(
       CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
       { engagementId: seeded.engagementId },

@@ -28,6 +28,7 @@ import {
   cleanServiceRequestsData,
   cleanUsersData,
   createTestApp,
+  seedApprovedCashPayment,
 } from './support/test-app';
 
 const LOGIN_MUTATION = `
@@ -672,6 +673,8 @@ describe('GraphQL Engagement Chat (GOS-46, e2e)', () => {
         { engagementId },
         professionalToken,
       ).expect(200);
+      // GOS-123 — completion requires an APPROVED payment.
+      await seedApprovedCashPayment(prisma, engagementId);
       await gqlRequest(
         CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
         { engagementId },
@@ -916,6 +919,268 @@ describe('GraphQL Engagement Chat (GOS-46, e2e)', () => {
             m.content === 'a system message that should never be persisted',
         ),
       ).toBe(false);
+    });
+
+    // GOS-123 — read-only chat once the Engagement is closed. Two
+    // independent accounts (Customer + Professional) per Engagement.
+    describe('GOS-123 — read-only chat after close', () => {
+      const WINDOW_KEY = 'customer.chat.post-completion-window-hours';
+      const HOUR_MS = 60 * 60 * 1000;
+
+      const MY_ENGAGEMENTS_AS_CUSTOMER_CHAT_QUERY = `
+        query {
+          myEngagementsAsCustomer { id status completedAt chatReadOnly chatClosesAt }
+        }
+      `;
+
+      interface EngagementChatClosurePayload {
+        id: string;
+        status: string;
+        completedAt: string | null;
+        chatReadOnly: boolean;
+        chatClosesAt: string | null;
+      }
+
+      let originalWindowSetting: { value: string | null } | null = null;
+
+      async function setWindowHours(value: string): Promise<void> {
+        await prisma.platformSetting.upsert({
+          where: { key: WINDOW_KEY },
+          update: { value },
+          create: {
+            key: WINDOW_KEY,
+            description: 'Hours a COMPLETED Engagement chat stays writable.',
+            valueType: 'NUMBER',
+            value,
+            isPublic: false,
+          },
+        });
+      }
+
+      beforeAll(async () => {
+        originalWindowSetting = await prisma.platformSetting.findUnique({
+          where: { key: WINDOW_KEY },
+          select: { value: true },
+        });
+      });
+
+      beforeEach(async () => {
+        await setWindowHours('48');
+      });
+
+      // Restore the shared setting exactly as it was before this suite.
+      afterAll(async () => {
+        if (originalWindowSetting) {
+          await prisma.platformSetting.update({
+            where: { key: WINDOW_KEY },
+            data: { value: originalWindowSetting.value },
+          });
+        } else {
+          await prisma.platformSetting.deleteMany({
+            where: { key: WINDOW_KEY },
+          });
+        }
+      });
+
+      async function seedCompletedEngagement() {
+        const seeded = await seedEngagement();
+        // Opens the Conversation first: lifecycle system messages are only
+        // appended to an existing Conversation (GOS-125).
+        await gqlRequest(
+          SEND_ENGAGEMENT_MESSAGE_MUTATION,
+          {
+            engagementId: seeded.engagementId,
+            input: { content: 'Coordinemos la visita.' },
+          },
+          seeded.customerToken,
+        ).expect(200);
+        await confirmAppointment(
+          seeded.engagementId,
+          seeded.professionalToken,
+          seeded.customerToken,
+        );
+        await gqlRequest(
+          START_ENGAGEMENT_WORK_MUTATION,
+          { engagementId: seeded.engagementId },
+          seeded.professionalToken,
+        ).expect(200);
+        await gqlRequest(
+          MARK_ENGAGEMENT_WORK_FINISHED_MUTATION,
+          { engagementId: seeded.engagementId },
+          seeded.professionalToken,
+        ).expect(200);
+        await seedApprovedCashPayment(prisma, seeded.engagementId);
+        const confirm = await gqlRequest(
+          CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+          { engagementId: seeded.engagementId },
+          seeded.customerToken,
+        ).expect(200);
+        expect(
+          (confirm.body as { errors?: GraphQLErrorEntry[] }).errors,
+        ).toBeUndefined();
+        return seeded;
+      }
+
+      async function backdateCompletion(
+        engagementId: string,
+        hoursAgo: number,
+      ): Promise<Date> {
+        const completedAt = new Date(Date.now() - hoursAgo * HOUR_MS);
+        await prisma.engagement.update({
+          where: { id: engagementId },
+          data: { completedAt },
+        });
+        return completedAt;
+      }
+
+      async function send(
+        engagementId: string,
+        token: string,
+        content: string,
+      ): Promise<string | undefined> {
+        const response = await gqlRequest(
+          SEND_ENGAGEMENT_MESSAGE_MUTATION,
+          { engagementId, input: { content } },
+          token,
+        ).expect(200);
+        return (response.body as { errors?: GraphQLErrorEntry[] }).errors?.[0]
+          ?.extensions?.code;
+      }
+
+      async function closureFor(
+        engagementId: string,
+        customerToken: string,
+      ): Promise<EngagementChatClosurePayload> {
+        const response = await gqlRequest(
+          MY_ENGAGEMENTS_AS_CUSTOMER_CHAT_QUERY,
+          {},
+          customerToken,
+        ).expect(200);
+        const body = response.body as {
+          data: { myEngagementsAsCustomer: EngagementChatClosurePayload[] };
+          errors?: GraphQLErrorEntry[];
+        };
+        expect(body.errors).toBeUndefined();
+        return body.data.myEngagementsAsCustomer.find(
+          (e) => e.id === engagementId,
+        )!;
+      }
+
+      it('a COMPLETED Engagement stays writable for both parties within the 48 h window, and exposes chatReadOnly=false + chatClosesAt=completedAt+48h', async () => {
+        const { engagementId, customerToken, professionalToken } =
+          await seedCompletedEngagement();
+        const completedAt = await backdateCompletion(engagementId, 47);
+
+        expect(await send(engagementId, customerToken, 'Gracias!')).toBe(
+          undefined,
+        );
+        expect(
+          await send(engagementId, professionalToken, 'A vos!'),
+        ).toBeUndefined();
+
+        const closure = await closureFor(engagementId, customerToken);
+        expect(closure.chatReadOnly).toBe(false);
+        expect(new Date(closure.chatClosesAt!).getTime()).toBe(
+          completedAt.getTime() + 48 * HOUR_MS,
+        );
+      });
+
+      it('after the 48 h window both parties get ENGAGEMENT_CHAT_CLOSED, reading still works, and chatReadOnly=true', async () => {
+        const { engagementId, customerToken, professionalToken } =
+          await seedCompletedEngagement();
+        await backdateCompletion(engagementId, 49);
+
+        expect(await send(engagementId, customerToken, 'Hola?')).toBe(
+          'ENGAGEMENT_CHAT_CLOSED',
+        );
+        expect(await send(engagementId, professionalToken, 'Hola?')).toBe(
+          'ENGAGEMENT_CHAT_CLOSED',
+        );
+
+        const read = await gqlRequest(
+          ENGAGEMENT_MESSAGES_QUERY,
+          { engagementId },
+          professionalToken,
+        ).expect(200);
+        const readBody = read.body as {
+          data: { engagementMessages: { content: string }[] } | null;
+          errors?: GraphQLErrorEntry[];
+        };
+        expect(readBody.errors).toBeUndefined();
+        expect(
+          readBody.data?.engagementMessages.map((m) => m.content),
+        ).toContain(ENGAGEMENT_LIFECYCLE_SYSTEM_MESSAGES.COMPLETION_CONFIRMED);
+
+        expect(
+          (await closureFor(engagementId, customerToken)).chatReadOnly,
+        ).toBe(true);
+      });
+
+      it('changing the window in the admin setting applies to the next send without a deploy/restart', async () => {
+        const { engagementId, customerToken } = await seedCompletedEngagement();
+        await backdateCompletion(engagementId, 49);
+
+        expect(await send(engagementId, customerToken, 'Hola?')).toBe(
+          'ENGAGEMENT_CHAT_CLOSED',
+        );
+
+        await setWindowHours('72');
+        expect(
+          await send(engagementId, customerToken, 'Ahora sí'),
+        ).toBeUndefined();
+        expect(
+          (await closureFor(engagementId, customerToken)).chatReadOnly,
+        ).toBe(false);
+
+        await setWindowHours('0');
+        expect(await send(engagementId, customerToken, 'Hola?')).toBe(
+          'ENGAGEMENT_CHAT_CLOSED',
+        );
+      });
+
+      it('a CANCELLED Engagement is read-only immediately for both parties, keeps its cancellation system message readable, and exposes chatReadOnly=true + chatClosesAt=null', async () => {
+        const { engagementId, customerToken, professionalToken } =
+          await seedEngagement();
+        expect(
+          await send(engagementId, customerToken, 'Antes de cancelar'),
+        ).toBeUndefined();
+
+        const cancel = await gqlRequest(
+          CANCEL_ENGAGEMENT_BY_CUSTOMER_MUTATION,
+          { engagementId, reason: 'Ya no lo necesito.' },
+          customerToken,
+        ).expect(200);
+        expect(
+          (cancel.body as { errors?: GraphQLErrorEntry[] }).errors,
+        ).toBeUndefined();
+
+        expect(await send(engagementId, customerToken, 'Hola?')).toBe(
+          'ENGAGEMENT_CHAT_CLOSED',
+        );
+        expect(await send(engagementId, professionalToken, 'Hola?')).toBe(
+          'ENGAGEMENT_CHAT_CLOSED',
+        );
+
+        const read = await gqlRequest(
+          ENGAGEMENT_MESSAGES_QUERY,
+          { engagementId },
+          customerToken,
+        ).expect(200);
+        const readBody = read.body as {
+          data: {
+            engagementMessages: { senderRole: string; content: string }[];
+          } | null;
+          errors?: GraphQLErrorEntry[];
+        };
+        expect(readBody.errors).toBeUndefined();
+        const messages = readBody.data!.engagementMessages;
+        expect(messages[0].content).toBe('Antes de cancelar');
+        expect(messages[messages.length - 1].senderRole).toBe('SYSTEM');
+
+        const closure = await closureFor(engagementId, customerToken);
+        expect(closure.chatReadOnly).toBe(true);
+        expect(closure.chatClosesAt).toBeNull();
+      });
     });
   });
 });

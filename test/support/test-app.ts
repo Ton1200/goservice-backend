@@ -288,6 +288,34 @@ export async function cleanCashPaymentData(
 }
 
 /**
+ * GOS-123 — `confirmEngagementCompletion` now requires an `APPROVED`
+ * `PaymentAttempt`. Specs whose subject is NOT the payment itself (reviews,
+ * chat, work-execution) use this to satisfy that precondition directly: a
+ * CASH attempt already confirmed by both parties. It deliberately skips the
+ * ledger side effects of the real `confirmCashPayment` flow — specs that
+ * care about the commission must drive that flow instead. Removed by
+ * `cleanCashPaymentData` (and by the Engagement's cascade delete).
+ */
+export async function seedApprovedCashPayment(
+  prisma: PrismaService,
+  engagementId: string,
+): Promise<void> {
+  const now = new Date();
+  await prisma.paymentAttempt.create({
+    data: {
+      engagementId,
+      method: 'CASH',
+      type: 'CASH',
+      status: 'APPROVED',
+      customerConfirmedAt: now,
+      professionalConfirmedAt: now,
+      amount: 10000,
+      currency: 'ARS',
+    },
+  });
+}
+
+/**
  * GOS-41 — deletes all `quotes`/`engagements`-module rows, in FK-safe order
  * (`Engagement` first — it references both `ServiceRequest` and `Quote` —
  * then `Quote`). Call BEFORE `cleanServiceRequestsData` below. Strictly

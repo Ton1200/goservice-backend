@@ -22,6 +22,7 @@ import {
   cleanServiceRequestsData,
   cleanUsersData,
   createTestApp,
+  seedApprovedCashPayment,
 } from './support/test-app';
 
 const PASSWORD = 'super-secret-1';
@@ -83,6 +84,14 @@ const MARK_ENGAGEMENT_WORK_FINISHED_MUTATION = `
 const CONFIRM_ENGAGEMENT_COMPLETION_MUTATION = `
   mutation ConfirmEngagementCompletion($engagementId: ID!) {
     confirmEngagementCompletion(engagementId: $engagementId) { ${ENGAGEMENT_FIELDS} }
+  }
+`;
+
+// GOS-123 — the real cash flow, to prove completion accepts a cash payment
+// confirmed by both parties.
+const CONFIRM_CASH_PAYMENT_MUTATION = `
+  mutation ConfirmCashPayment($engagementId: ID!) {
+    confirmCashPayment(engagementId: $engagementId) { id }
   }
 `;
 
@@ -412,8 +421,14 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
    * via the real GraphQL flow (seedEngagement -> confirmAnAppointment ->
    * startEngagementWork -> markEngagementWorkFinished), for
    * `confirmEngagementCompletion` tests below.
+   *
+   * GOS-123 — also seeds an APPROVED cash PaymentAttempt by default, since
+   * completion now requires one; `withApprovedPayment: false` leaves the
+   * Engagement unpaid.
    */
-  async function seedPendingCustomerConfirmationEngagement(): Promise<{
+  async function seedPendingCustomerConfirmationEngagement({
+    withApprovedPayment = true,
+  }: { withApprovedPayment?: boolean } = {}): Promise<{
     engagementId: string;
     customerToken: string;
     professionalToken: string;
@@ -431,6 +446,9 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
       { engagementId },
       professionalToken,
     ).expect(200);
+    if (withApprovedPayment) {
+      await seedApprovedCashPayment(prisma, engagementId);
+    }
     return { engagementId, customerToken, professionalToken };
   }
 
@@ -771,6 +789,93 @@ describe('GraphQL Engagement work execution (GOS-111/113/114/117, e2e)', () => {
         where: { id: engagementId },
       });
       expect(row?.status).toBe('COMPLETED');
+    });
+
+    // GOS-123 — no approved payment, no completion.
+    it('rejects with ENGAGEMENT_PAYMENT_REQUIRED when the Engagement has no APPROVED payment, leaving it PENDING_CUSTOMER_CONFIRMATION', async () => {
+      const { engagementId, customerToken } =
+        await seedPendingCustomerConfirmationEngagement({
+          withApprovedPayment: false,
+        });
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('ENGAGEMENT_PAYMENT_REQUIRED');
+      const row = await prisma.engagement.findUnique({
+        where: { id: engagementId },
+      });
+      expect(row?.status).toBe('PENDING_CUSTOMER_CONFIRMATION');
+      expect(row?.completedAt).toBeNull();
+    });
+
+    it('rejects with ENGAGEMENT_PAYMENT_REQUIRED while the cash payment is confirmed by only ONE party, and completes once both parties confirmed it', async () => {
+      await prisma.platformSetting.upsert({
+        where: { key: 'payments.payment-methods.cash.enabled' },
+        update: { value: 'true' },
+        create: {
+          key: 'payments.payment-methods.cash.enabled',
+          description: 'Cash payment kill switch.',
+          valueType: 'BOOLEAN',
+          value: 'true',
+          isPublic: false,
+        },
+      });
+      await prisma.platformSetting.upsert({
+        where: { key: 'payments.general-settings.commission.percent' },
+        update: { value: '10' },
+        create: {
+          key: 'payments.general-settings.commission.percent',
+          description: "GoService's global commission percentage.",
+          valueType: 'NUMBER',
+          value: '10',
+          isPublic: false,
+        },
+      });
+      const { engagementId, customerToken, professionalToken } =
+        await seedPendingCustomerConfirmationEngagement({
+          withApprovedPayment: false,
+        });
+
+      const customerCash = await gqlRequest(
+        CONFIRM_CASH_PAYMENT_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+      expect(
+        (customerCash.body as { errors?: GraphQLErrorEntry[] }).errors,
+      ).toBeUndefined();
+
+      const tooEarly = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+      expect(errorCode(tooEarly.body)).toBe('ENGAGEMENT_PAYMENT_REQUIRED');
+
+      const professionalCash = await gqlRequest(
+        CONFIRM_CASH_PAYMENT_MUTATION,
+        { engagementId },
+        professionalToken,
+      ).expect(200);
+      expect(
+        (professionalCash.body as { errors?: GraphQLErrorEntry[] }).errors,
+      ).toBeUndefined();
+
+      const response = await gqlRequest(
+        CONFIRM_ENGAGEMENT_COMPLETION_MUTATION,
+        { engagementId },
+        customerToken,
+      ).expect(200);
+      const body = response.body as {
+        data: { confirmEngagementCompletion: EngagementPayload } | null;
+        errors?: GraphQLErrorEntry[];
+      };
+      expect(body.errors).toBeUndefined();
+      expect(body.data?.confirmEngagementCompletion.status).toBe('COMPLETED');
     });
 
     it('rejects the Professional owner with ENGAGEMENT_NOT_FOUND', async () => {
