@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { LedgerEntryType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerRepository } from './ledger.repository';
 
@@ -190,5 +190,99 @@ describe('LedgerRepository.createDigitalPaymentEntries', () => {
     expect(createdAts[0]).toBeInstanceOf(Date);
     expect(createdAts[1]).toBe(createdAts[0]);
     expect(createdAts[2]).toBe(createdAts[0]);
+  });
+});
+
+describe('LedgerRepository.sumProfessionalBalancesByCurrency', () => {
+  function makeRepository(
+    groups: Array<{
+      type: LedgerEntryType;
+      currency: string;
+      _sum: { amount: number | null };
+    }>,
+  ) {
+    const groupBy = jest.fn().mockResolvedValue(groups);
+    const prisma = { ledgerEntry: { groupBy } } as unknown as PrismaService;
+    return { repository: new LedgerRepository(prisma), groupBy };
+  }
+
+  it('subtracts cash commission debt from net credits and reports the debt', async () => {
+    const { repository, groupBy } = makeRepository([
+      {
+        type: LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+        currency: 'ARS',
+        _sum: { amount: 9000 },
+      },
+      {
+        type: LedgerEntryType.CASH_COMMISSION_DEBT,
+        currency: 'ARS',
+        _sum: { amount: 1500 },
+      },
+    ]);
+
+    await expect(
+      repository.sumProfessionalBalancesByCurrency('professional-1'),
+    ).resolves.toEqual([
+      { currency: 'ARS', balance: 7500, pendingCashCommissionDebt: 1500 },
+    ]);
+    expect(groupBy).toHaveBeenCalledWith({
+      by: ['type', 'currency'],
+      where: {
+        professionalProfileId: 'professional-1',
+        type: {
+          in: [
+            LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+            LedgerEntryType.CASH_COMMISSION_DEBT,
+          ],
+        },
+      },
+      _sum: { amount: true },
+    });
+  });
+
+  it('goes negative when only cash commission debt exists', async () => {
+    const { repository } = makeRepository([
+      {
+        type: LedgerEntryType.CASH_COMMISSION_DEBT,
+        currency: 'COP',
+        _sum: { amount: 12000 },
+      },
+    ]);
+
+    await expect(
+      repository.sumProfessionalBalancesByCurrency('professional-1'),
+    ).resolves.toEqual([
+      { currency: 'COP', balance: -12000, pendingCashCommissionDebt: 12000 },
+    ]);
+  });
+
+  it('keeps each currency separate, sorted by currency', async () => {
+    const { repository } = makeRepository([
+      {
+        type: LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+        currency: 'COP',
+        _sum: { amount: 50000 },
+      },
+      {
+        type: LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+        currency: 'ARS',
+        _sum: { amount: 1000 },
+      },
+    ]);
+
+    await expect(
+      repository.sumProfessionalBalancesByCurrency('professional-1'),
+    ).resolves.toEqual([
+      { currency: 'ARS', balance: 1000, pendingCashCommissionDebt: 0 },
+      { currency: 'COP', balance: 50000, pendingCashCommissionDebt: 0 },
+    ]);
+  });
+
+  it('returns an empty array when the Professional has no rows', async () => {
+    const { repository } = makeRepository([]);
+
+    await expect(
+      repository.sumProfessionalBalancesByCurrency('professional-1'),
+    ).resolves.toEqual([]);
   });
 });

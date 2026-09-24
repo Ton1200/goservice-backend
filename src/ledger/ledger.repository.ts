@@ -343,6 +343,61 @@ export class LedgerRepository {
   }
 
   /**
+   * GOS-159 — same formula as `sumProfessionalBalance`, but split per
+   * `currency` instead of summed across all of them. A `LedgerEntry`'s
+   * currency comes from the Customer's country at write time, so one
+   * Professional can hold rows in more than one currency; adding ARS to COP
+   * would be meaningless. Returns one row per currency present, sorted by
+   * currency, and an empty array when the Professional has no rows yet.
+   */
+  async sumProfessionalBalancesByCurrency(
+    professionalProfileId: string,
+  ): Promise<
+    Array<{
+      currency: string;
+      balance: number;
+      pendingCashCommissionDebt: number;
+    }>
+  > {
+    const groups = await this.prisma.ledgerEntry.groupBy({
+      by: ['type', 'currency'],
+      where: {
+        professionalProfileId,
+        type: {
+          in: [
+            LedgerEntryType.PROFESSIONAL_NET_CREDIT,
+            LedgerEntryType.CASH_COMMISSION_DEBT,
+          ],
+        },
+      },
+      _sum: { amount: true },
+    });
+
+    const byCurrency = new Map<
+      string,
+      { currency: string; balance: number; pendingCashCommissionDebt: number }
+    >();
+    for (const group of groups) {
+      const row = byCurrency.get(group.currency) ?? {
+        currency: group.currency,
+        balance: 0,
+        pendingCashCommissionDebt: 0,
+      };
+      const amount = group._sum.amount ?? 0;
+      if (group.type === LedgerEntryType.PROFESSIONAL_NET_CREDIT) {
+        row.balance += amount;
+      } else {
+        row.balance -= amount;
+        row.pendingCashCommissionDebt += amount;
+      }
+      byCurrency.set(group.currency, row);
+    }
+    return [...byCurrency.values()].sort((a, b) =>
+      a.currency.localeCompare(b.currency),
+    );
+  }
+
+  /**
    * GoService's own current balance — computed fresh from the ledger, same
    * reasoning as `sumProfessionalBalance`'s own comment. `PLATFORM_COMMISSION`
    * (a digital job's commission, collected directly) PLUS every
