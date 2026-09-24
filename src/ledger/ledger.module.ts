@@ -4,6 +4,7 @@ import { ProfilesRepository } from '../profiles/profiles.repository';
 import { UsersRepository } from '../users/users.repository';
 import { LedgerRepository } from './ledger.repository';
 import { GetMyPaymentBalanceService } from './services/get-my-payment-balance.service';
+import { GetMyWalletBalancesService } from './services/get-my-wallet-balances.service';
 import { RecordCashCommissionDebtService } from './services/record-cash-commission-debt.service';
 import { RecordCustomerCancellationChargeService } from './services/record-customer-cancellation-charge.service';
 import { RecordDigitalPaymentService } from './services/record-digital-payment.service';
@@ -61,6 +62,7 @@ import { RecordProfessionalCancellationRefundService } from './services/record-p
     UsersRepository,
     ProfilesRepository,
     GetMyPaymentBalanceService,
+    GetMyWalletBalancesService,
   ],
   exports: [
     LedgerRepository,
@@ -69,6 +71,7 @@ import { RecordProfessionalCancellationRefundService } from './services/record-p
     RecordCashCommissionDebtService,
     RecordDigitalPaymentService,
     GetMyPaymentBalanceService,
+    GetMyWalletBalancesService,
   ],
 })
 export class LedgerModule {}

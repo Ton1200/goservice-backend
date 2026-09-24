@@ -3,7 +3,9 @@ import { Args, ID, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { AccountApprovedGuard } from '../identity-verification/guards/account-approved.guard';
+import { WalletBalanceModel } from '../ledger/models/wallet-balance.model';
 import { GetMyPaymentBalanceService } from '../ledger/services/get-my-payment-balance.service';
+import { GetMyWalletBalancesService } from '../ledger/services/get-my-wallet-balances.service';
 import { CashPaymentModuleEnabledGuard } from './guards/cash-payment-module-enabled.guard';
 import { CashPaymentConfirmationStateModel } from './models/cash-payment-confirmation-state.model';
 import { CashPaymentConfirmationModel } from './models/cash-payment-confirmation.model';
@@ -28,6 +30,7 @@ export class CashPaymentResolver {
     private readonly getMyPendingCashCommissionDebtService: GetMyPendingCashCommissionDebtService,
     private readonly getMyCashPaymentConfirmationService: GetMyCashPaymentConfirmationService,
     private readonly getMyPaymentBalanceService: GetMyPaymentBalanceService,
+    private readonly getMyWalletBalancesService: GetMyWalletBalancesService,
   ) {}
 
   @UseGuards(SessionGuard, AccountApprovedGuard, CashPaymentModuleEnabledGuard)
@@ -76,8 +79,21 @@ export class CashPaymentResolver {
   @Query(() => Int, {
     description:
       "The authenticated Professional's current payment balance, across every payment method: net digital credits minus cash commission debt. Available immediately (2026-09-18 product decision — no provider-settlement holdback is reflected here), computed fresh on every read. Can be negative.",
+    deprecationReason:
+      'Carries no currency and adds rows of different currencies together. Use myWalletBalances.',
   })
   myPaymentBalance(@CurrentUser() userId: string): Promise<number> {
     return this.getMyPaymentBalanceService.getMyPaymentBalance(userId);
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Query(() => [WalletBalanceModel], {
+    description:
+      "The authenticated Professional's wallet, one row per currency. Usually a single row; more than one only if they hold movements in several currencies, which are never added together. With no movements yet, one zero row in the currency of the Professional's country. Takes no arguments.",
+  })
+  myWalletBalances(
+    @CurrentUser() userId: string,
+  ): Promise<WalletBalanceModel[]> {
+    return this.getMyWalletBalancesService.getMyWalletBalances(userId);
   }
 }

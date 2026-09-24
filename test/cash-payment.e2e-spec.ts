@@ -92,6 +92,12 @@ const MY_PENDING_CASH_COMMISSION_DEBT_QUERY = `
   }
 `;
 
+const MY_WALLET_BALANCES_QUERY = `
+  query {
+    myWalletBalances { currency balance pendingCashCommissionDebt }
+  }
+`;
+
 const MY_CASH_PAYMENT_CONFIRMATION_QUERY = `
   query MyCashPaymentConfirmation($engagementId: ID!) {
     myCashPaymentConfirmation(engagementId: $engagementId) {
@@ -837,6 +843,91 @@ describe('GraphQL Cash Payment (GOS-87, e2e)', () => {
           isPublic: false,
         },
       });
+    });
+  });
+
+  describe('myWalletBalances (GOS-159)', () => {
+    type WalletBalanceRow = {
+      currency: string;
+      balance: number;
+      pendingCashCommissionDebt: number;
+    };
+
+    async function queryWallet(token: string): Promise<WalletBalanceRow[]> {
+      const response = await gqlRequest(
+        MY_WALLET_BALANCES_QUERY,
+        {},
+        token,
+      ).expect(200);
+      const body = response.body as {
+        data: { myWalletBalances: WalletBalanceRow[] };
+      };
+      return body.data.myWalletBalances;
+    }
+
+    it('with no movements yet, returns one zero row in the currency of the Professional country', async () => {
+      const categoryId = await seedCategory();
+      const professional = await seedApprovedProfessional([categoryId]);
+      const professionalToken = await loginSessionToken(professional.email);
+
+      await expect(queryWallet(professionalToken)).resolves.toEqual([
+        { currency: 'ARS', balance: 0, pendingCashCommissionDebt: 0 },
+      ]);
+    });
+
+    it('subtracts cash commission debt from net credits, per currency, never adding currencies together', async () => {
+      const categoryId = await seedCategory();
+      const professional = await seedApprovedProfessional([categoryId]);
+      const professionalToken = await loginSessionToken(professional.email);
+      const { professionalProfileId } = professional;
+
+      await prisma.ledgerEntry.createMany({
+        data: [
+          {
+            type: 'PROFESSIONAL_NET_CREDIT',
+            amount: 9000,
+            currency: 'ARS',
+            professionalProfileId,
+          },
+          {
+            type: 'CASH_COMMISSION_DEBT',
+            amount: 1500,
+            currency: 'ARS',
+            professionalProfileId,
+          },
+          {
+            type: 'PROFESSIONAL_NET_CREDIT',
+            amount: 50000,
+            currency: 'COP',
+            professionalProfileId,
+          },
+          // Not part of the Professional's balance — must be ignored.
+          {
+            type: 'PLATFORM_COMMISSION',
+            amount: 1000,
+            currency: 'ARS',
+            professionalProfileId,
+          },
+        ],
+      });
+
+      await expect(queryWallet(professionalToken)).resolves.toEqual([
+        { currency: 'ARS', balance: 7500, pendingCashCommissionDebt: 1500 },
+        { currency: 'COP', balance: 50000, pendingCashCommissionDebt: 0 },
+      ]);
+    });
+
+    it('rejects with PROFESSIONAL_PROFILE_REQUIRED for a caller with no ProfessionalProfile', async () => {
+      const customer = await seedApprovedCustomer();
+      const customerToken = await loginSessionToken(customer.email);
+
+      const response = await gqlRequest(
+        MY_WALLET_BALANCES_QUERY,
+        {},
+        customerToken,
+      ).expect(200);
+
+      expect(errorCode(response.body)).toBe('PROFESSIONAL_PROFILE_REQUIRED');
     });
   });
 
