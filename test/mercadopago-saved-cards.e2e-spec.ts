@@ -83,7 +83,7 @@ const AVAILABLE_METHODS_QUERY = `
   }
 `;
 const SAVED_CARD_FIELDS =
-  'id method brand lastFour type expirationMonth expirationYear createdAt';
+  'id method brand lastFour type expirationMonth expirationYear providerCardId createdAt';
 const MY_SAVED_CARDS_QUERY = `
   query MySavedCards { mySavedCards { ${SAVED_CARD_FIELDS} } }
 `;
@@ -127,6 +127,7 @@ interface SavedCardPayload {
   type: string | null;
   expirationMonth: number | null;
   expirationYear: number | null;
+  providerCardId: string | null;
   createdAt: string;
 }
 interface OptionPayload {
@@ -768,12 +769,14 @@ describe('GraphQL Mercado Pago saved cards (GOS-149, e2e)', () => {
       expect(listed.data!.mySavedCards).toEqual([]);
     });
 
-    it('with saved cards OFF, mySavedCards and payEngagementWithSavedCard answer MERCADOPAGO_SAVED_CARDS_DISABLED', async () => {
+    it('with saved cards OFF, the card stays LISTED (still manageable) but payEngagementWithSavedCard answers MERCADOPAGO_SAVED_CARDS_DISABLED', async () => {
       const { seeded, card } = await customerWithSavedCard();
       await enable({ savedCardsEnabled: false });
 
       const listed = await mySavedCards(seeded.customerToken);
-      expect(listed.data!.mySavedCards).toEqual([]); // silently excluded, not an error
+      expect(listed.errors).toBeUndefined();
+      // GOS-150 follow-up: still visible, so the Customer can erase it.
+      expect(listed.data!.mySavedCards.map((c) => c.id)).toEqual([card.id]);
 
       const paid = await payWithSavedCard(
         seeded.engagementId,
@@ -832,6 +835,8 @@ describe('GraphQL Mercado Pago saved cards (GOS-149, e2e)', () => {
 
       expect(deleted.errors).toBeUndefined();
       expect(deleted.data!.deleteSavedCard).toBe(true);
+      const listed = await mySavedCards(seeded.customerToken);
+      expect(listed.data!.mySavedCards).toEqual([]);
     });
   });
 
@@ -849,6 +854,9 @@ describe('GraphQL Mercado Pago saved cards (GOS-149, e2e)', () => {
         expirationMonth: 12,
         expirationYear: 2030,
       });
+      // GOS-150 follow-up: Mercado Pago's own card id — the card_id the client
+      // re-tokenizes with the CVV — never the token that was charged.
+      expect(card.providerCardId).toMatch(/^card_/);
       expect(JSON.stringify(card)).not.toContain(CARD_TOKEN);
     });
 
@@ -1086,6 +1094,89 @@ describe('GraphQL Mercado Pago saved cards (GOS-149, e2e)', () => {
       );
 
       expect(errorCode(paid)).toBe('SAVED_CARD_NOT_FOUND');
+    });
+  });
+
+  describe('addSavedCard — saving a card without a payment (GOS-150)', () => {
+    const ADD_SAVED_CARD_MUTATION = `
+      mutation AddSavedCard($cardToken: String!) {
+        addSavedCard(cardToken: $cardToken) { ${SAVED_CARD_FIELDS} }
+      }
+    `;
+    const CAN_ADD_QUERY = `query CanAddSavedCard { canAddSavedCard }`;
+
+    async function addSavedCard(cardToken: string, token: string | undefined) {
+      const response = await gqlRequest(
+        ADD_SAVED_CARD_MUTATION,
+        { cardToken },
+        token,
+      ).expect(200);
+      return response.body as GqlBody<{ addSavedCard: SavedCardPayload }>;
+    }
+
+    async function canAdd(token: string) {
+      const response = await gqlRequest(CAN_ADD_QUERY, {}, token).expect(200);
+      return response.body as GqlBody<{ canAddSavedCard: boolean }>;
+    }
+
+    it('saves the card to the caller’s own Mercado Pago customer and lists it — no PaymentAttempt, nothing charged', async () => {
+      const customer = await seedCustomer();
+
+      const added = await addSavedCard(CARD_TOKEN, customer.token);
+
+      expect(added.errors).toBeUndefined();
+      expect(added.data!.addSavedCard).toMatchObject({
+        method: 'MERCADOPAGO',
+        lastFour: '1111',
+        expirationMonth: 12,
+        expirationYear: 2030,
+      });
+      expect(added.data!.addSavedCard.providerCardId).toMatch(/^card_/);
+      expect(customerCreateCalls()).toHaveLength(1);
+      expect(associateCalls()).toHaveLength(1);
+      expect(mpCalls.some((c) => c.path === '/v1/orders')).toBe(false);
+      expect(await prisma.paymentAttempt.count()).toBe(0);
+
+      const listed = await mySavedCards(customer.token);
+      expect(listed.data!.mySavedCards.map((c) => c.id)).toEqual([
+        added.data!.addSavedCard.id,
+      ]);
+    });
+
+    it('with saved cards OFF it is refused (canAddSavedCard false) — while delete still works', async () => {
+      const customer = await seedCustomer();
+      const added = await addSavedCard(CARD_TOKEN, customer.token);
+      await enable({ savedCardsEnabled: false });
+
+      expect((await canAdd(customer.token)).data!.canAddSavedCard).toBe(false);
+      const refused = await addSavedCard(CARD_TOKEN, customer.token);
+      expect(errorCode(refused)).toBe('MERCADOPAGO_SAVED_CARDS_DISABLED');
+
+      const deleted = await deleteSavedCard(
+        added.data!.addSavedCard.id,
+        customer.token,
+      );
+      expect(deleted.data!.deleteSavedCard).toBe(true);
+    });
+
+    it('canAddSavedCard is true for a Customer while the feature is ON', async () => {
+      const customer = await seedCustomer();
+
+      expect((await canAdd(customer.token)).data!.canAddSavedCard).toBe(true);
+    });
+
+    it('a malformed token never reaches Mercado Pago', async () => {
+      const customer = await seedCustomer();
+
+      const refused = await addSavedCard('4509 9535', customer.token);
+
+      expect(errorCode(refused)).toBe('INVALID_CARD_PAYMENT_INPUT');
+      expect(mpCalls).toHaveLength(0);
+    });
+
+    it('requires a session', async () => {
+      const response = await addSavedCard(CARD_TOKEN, undefined);
+      expect(response.errors).toBeDefined();
     });
   });
 });

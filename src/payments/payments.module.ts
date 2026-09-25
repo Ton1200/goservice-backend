@@ -23,6 +23,7 @@ import { RapydModuleEnabledGuard } from './guards/rapyd-module-enabled.guard';
 import { RapydSavedCardsEnabledGuard } from './guards/rapyd-saved-cards-enabled.guard';
 import { SavedCardRepository } from './saved-card.repository';
 import { SavedCardResolver } from './saved-card.resolver';
+import { AddSavedCardService } from './services/add-saved-card.service';
 import { DeleteSavedCardService } from './services/delete-saved-card.service';
 import { ListMySavedCardsService } from './services/list-my-saved-cards.service';
 import { MercadoPagoSavedCardsCustomerService } from './services/mercadopago-saved-cards-customer.service';
@@ -123,6 +124,7 @@ import { StartEngagementWalletPaymentService } from './services/start-engagement
     ListMySavedCardsService,
     PayEngagementWithSavedCardService,
     DeleteSavedCardService,
+    AddSavedCardService,
     PaymentAttemptRepository,
     CardPaymentAccessService,
     CardPaymentModuleEnabledGuard,

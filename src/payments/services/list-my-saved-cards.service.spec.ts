@@ -168,14 +168,48 @@ describe('ListMySavedCardsService', () => {
     expect(cards).toEqual([...m.rapydSynced, ...m.mercadoPagoSynced]);
   });
 
-  it('a provider whose OWN saved-cards switch is off is silently excluded — not an error', async () => {
+  it('Rapyd cards are silently excluded while Rapyd’s OWN saved-cards switch is off — not an error (unchanged)', async () => {
+    const m = makeService({ rapydEnabled: false });
+
+    const cards = await m.service.listMySavedCards('user-1');
+
+    expect(m.rapydFind).not.toHaveBeenCalled();
+    expect(m.rapydListSavedCards).not.toHaveBeenCalled();
+    expect(cards).toEqual(m.mercadoPagoSynced);
+  });
+
+  it('Mercado Pago cards stay LISTED while its saved-cards switch is off — the Customer can still see (and erase) what they own', async () => {
     const m = makeService({ mercadoPagoEnabled: false });
 
     const cards = await m.service.listMySavedCards('user-1');
 
-    expect(m.mercadoPagoFind).not.toHaveBeenCalled();
-    expect(m.mercadoPagoListSavedCards).not.toHaveBeenCalled();
-    expect(cards).toEqual(m.rapydSynced);
+    expect(m.mercadoPagoListSavedCards).toHaveBeenCalledWith(
+      'cus_mp',
+      CountryCode.AR,
+    );
+    expect(cards).toEqual([...m.rapydSynced, ...m.mercadoPagoSynced]);
+  });
+
+  it('a country without Mercado Pago credentials just has no Mercado Pago cards — the Rapyd list is not broken', async () => {
+    const m = makeService();
+    m.mercadoPagoFind.mockRejectedValue(
+      new PaymentProviderNotConfiguredError('access token missing'),
+    );
+
+    await expect(m.service.listMySavedCards('user-1')).resolves.toEqual(
+      m.rapydSynced,
+    );
+  });
+
+  it('an unconfigured Rapyd (switches ON, no credentials) never hides the Customer’s Mercado Pago cards', async () => {
+    const m = makeService();
+    m.rapydFind.mockRejectedValue(
+      new PaymentProviderNotConfiguredError('access key missing'),
+    );
+
+    await expect(m.service.listMySavedCards('user-1')).resolves.toEqual(
+      m.mercadoPagoSynced,
+    );
   });
 
   it('a Customer with no Rapyd customer has no Rapyd cards — and Rapyd is not called for listing', async () => {
@@ -210,13 +244,11 @@ describe('ListMySavedCardsService', () => {
     );
   });
 
-  it('missing credentials are PAYMENT_PROVIDER_NOT_CONFIGURED', async () => {
+  it('with NO provider configured the list is simply empty — never an error', async () => {
     const m = makeService({
       linkError: new PaymentProviderNotConfiguredError('access key missing'),
     });
 
-    await expect(m.service.listMySavedCards('user-1')).rejects.toMatchObject({
-      code: 'PAYMENT_PROVIDER_NOT_CONFIGURED',
-    });
+    await expect(m.service.listMySavedCards('user-1')).resolves.toEqual([]);
   });
 });

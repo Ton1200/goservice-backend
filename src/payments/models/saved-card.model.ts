@@ -7,8 +7,10 @@ import { PaymentAttemptType } from './payment-attempt-type.enum';
  * Mercado Pago) — exactly what a wallet screen shows ("Visa •••• 1111,
  * expires 12/2030"). NOTHING sensitive exists here or anywhere in GoService:
  * no card number, CVV or holder name (they never leave the provider's own
- * widget/SDK), and the provider's token is deliberately NOT exposed — the
- * client refers to a card only by this `id`.
+ * widget/SDK). A Rapyd card's provider token is deliberately NOT exposed (it
+ * is a one-tap, server-side chargeable reference). A Mercado Pago card's
+ * `providerCardId` IS (GOS-150 follow-up): the client cannot re-tokenize the
+ * CVV without it, and on its own it charges nothing — see the field.
  */
 @ObjectType('SavedCard')
 export class SavedCardModel {
@@ -49,6 +51,13 @@ export class SavedCardModel {
     description: 'Expiry year, four digits.',
   })
   expirationYear!: number | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      "MERCADOPAGO ONLY (null for any other provider): Mercado Pago's own id for this stored card — the `card_id` the client tokenizes together with the CVV the Customer just typed (`{ card_id, security_code }`, Mercado Pago's client-side card_tokens with the public key) into payEngagementWithSavedCard.providerToken. A reference, not a credential: it cannot be charged without that fresh CVV token, and never reaches another Customer (mySavedCards is session-scoped). Never display it.",
+  })
+  providerCardId!: string | null;
 
   @Field()
   createdAt!: Date;

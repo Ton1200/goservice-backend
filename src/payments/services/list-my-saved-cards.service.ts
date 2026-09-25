@@ -7,7 +7,6 @@ import {
 import { ProfilesRepository } from '../../profiles/profiles.repository';
 import { PlatformSettingPort } from '../../platform-admin/platform-settings/ports/platform-setting.port';
 import { PAYMENT_METHOD_SETTING_KEYS } from '../constants/payments-setting-keys.constants';
-import { paymentProviderNotConfigured } from '../errors/payment-provider-not-configured.error';
 import { PaymentProviderRegistry } from '../payment-provider.registry';
 import { PaymentProviderNotConfiguredError } from '../ports/payment-provider.port';
 import { SavedCardRepository } from '../saved-card.repository';
@@ -25,10 +24,11 @@ import { RapydSavedCardsCustomerService } from './rapyd-saved-cards-customer.ser
  * (new cards appear, cards removed on the provider's side disappear). If ONE
  * provider cannot be reached, its last synced list is returned instead — a
  * Mercado Pago outage must never hide the Customer's Rapyd cards, and vice
- * versa; listing must not break because a single provider is down. A
- * provider whose OWN saved-cards switch is off is silently excluded from the
- * merged list (not an error — the Customer simply doesn't see cards from a
- * capability that isn't offered right now). A Customer that never had a
+ * versa; listing must not break because a single provider is down. Rapyd
+ * cards are silently excluded while Rapyd's OWN saved-cards switch is off
+ * (unchanged, GOS-146). Mercado Pago cards are ALWAYS listed (GOS-150
+ * follow-up): its switches govern saving and paying with a card, never
+ * seeing — and so erasing — one the Customer owns. A Customer that never had a
  * provider customer created has, by definition, no cards there (`[]`, no
  * provider call). A caller without a Customer profile gets `[]`.
  */
@@ -53,12 +53,15 @@ export class ListMySavedCardsService {
     }
 
     const results: SavedPaymentCard[] = [];
-    for (const method of [PaymentMethod.RAPYD, PaymentMethod.MERCADOPAGO]) {
-      if (!(await this.isSavedCardsEnabledFor(method))) {
-        continue; // this provider's own feature is off — just excluded, no error
-      }
-      results.push(...(await this.listForMethod(profile, method)));
+    if (await this.isSavedCardsEnabledFor(PaymentMethod.RAPYD)) {
+      results.push(...(await this.listForMethod(profile, PaymentMethod.RAPYD)));
     }
+    // GOS-150 follow-up — a Mercado Pago card stays VISIBLE (so it can still
+    // be erased) whatever its switches say: they govern saving and paying
+    // with a card, never seeing one the Customer owns.
+    results.push(
+      ...(await this.listForMethod(profile, PaymentMethod.MERCADOPAGO)),
+    );
     return results;
   }
 
@@ -97,7 +100,17 @@ export class ListMySavedCardsService {
       providerCustomerId = link.providerCustomerId;
     } catch (error) {
       if (error instanceof PaymentProviderNotConfiguredError) {
-        throw paymentProviderNotConfigured();
+        // GOS-150 follow-up — a provider with no credentials (for this
+        // Customer's country) has no vault to read: it contributes no cards
+        // instead of failing the WHOLE list, exactly as availablePaymentMethods
+        // never offers an unconfigured provider. Before, one unconfigured
+        // provider hid every other provider's cards (and their delete).
+        this.logger.warn({
+          event: 'saved_cards_provider_not_configured',
+          customerProfileId: profile.id,
+          method,
+        });
+        return [];
       }
       throw error;
     }

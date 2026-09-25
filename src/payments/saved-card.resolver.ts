@@ -1,10 +1,12 @@
 import { UseGuards } from '@nestjs/common';
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { PaymentMethod, SavedPaymentCard } from '@prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { SessionGuard } from '../auth/guards/session.guard';
 import { AccountApprovedGuard } from '../identity-verification/guards/account-approved.guard';
 import { PaymentAttemptModel } from './models/payment-attempt.model';
 import { SavedCardModel } from './models/saved-card.model';
+import { AddSavedCardService } from './services/add-saved-card.service';
 import { DeleteSavedCardService } from './services/delete-saved-card.service';
 import { ListMySavedCardsService } from './services/list-my-saved-cards.service';
 import { PayEngagementWithSavedCardService } from './services/pay-engagement-with-saved-card.service';
@@ -28,15 +30,41 @@ export class SavedCardResolver {
     private readonly listMySavedCardsService: ListMySavedCardsService,
     private readonly payEngagementWithSavedCardService: PayEngagementWithSavedCardService,
     private readonly deleteSavedCardService: DeleteSavedCardService,
+    private readonly addSavedCardService: AddSavedCardService,
   ) {}
 
   @UseGuards(SessionGuard, AccountApprovedGuard)
   @Query(() => [SavedCardModel], {
     description:
-      "The caller's own saved cards, across every provider that currently supports them (RAPYD, one-tap; MERCADOPAGO, CVV re-entry required on every charge — see method): brand, last four, type and expiry — never a card number or token. A Rapyd card is saved by ticking \"Save card for future payments\" in Rapyd's widget while paying; a Mercado Pago card is saved by passing saveCard: true to payEngagementWithCard. Each provider's vault is the source of truth for its own cards: every call re-syncs, and if a provider cannot be reached its last synced list is returned. A provider whose saved-cards switch is off is silently excluded (not an error).",
+      "The caller's own saved cards, across every provider that currently supports them (RAPYD, one-tap; MERCADOPAGO, CVV re-entry required on every charge — see method): brand, last four, type and expiry — never a card number or token. A Rapyd card is saved by ticking \"Save card for future payments\" in Rapyd's widget while paying; a Mercado Pago card is saved by passing saveCard: true to payEngagementWithCard, or directly with addSavedCard (GOS-150). Each provider's vault is the source of truth for its own cards: every call re-syncs, and if a provider cannot be reached its last synced list is returned. Mercado Pago cards are ALWAYS listed, even while its saved-cards switch is off (the switch governs saving and paying with a card, never seeing or erasing one you own — use availablePaymentMethods' CARD_TOKEN.supportsSavedCards to know whether they can be paid with). Rapyd cards are silently excluded while Rapyd's own switch is off (not an error).",
   })
   async mySavedCards(@CurrentUser() userId: string): Promise<SavedCardModel[]> {
-    return this.listMySavedCardsService.listMySavedCards(userId);
+    const cards = await this.listMySavedCardsService.listMySavedCards(userId);
+    // Only a Mercado Pago card's id is exposed — see SavedCardModel.providerCardId.
+    return cards.map(toSafeSavedCard);
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Query(() => Boolean, {
+    description:
+      'GOS-150 — whether the caller can save a Mercado Pago card directly from "Mis tarjetas guardadas" right now (addSavedCard): true only for a Customer while the Mercado Pago card method AND its saved-cards switch are ON and their country has Mercado Pago credentials. Never an error. Seeing and erasing saved cards does not depend on it.',
+  })
+  async canAddSavedCard(@CurrentUser() userId: string): Promise<boolean> {
+    return this.addSavedCardService.canAddSavedCard(userId);
+  }
+
+  @UseGuards(SessionGuard, AccountApprovedGuard)
+  @Mutation(() => SavedCardModel, {
+    description:
+      "GOS-150 — saves a Mercado Pago card WITHOUT a payment (card management only: no PaymentAttempt, no ledger entry, nothing charged or pre-authorized). cardToken is a fresh single-use token the client obtained by tokenizing the card with Mercado Pago's public key — the card number and CVV never reach GoService. Creates the caller's Mercado Pago customer on first use, associates the card, and returns it as mySavedCards would. Rejects with CUSTOMER_PROFILE_REQUIRED, CARD_PAYMENT_MODULE_DISABLED / MERCADOPAGO_SAVED_CARDS_DISABLED (see canAddSavedCard), INVALID_CARD_PAYMENT_INPUT (malformed token, or Mercado Pago refused it — tokenize again), PAYMENT_PROVIDER_NOT_CONFIGURED or PAYMENT_PROVIDER_UNAVAILABLE.",
+  })
+  async addSavedCard(
+    @CurrentUser() userId: string,
+    @Args('cardToken') cardToken: string,
+  ): Promise<SavedCardModel> {
+    return toSafeSavedCard(
+      await this.addSavedCardService.addSavedCard(userId, cardToken),
+    );
   }
 
   @UseGuards(SessionGuard, AccountApprovedGuard)
@@ -69,4 +97,13 @@ export class SavedCardResolver {
     await this.deleteSavedCardService.deleteSavedCard(userId, savedCardId);
     return true;
   }
+}
+
+/** Only a Mercado Pago card's id is exposed — see SavedCardModel.providerCardId. */
+function toSafeSavedCard(card: SavedPaymentCard): SavedCardModel {
+  return {
+    ...card,
+    providerCardId:
+      card.method === PaymentMethod.MERCADOPAGO ? card.providerCardId : null,
+  };
 }
